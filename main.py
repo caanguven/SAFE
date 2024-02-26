@@ -7,6 +7,7 @@ import board
 import adafruit_mcp3xxx.mcp3008 as MCP
 from adafruit_mcp3xxx.analog_in import AnalogIn
 import threading
+from Encoder import read_position
 
 # Constants
 Kp = 3
@@ -15,15 +16,6 @@ Kd = 1
 
 # Setup GPIO mode
 GPIO.setmode(GPIO.BCM)
-
-# Setup SPI for ADC
-spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
-cs = digitalio.DigitalInOut(board.D5)
-mcp = MCP.MCP3008(spi, cs)
-
-# Function to convert ADC value to angle
-def adc_value_to_angle(adc_value):
-    return (adc_value / 65535) * 360
 
 # Motor class
 class Motor:
@@ -46,13 +38,8 @@ class Motor:
         self.pwm = GPIO.PWM(self.pwm_pin, 100)  # Set PWM frequency to 100 Hz
         self.pwm.start(0)
 
-    def read_position(self):
-        raw_adc_value = self.adc_channel.value
-        angle = adc_value_to_angle(raw_adc_value)
-        return angle
-
     def apply_control(self, set_position):
-        current_position = self.read_position()
+        current_position = read_position()
         error = set_position - current_position
         self.integral = self.integral + error * Ki
         derivative = (error - self.last_error) * Kd
