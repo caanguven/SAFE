@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Feed</title>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var videoElement = document.getElementById('videoFeed');
+            videoElement.addEventListener('click', function(e) {
+                var rect = videoElement.getBoundingClientRect();
+                var x = e.clientX - rect.left; // x position within the element.
+                var y = e.clientY - rect.top;  // y position within the element.
+                console.log("X: " + x + " Y: " + y); // For testing: print coordinates in the browser console
+
+                // Send the position data to the server
+                fetch('/click_position', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({x: x, y: y}),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Success:', data);
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <h2>Live Video Feed</h2>
+    <img src="/video_feed" alt="Video Feed" id="videoFeed" style="display:block; width:640px; height:480px;">
+    <div style="text-align:center; margin-top:20px; font-size:20px;">Advanced Quadruped</div>
+</body>
+</html>

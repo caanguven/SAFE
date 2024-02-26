@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask, Response, render_template,request, jsonify
 from picamera import PiCamera
 from io import BytesIO
 import cv2
@@ -52,11 +52,22 @@ def gen(camera):
 
           # show relative pose 
           cv2.putText(frame, f"Rel Pos: {relative_position}", (center[0]+10, center[1]+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
-       
+         
+          x_pos_relative_to_center = tag.center[0] - screen_center[0]
+          mapped_x_value = (x_pos_relative_to_center / 320) * 60
+          print(f"Mapped X Value: {mapped_x_value}")
+
         # get the image per frame
         _, jpeg_frame = cv2.imencode('.jpg', frame)
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + jpeg_frame.tobytes() + b'\r\n')
+
+
+@app.route('/click')
+def index():
+    # Render the video_stream.html template
+    return render_template('index.html') 
+
 
 @app.route('/video_feed')
 def video_feed():
@@ -64,22 +75,29 @@ def video_feed():
     return Response(gen(PiCamera(resolution='640x480', framerate=60)),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/')
-def index():
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Video Feed</title> 
-    </head>
-    <body>
-        <h2>Live Video Feed</h2>
-        <img src="/video_feed" alt="Video Feed" style="display:block; width:640px; height:480px;">
-        <div style="text-align:center; margin-top:20px; font-size:20px;">Advanced Quadruped</div>
-    </body>
-    </html>
-    """
-    return html_content
+@app.route('/click_position', methods=['POST'])
+def click_position():
+    data = request.get_json()
+    print(f"Click position: {data['x']}, {data['y']}")
+    # You can process the click position here
+    return jsonify({"status": "success", "x": data['x'], "y": data['y']})
+
+# @app.route('/')
+# def index():
+#     html_content = """
+#     <!DOCTYPE html>
+#     <html>
+#     <head>
+#         <title>Video Feed</title> 
+#     </head>
+#     <body>
+#         <h2>Live Video Feed</h2>
+#         <img src="/video_feed" alt="Video Feed" style="display:block; width:640px; height:480px;">
+#         <div style="text-align:center; margin-top:20px; font-size:20px;">Advanced Quadruped</div>
+#     </body>
+#     </html>
+#     """
+#     return html_content
 
 
 
