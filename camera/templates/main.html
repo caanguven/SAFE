@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Main Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        img {
+            width: 200px;
+            height: auto;
+        }
+        .button-container {
+            margin-top: 30px;
+        }
+        .service-button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .service-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome to the Service Hub</h1>
+    <img src="{{ url_for('static', filename='robot.png') }}" alt="Robot">
+    <div class="button-container">
+        <a href="{{ url_for('gyro') }}" class="service-button">Gyro</a>
+        <a href="{{ url_for('click') }}" class="service-button">Click</a>
+        <a href="{{ url_for('video_feed') }}" class="service-button">Video Feed</a>
+        <a href="{{ url_for('manual_drive') }}" class="service-button">Manual Drive</a>
+        <a href="{{ url_for('autonoms_drive') }}" class="service-button">Autonomous Drive</a>
+    </div>
+</body>
+</html>
