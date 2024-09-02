@@ -6,6 +6,18 @@ from pupil_apriltags import Detector
 
 app = Flask(__name__)
 
+# Specify the path to the Haar cascade XML file
+haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml'
+
+# Load the Haar cascade for face detection
+face_cascade = cv2.CascadeClassifier(haar_cascade_path)
+
+# Check if the cascade loaded successfully
+if face_cascade.empty():
+    print('Failed to load cascade classifier')
+else:
+    print('Cascade classifier loaded successfully')
+
 # Initialize the AprilTag libraries
 at_detector = Detector(families='tag36h11 tag52h13',
                        nthreads=1,
@@ -110,8 +122,42 @@ def click():
 @app.route('/click_position', methods=['POST'])
 def click_position():
     data = request.get_json()
-    print(f"Click position: {data['x']}, {data['y']}")
-    return jsonify({"status": "success", "x": data['x'], "y": data['y']})
+    x = int(data['x'])  # Ensure x is an integer
+    y = int(data['y'])  # Ensure y is an integer
+    frame_width = 640  # Assuming a 640x480 resolution
+    max_turn_angle = 27  # Maximum turn angle in degrees
+
+    # Calculate the turn angle based on the x-coordinate
+    center_x = frame_width / 2
+    deviation = x - center_x
+    normalized_deviation = deviation / center_x  # Range: -1 to 1
+    turn_angle = normalized_deviation * max_turn_angle
+    turn_direction = "Right" if turn_angle > 0 else "Left"
+
+    print(f"Click position: X: {x}, Y: {y}, Turn: {turn_direction} {turn_angle:.2f} degrees")
+
+    # Capture the current frame from the camera
+    picam2 = Camera.get_instance()
+    frame = picam2.capture_array()
+
+    # Draw a red circle at the click position
+    cv2.circle(frame, (x, y), 10, (0, 0, 255), 3)
+
+    # Save the marked image
+    marked_image_path = "static/clicked_image.jpg"
+    cv2.imwrite(marked_image_path, frame)
+
+    # Send the turn angle and image path back to the client
+    return jsonify({
+        "status": "success", 
+        "x": x, 
+        "y": data['y'], 
+        "turn_angle": f"{turn_direction} {abs(round(turn_angle, 2))}",
+        "image_path": marked_image_path
+    })
+
+
+
 
 @app.route('/video_feed')
 def video_feed():
@@ -135,12 +181,54 @@ def autonoms_drive_stream():
 @app.route('/manual_drive')
 def manual_drive():
     Camera.release_instance()
-    return "Manual Drive Service - Not implemented yet"
+    return render_template('manual_drive.html')
+
+@app.route('/manual_drive_action', methods=['POST'])
+def manual_drive_action():
+    data = request.get_json()
+    direction = data['direction']
+
+    # Process the direction (e.g., control motors, log, etc.)
+    print(f"Direction: {direction}")
+
+    return jsonify({"status": "success"})
+
 
 @app.route('/gyro')
 def gyro():
     Camera.release_instance()
     return "Gyro Service - Not implemented yet"
+
+def gen_face_detection(camera):
+    """Video streaming generator function with face detection."""
+    while True:
+        try:
+            frame = camera.capture_array()
+
+            # Convert to grayscale for face detection
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            # Draw rectangles around the detected faces
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+
+            # Encode the frame as JPEG
+            _, jpeg_frame = cv2.imencode('.jpg', frame)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg_frame.tobytes() + b'\r\n')
+        except Exception as e:
+            print(f"Error in gen_face_detection: {e}")
+            break
+
+@app.route('/face_detection')
+def face_detection():
+    return render_template('face_detection.html')
+
+@app.route('/face_detection_stream')
+def face_detection_stream():
+    picam2 = Camera.get_instance()
+    return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80, debug=True)

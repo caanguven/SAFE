@@ -11,7 +11,6 @@
             padding-top: 50px;
         }
         img {
-            width: 200px;
             height: auto;
         }
         .button-container {
@@ -32,17 +31,34 @@
         .service-button:hover {
             background-color: #0056b3;
         }
+        .image-container {
+            display: flex;
+            justify-content: center; /* Centers the images horizontally */
+            gap: 20px; /* Adds space between the images */
+        }
+        .image-container img:first-child {
+            width: 200px; /* Width of the first image */
+        }
+        .image-container img:last-child {
+            width: 400px; /* Width of the second image */
+        }
     </style>
 </head>
 <body>
-    <h1>Welcome to the Service Hub</h1>
-    <img src="{{ url_for('static', filename='robot.png') }}" alt="Robot">
+    <h1>Welcome to the Control Center of S.A.F.E. (Soft Assistive Flexible Explorer)</h1>
+
+    <div class="image-container">
+        <img src="{{ url_for('static', filename='robot.png') }}" alt="Robot">
+        <img src="{{ url_for('static', filename='nrg.png') }}" alt="NRG">
+    </div>
+    
     <div class="button-container">
         <a href="{{ url_for('gyro') }}" class="service-button">Gyro</a>
         <a href="{{ url_for('click') }}" class="service-button">Click</a>
         <a href="{{ url_for('video_feed') }}" class="service-button">Video Feed</a>
         <a href="{{ url_for('manual_drive') }}" class="service-button">Manual Drive</a>
         <a href="{{ url_for('autonoms_drive') }}" class="service-button">Autonomous Drive</a>
+        <a href="{{ url_for('face_detection') }}" class="service-button">Face Detection</a>
     </div>
 </body>
 </html>

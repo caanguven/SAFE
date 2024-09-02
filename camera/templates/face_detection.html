@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Face Detection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .video-container {
+            text-align: center;
+        }
+        img {
+            width: 640px;
+            height: 480px;
+            border: 1px solid #ccc;
+        }
+        .button-container {
+            margin-top: 30px;
+        }
+        .back-button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .back-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Face Detection</h1>
+        <div class="video-container">
+            <img id="video" src="{{ url_for('face_detection_stream') }}" alt="Face Detection Video Feed">
+        </div>
+        <div class="button-container">
+            <a href="{{ url_for('main_page') }}" class="back-button">Back to Main Page</a>
+        </div>
+    </div>
+</body>
+</html>
