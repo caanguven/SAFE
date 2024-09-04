@@ -43,11 +43,11 @@ OFFSET = 5  # Allowable offset range
 # Proportional gain (Kp), you can adjust this value
 Kp = 1.0
 
-# Function to map potentiometer value to degrees
+# Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
 def map_potentiometer_value(value):
     # The value is from 0 to 1023. Convert it to 330 degrees 
     new_value =  value * (330 / 1023)
-    # if the new_value is bigger than 330 normalize it to 360
+    # If the new_value is bigger than 330, normalize it to 360
     if new_value > 330:
         new_value = 360
     return new_value
@@ -57,8 +57,16 @@ def p_control_motor_4(pot_value):
     # Map the potentiometer reading to degrees
     current_angle = map_potentiometer_value(pot_value)
     
-    # Calculate the error
-    error = SET_POINT - current_angle
+    # Calculate the raw error
+    raw_error = SET_POINT - current_angle
+
+    # Normalize the error for wrap-around (shortest path logic)
+    if raw_error > 180:  # Better to rotate backward
+        error = raw_error - 360
+    elif raw_error < -180:  # Better to rotate forward
+        error = raw_error + 360
+    else:
+        error = raw_error
 
     # Calculate the control signal using the P controller
     control_signal = Kp * abs(error)
@@ -67,20 +75,20 @@ def p_control_motor_4(pot_value):
     control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
 
     # Check if the current angle is within the acceptable range of the target (SET_POINT ± OFFSET)
-    if SET_POINT - OFFSET <= current_angle <= SET_POINT + OFFSET:
+    if abs(error) <= OFFSET:
         # Stop the motor if within the target range
         GPIO.output(M4_IN1, GPIO.LOW)
         GPIO.output(M4_IN2, GPIO.LOW)
         pwm.ChangeDutyCycle(0)
         print(f"Motor stopped at target: {current_angle:.2f} degrees")
-    elif current_angle < SET_POINT - OFFSET:
-        # Move forward if the current angle is below the lower bound of the target
+    elif error > 0:
+        # Move forward if the error is positive (current_angle < set_point)
         GPIO.output(M4_IN1, GPIO.HIGH)
         GPIO.output(M4_IN2, GPIO.LOW)
         pwm.ChangeDutyCycle(control_signal)
         print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
-    elif current_angle > SET_POINT + OFFSET:
-        # Reverse if the current angle is above the upper bound of the target
+    else:
+        # Move backward if the error is negative (current_angle > set_point)
         GPIO.output(M4_IN1, GPIO.LOW)
         GPIO.output(M4_IN2, GPIO.HIGH)
         pwm.ChangeDutyCycle(control_signal)
