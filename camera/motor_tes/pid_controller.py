@@ -90,9 +90,13 @@ def pid_control_motor_4(pot_value):
     # Map the filtered potentiometer reading to degrees
     current_angle = map_potentiometer_value(pot_value)
     
-    # Calculate forward error (difference to the target)
-    error = (SET_POINT - current_angle + 180) % 360 - 180  # Always move forward, wrap around at 360
+    # Calculate the forward error (difference to the target)
+    error = SET_POINT - current_angle
     
+    # Make sure we only move forward (i.e., ignore backward)
+    if error < 0:
+        error += 360  # Ensure forward movement by wrapping error forward
+
     # Get the current time
     current_time = time.time()
     delta_time = current_time - last_time
