@@ -52,21 +52,22 @@ def map_potentiometer_value(value):
         new_value = 360
     return new_value
 
-# P-Controller for motor control
+# P-Controller for motor control with wrap-around handling
 def p_control_motor_4(pot_value):
     # Map the potentiometer reading to degrees
     current_angle = map_potentiometer_value(pot_value)
     
     # Calculate the raw error
-    raw_error = SET_POINT - current_angle
+    error_forward = (SET_POINT - current_angle) % 360  # Forward direction error
+    error_backward = (current_angle - SET_POINT) % 360  # Backward direction error
 
-    # Normalize the error for wrap-around (shortest path logic)
-    if raw_error > 180:  # Better to rotate backward
-        error = raw_error - 360
-    elif raw_error < -180:  # Better to rotate forward
-        error = raw_error + 360
+    # Pick the shortest path (forward or backward)
+    if error_forward <= error_backward:
+        error = error_forward
+        direction = "forward"
     else:
-        error = raw_error
+        error = -error_backward
+        direction = "backward"
 
     # Calculate the control signal using the P controller
     control_signal = Kp * abs(error)
@@ -81,14 +82,14 @@ def p_control_motor_4(pot_value):
         GPIO.output(M4_IN2, GPIO.LOW)
         pwm.ChangeDutyCycle(0)
         print(f"Motor stopped at target: {current_angle:.2f} degrees")
-    elif error > 0:
-        # Move forward if the error is positive (current_angle < set_point)
+    elif direction == "forward":
+        # Move forward if the shortest error is forward
         GPIO.output(M4_IN1, GPIO.HIGH)
         GPIO.output(M4_IN2, GPIO.LOW)
         pwm.ChangeDutyCycle(control_signal)
         print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
-    else:
-        # Move backward if the error is negative (current_angle > set_point)
+    elif direction == "backward":
+        # Move backward if the shortest error is backward
         GPIO.output(M4_IN1, GPIO.LOW)
         GPIO.output(M4_IN2, GPIO.HIGH)
         pwm.ChangeDutyCycle(control_signal)
