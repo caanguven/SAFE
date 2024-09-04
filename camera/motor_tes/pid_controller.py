@@ -36,8 +36,19 @@ GPIO.setup(M4_SPD, GPIO.OUT)
 pwm = GPIO.PWM(M4_SPD, 1000)  # Set PWM frequency to 1kHz
 pwm.start(0)  # Start with 0% duty cycle (motor off)
 
-# Set point for the motor (desired angle)
-SET_POINT = 200  # Target degrees
+# Command-line argument handling for SET_POINT
+if len(sys.argv) != 2:
+    print("Usage: python pid.py <set_point>")
+    sys.exit(1)
+
+try:
+    SET_POINT = int(sys.argv[1])
+    if SET_POINT < 0 or SET_POINT > 360:
+        raise ValueError("SET_POINT must be between 0 and 360 degrees")
+except ValueError as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+
 OFFSET = 5  # Allowable offset range
 
 # PID constants (you may need to tune these)
@@ -95,8 +106,8 @@ def pid_control_motor_4(pot_value):
             print(f"Motor stopped at target: {current_angle:.2f} degrees")
         else:
             # Always move forward (ignore backward)
-            GPIO.output(M4_IN1, GPIO.LOW)
-            GPIO.output(M4_IN2, GPIO.HIGH)
+            GPIO.output(M4_IN1, GPIO.HIGH)
+            GPIO.output(M4_IN2, GPIO.LOW)
             pwm.ChangeDutyCycle(control_signal)
             print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
         
