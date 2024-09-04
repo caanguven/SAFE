@@ -95,8 +95,8 @@ def pid_control_motor_4(pot_value):
             print(f"Motor stopped at target: {current_angle:.2f} degrees")
         else:
             # Always move forward (ignore backward)
-            GPIO.output(M4_IN1, GPIO.HIGH)
-            GPIO.output(M4_IN2, GPIO.LOW)
+            GPIO.output(M4_IN1, GPIO.LOW)
+            GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
             print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
         
