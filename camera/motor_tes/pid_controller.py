@@ -3,6 +3,7 @@ import time
 import sys
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
+import collections
 
 # Pin Definitions
 M1_IN1 = 7
@@ -60,6 +61,25 @@ Kd = 0.1   # Derivative gain
 previous_error = 0
 integral = 0
 last_time = time.time()
+
+# Deque to hold the moving window for circular median filtering
+WINDOW_SIZE = 5
+adc_values = collections.deque(maxlen=WINDOW_SIZE)
+
+# Function to calculate the circular distance between two points on a circular scale
+def circular_distance(value1, value2, max_value=1023):
+    diff = abs(value1 - value2)
+    return min(diff, max_value - diff)
+
+# Function to apply a circular median filter on ADC values
+def circular_median_filter(new_value):
+    adc_values.append(new_value)
+    
+    # Sort values based on circular distance to the middle value
+    sorted_values = sorted(adc_values, key=lambda x: circular_distance(x, adc_values[len(adc_values) // 2]))
+    
+    # Return the circular median
+    return sorted_values[len(sorted_values) // 2]
 
 # Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
 def map_potentiometer_value(value):
@@ -126,11 +146,11 @@ def adc_and_motor_control():
             # Read all the ADC channel values
             values = [mcp.read_adc(i) for i in range(8)]
             
-            # Print the ADC values (assuming channel 3 is for potentiometer)
-            print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*values))
+            # Apply the circular median filter to the raw ADC value from channel 3 (potentiometer)
+            filtered_pot_value = circular_median_filter(values[3])
 
-            # Control motor 4 based on potentiometer value (channel 3)
-            pid_control_motor_4(values[3])
+            # Control motor 4 based on the filtered potentiometer value
+            pid_control_motor_4(filtered_pot_value)
 
             time.sleep(0.1)
 
