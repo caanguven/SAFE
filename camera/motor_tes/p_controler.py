@@ -45,12 +45,12 @@ Kp = 1.0
 
 # Function to map potentiometer value to degrees
 def map_potentiometer_value(value):
-    if value < 330:
-        return 0  # Treat anything below the dead space as 0 degrees
-    elif value > 1023:
-        return 360  # Cap the value at 360 if it goes beyond 1023
-    else:
-        return (value - 330) * (360 / (1023 - 330))  # Map 330-1023 to 0-360 degrees
+    # The value is from 0 to 1023. Convert it to 330 degrees 
+    new_value =  value * (330 / 1023)
+    # if the new_value is bigger than 330 normalize it to 360
+    if new_value > 330:
+        new_value = 360
+    return new_value
 
 # P-Controller for motor control
 def p_control_motor_4(pot_value):
