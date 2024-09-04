@@ -56,6 +56,10 @@ Kp = 0.2  # Proportional gain
 Ki = 0.05  # Integral gain
 Kd = 0.1   # Derivative gain
 
+# EMA smoothing factor (closer to 1 means faster response, closer to 0 means smoother but slower response)
+ALPHA = 0.1
+ema_value = None  # Initialize EMA value
+
 # Variables for PID controller
 previous_error = 0
 integral = 0
@@ -70,15 +74,24 @@ def map_potentiometer_value(value):
         new_value = 360
     return new_value
 
+# Exponential Moving Average (EMA) Filter
+def exponential_moving_average(new_value):
+    global ema_value
+    if ema_value is None:  # Initialize EMA with the first reading
+        ema_value = new_value
+    else:
+        ema_value = ALPHA * new_value + (1 - ALPHA) * ema_value
+    return ema_value
+
 # PID-Controller for motor control with forward-only movement
 def pid_control_motor_4(pot_value):
     global previous_error, integral, last_time
     
-    # Map the potentiometer reading to degrees
+    # Map the filtered potentiometer reading to degrees
     current_angle = map_potentiometer_value(pot_value)
     
     # Calculate forward error (difference to the target)
-    error = (SET_POINT - current_angle) % 360  # Always move forward, wrap around at 360
+    error = (SET_POINT - current_angle + 180) % 360 - 180  # Always move forward, wrap around at 360
     
     # Get the current time
     current_time = time.time()
@@ -123,14 +136,14 @@ def adc_and_motor_control():
         print('-' * 57)
 
         while True:
-            # Read all the ADC channel values
-            values = [mcp.read_adc(i) for i in range(8)]
+            # Read the raw ADC value from channel 3 (assuming potentiometer is connected to channel 3)
+            raw_pot_value = mcp.read_adc(3)
             
-            # Print the ADC values (assuming channel 3 is for potentiometer)
-            print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*values))
-
-            # Control motor 4 based on potentiometer value (channel 3)
-            pid_control_motor_4(values[3])
+            # Apply the EMA filter
+            filtered_pot_value = exponential_moving_average(raw_pot_value)
+            
+            # Control motor 4 based on the filtered potentiometer value
+            pid_control_motor_4(filtered_pot_value)
 
             time.sleep(0.1)
 
