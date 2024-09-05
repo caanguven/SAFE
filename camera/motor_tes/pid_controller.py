@@ -91,7 +91,7 @@ def custom_filter(new_value):
         if next_value <= 200:
             return next_value  
         else:
-            return None  
+            return 0  
     else:
         return new_value  
 
