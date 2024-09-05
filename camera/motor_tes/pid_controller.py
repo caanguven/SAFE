@@ -91,14 +91,20 @@ def map_potentiometer_value(value):
     return new_value
 
 # PID-Controller for motor control with forward-only movement
+# PID-Controller for motor control with forward-only movement
 def pid_control_motor_4(pot_value):
     global previous_error, integral, last_time
     
     # Map the potentiometer reading to degrees
     current_angle = map_potentiometer_value(pot_value)
     
-    # Calculate forward error (difference to the target)
-    error = (SET_POINT - current_angle) % 360  # Always move forward, wrap around at 360
+    # Calculate error with circular wrap-around handling
+    error = SET_POINT - current_angle
+    
+    # Check if the error crosses the circular boundary
+    if current_angle > SET_POINT:
+        # If we're wrapping around the 360-degree boundary, adjust error
+        error = (360 - current_angle) + SET_POINT
     
     # Get the current time
     current_time = time.time()
