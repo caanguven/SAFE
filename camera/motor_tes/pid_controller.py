@@ -82,18 +82,21 @@ def circular_median_filter(new_value):
     return sorted_values[len(sorted_values) // 2]
 
 # Function to apply a custom filter on ADC values
+# Function to apply a custom filter on ADC values
 def custom_filter(new_value):
     adc_values.append(new_value)
 
     # Check if the current value is greater than 960
     if len(adc_values) >= 2 and adc_values[-2] > 960:
+        # Check the reading right after the value greater than 960
         next_value = adc_values[-1]
         if next_value <= 200:
-            return next_value  
+            return next_value  # Return the next valid reading
         else:
-            return 0  
+            return new_value  # Return the unfiltered reading if the next value is greater than 200
     else:
-        return new_value  
+        return new_value  # If no value above 960 was found, return the current reading
+
 
 
 
