@@ -86,21 +86,15 @@ def custom_filter(new_value):
     adc_values.append(new_value)
 
     # Check if the current value is greater than 960
-    if adc_values[-1] > 960:
-        # If a value greater than 960 is found, check the next 3 readings
-        filtered_values = []
-        for i in range(1, min(4, len(adc_values))):  # Look at the next 3 values
-            next_value = adc_values[-i]
-            if next_value <= 200:
-                filtered_values.append(next_value)
-
-        # Return the first valid filtered value if there are any valid readings
-        if len(filtered_values) > 0:
-            return filtered_values[0]  # Return the first valid reading
+    if len(adc_values) >= 2 and adc_values[-2] > 960:
+        next_value = adc_values[-1]
+        if next_value <= 200:
+            return next_value  
         else:
-            return None  # No valid reading, you can choose how to handle this case
+            return None  
     else:
-        return new_value  # If no value above 960 was found, return the current reading
+        return new_value  
+
 
 
 # Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
@@ -178,10 +172,6 @@ def adc_and_motor_control():
             filtered_pot_value = circular_median_filter(values[3])
 
             filtered_pot_value2 = custom_filter(values[3])
-
-            if filtered_pot_value2 is None:
-                print("No valid reading after filtering, skipping motor control.")
-                continue
 
 
             # Control motor 4 based on the filtered potentiometer value
