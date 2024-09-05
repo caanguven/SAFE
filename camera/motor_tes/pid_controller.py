@@ -81,6 +81,26 @@ def circular_median_filter(new_value):
     # Return the circular median
     return sorted_values[len(sorted_values) // 2]
 
+# Function to apply a custom filter on ADC values
+def custom_filter(new_value):
+    adc_values.append(new_value)
+
+    # Check if the last value is greater than 960
+    if adc_values[-1] > 960:
+        # If a value greater than 960 is found, check the next 3 readings
+        filtered_values = []
+        for i in range(1, min(4, len(adc_values))):  # Look at the next 3 values
+            next_value = adc_values[-i]
+            if next_value <= 200:
+                filtered_values.append(next_value)
+        
+        if len(filtered_values) > 0:
+            return sum(filtered_values) / len(filtered_values)  # Return average of the filtered values
+        else:
+            return new_value  # Default to the original value if none of the next readings are valid
+    else:
+        return new_value
+
 # Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
 def map_potentiometer_value(value):
     # The value is from 0 to 1023. Convert it to 330 degrees 
@@ -155,8 +175,11 @@ def adc_and_motor_control():
             # Apply the circular median filter to the raw ADC value from channel 3 (potentiometer)
             filtered_pot_value = circular_median_filter(values[3])
 
+            filtered_pot_value2 = custom_filter(values[3])
+
+
             # Control motor 4 based on the filtered potentiometer value
-            pid_control_motor_4(filtered_pot_value)
+            pid_control_motor_4(filtered_pot_value2)
 
             time.sleep(0.1)
 
