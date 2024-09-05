@@ -85,7 +85,7 @@ def circular_median_filter(new_value):
 def custom_filter(new_value):
     adc_values.append(new_value)
 
-    # Check if the last value is greater than 960
+    # Check if the current value is greater than 960
     if adc_values[-1] > 960:
         # If a value greater than 960 is found, check the next 3 readings
         filtered_values = []
@@ -93,13 +93,15 @@ def custom_filter(new_value):
             next_value = adc_values[-i]
             if next_value <= 200:
                 filtered_values.append(next_value)
-        
+
+        # Return the first valid filtered value if there are any valid readings
         if len(filtered_values) > 0:
-            return sum(filtered_values) / len(filtered_values)  # Return average of the filtered values
+            return filtered_values[0]  # Return the first valid reading
         else:
-            return new_value  # Default to the original value if none of the next readings are valid
+            return None  # No valid reading, you can choose how to handle this case
     else:
-        return new_value
+        return new_value  # If no value above 960 was found, return the current reading
+
 
 # Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
 def map_potentiometer_value(value):
