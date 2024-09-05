@@ -179,6 +179,10 @@ def adc_and_motor_control():
 
             filtered_pot_value2 = custom_filter(values[3])
 
+            if filtered_pot_value2 is None:
+                print("No valid reading after filtering, skipping motor control.")
+                continue
+
 
             # Control motor 4 based on the filtered potentiometer value
             pid_control_motor_4(filtered_pot_value2)
