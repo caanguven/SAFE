@@ -45,13 +45,17 @@ last_valid_control_signal = 0  # Store the last valid control signal before ente
 def millis():
     return int(time.time() * 1000)
 
+# Sawtooth wave generator for dynamic set position (between 0 and 1023)
+def sawtooth_wave(t, period, amplitude=1023):
+    return (t % period) * (amplitude / period)
+
 # Circular error handling: Wrap errors to allow forward movement across 360 degrees
 def calculate_circular_error(set_position, current_angle):
     error = set_position - current_angle
     
     # If error is negative, wrap it to simulate forward movement across 360 degrees
     if error < 0:
-        error += 360
+        error += 1023
     
     return error
 
@@ -120,12 +124,13 @@ def pid_control_motor(pot_value, set_position):
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
-    global initial_angle
-
     try:
         print('Reading MCP3008 values, press Ctrl-C to quit...')
         print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*range(8)))
         print('-' * 57)
+
+        # Initialize time
+        start_time = millis()
 
         while True:
             # Read all the ADC channel values
@@ -134,10 +139,11 @@ def adc_and_motor_control():
             # Use the potentiometer value from channel 3
             pot_value = values[3]
 
-            # Simulate the set position (you can set this as needed)
-            set_position = 512  # Example target, halfway point of the potentiometer range (0 to 1023)
+            # Calculate dynamic set position based on a sawtooth wave pattern
+            current_time = millis()
+            set_position = sawtooth_wave(current_time - start_time, 4000)  # 4 seconds for a full cycle
 
-            # Control motor 4 based on the potentiometer value and set position
+            # Control motor 4 based on the potentiometer value and dynamic set position
             pid_control_motor(pot_value, set_position)
 
             time.sleep(0.1)
