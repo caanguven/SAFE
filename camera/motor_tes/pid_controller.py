@@ -53,25 +53,30 @@ last_time = time.time()
 filter_active = False  # Tracks if we are in a spike event
 filter_count = 0       # Counts how many readings we have processed after a spike
 MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
+last_valid_reading = None  # Track last valid reading to reset the filter if needed
 
 # Function to apply the custom spike filter
 def custom_spike_filter(new_value):
-    global filter_active, filter_count
+    global filter_active, filter_count, last_valid_reading
     
+    # Reset the filter if last valid reading was not in the spike range and filtering has completed
+    if filter_active and filter_count >= MAX_FILTER_COUNT:
+        filter_active = False
+        filter_count = 0
+        print(f"Filter reset after {MAX_FILTER_COUNT} readings.")
+
     # Check if we are in the middle of a spike event
     if filter_active:
         filter_count += 1
-        
+
         # If the value is greater than 300 and lower than 950, discard the reading
         if 300 < new_value < 950:
             print(f"Discarding invalid reading: {new_value}")
             return None  # Indicate that this value is invalid
+        else:
+            last_valid_reading = new_value  # Store last valid reading
 
-        # If we have processed 5 readings, reset the filter state
-        if filter_count >= MAX_FILTER_COUNT:
-            filter_active = False
-            filter_count = 0
-        return new_value  # Return the valid value if it's not in the discard range
+        return new_value  # Return valid value
     
     # If a value is between 950 and 1023, start filtering for the next 5 readings
     if 950 <= new_value <= 1023:
@@ -80,7 +85,8 @@ def custom_spike_filter(new_value):
         filter_count = 0  # Reset the counter to begin checking next 5 readings
         return new_value  # Return the current spike value without filtering
     
-    # If no spike, return the value as it is
+    # Store the valid reading when no spike is detected
+    last_valid_reading = new_value
     return new_value
 
 # Function to map potentiometer value to degrees (0 to 360 degrees), handling dead zone
