@@ -54,11 +54,35 @@ filter_active = False  # Tracks if we are in a spike event
 filter_count = 0       # Counts how many readings we have processed after a spike
 MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
 last_valid_reading = None  # Track last valid reading to reset the filter if needed
+last_pot_value = None  # To track the previous potentiometer value and detect circular motion
+
+# Function to check if the reading is part of a circular transition
+def is_circular_transition(current_value, previous_value):
+    if previous_value is None:
+        return False  # No comparison if there's no previous value
+
+    # Check if we are transitioning from high values near 1023 to low values near 0
+    if previous_value > 950 and current_value < 100:
+        return True
+
+    # Check if we are transitioning from low values near 0 to high values near 1023
+    if previous_value < 100 and current_value > 950:
+        return True
+
+    return False
 
 # Function to apply the custom spike filter
 def custom_spike_filter(new_value):
-    global filter_active, filter_count, last_valid_reading
+    global filter_active, filter_count, last_valid_reading, last_pot_value
     
+    # If the current value is part of a circular transition, skip filtering
+    if last_pot_value is not None and is_circular_transition(new_value, last_pot_value):
+        print(f"Circular transition detected: {last_pot_value} -> {new_value}. Skipping filter.")
+        last_valid_reading = new_value
+        last_pot_value = new_value
+        filter_active = False  # Deactivate filter if transitioning
+        return new_value
+
     # Reset the filter if last valid reading was not in the spike range and filtering has completed
     if filter_active and filter_count >= MAX_FILTER_COUNT:
         filter_active = False
@@ -70,12 +94,13 @@ def custom_spike_filter(new_value):
         filter_count += 1
 
         # If the value is greater than 300 and lower than 950, discard the reading
-        if 100 < new_value < 950:
+        if 300 < new_value < 950:
             print(f"Discarding invalid reading: {new_value}")
             return None  # Indicate that this value is invalid
         else:
             last_valid_reading = new_value  # Store last valid reading
 
+        last_pot_value = new_value  # Update the last potentiometer value
         return new_value  # Return valid value
     
     # If a value is between 950 and 1023, start filtering for the next 5 readings
@@ -83,10 +108,12 @@ def custom_spike_filter(new_value):
         print(f"Spike detected: {new_value}, starting filter")
         filter_active = True
         filter_count = 0  # Reset the counter to begin checking next 5 readings
+        last_pot_value = new_value  # Update the last potentiometer value
         return new_value  # Return the current spike value without filtering
     
     # Store the valid reading when no spike is detected
     last_valid_reading = new_value
+    last_pot_value = new_value  # Update the last potentiometer value
     return new_value
 
 # Function to map potentiometer value to degrees (0 to 360 degrees), handling dead zone
