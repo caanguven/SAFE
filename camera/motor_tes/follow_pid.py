@@ -43,13 +43,17 @@ MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
 last_valid_reading = None  # Track last valid reading to reset the filter if needed
 last_pot_value = None  # To track the previous potentiometer value and detect circular motion
 
+# Initial set position for the sawtooth wave
+initial_angle = 0  # This will be set based on the initial potentiometer reading
+
 # Millis equivalent in Python
 def millis():
     return int(time.time() * 1000)
 
-# Sawtooth wave generator
-def sawtoothWave2(t, period, amplitude):
-    return (t % int(period)) * (amplitude / period)
+# Sawtooth wave generator starting from the initial angle
+def sawtoothWave2(t, period, amplitude, initial_angle):
+    # Generate the sawtooth wave and offset by initial angle
+    return initial_angle + (t % int(period)) * (amplitude / period)
 
 # Function to check if the reading is part of a circular transition
 def is_circular_transition(current_value, previous_value):
@@ -176,10 +180,17 @@ def pid_control_motor_with_dead_zone(pot_value, set_position):
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
+    global initial_angle
+
     try:
         print('Reading MCP3008 values, press Ctrl-C to quit...')
         print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*range(8)))
         print('-' * 57)
+
+        # Read the initial potentiometer value
+        initial_pot_value = mcp.read_adc(3)
+        initial_angle = map_potentiometer_value_with_dead_zone(initial_pot_value)
+        print(f"Initial angle set to: {initial_angle:.2f} degrees")
 
         while True:
             # Read all the ADC channel values
@@ -195,10 +206,10 @@ def adc_and_motor_control():
             if filtered_pot_value is None:
                 continue
 
-            # Apply sawtooth wave for dynamic set point
+            # Apply sawtooth wave for dynamic set point, starting from initial angle
             current_millis = millis()
             time_for_one_cycle = 4000.0  # One cycle in milliseconds
-            set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360)
+            set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360, initial_angle)
 
             # Control motor 4 based on the filtered potentiometer value and dynamic set point
             pid_control_motor_with_dead_zone(filtered_pot_value, set_position)
