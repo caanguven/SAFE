@@ -1,3 +1,4 @@
+import re
 import RPi.GPIO as GPIO
 import time
 import sys
@@ -131,7 +132,9 @@ def pid_control_motor(degrees_value, set_position):
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
-            print(f"Moving forward: Potentiometer Value: {degrees_value:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
+
+            # Format and print the information in the required pattern
+            print(f"Moving forward: Potentiometer Value: {degrees_value:.2f}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
         
         # Update previous error, time, and store the last valid control signal
         previous_error = error
@@ -152,7 +155,7 @@ def adc_and_motor_control():
 
         # Read the initial potentiometer value
         initial_pot_value = mcp.read_adc(3)
-        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value) + 7
+        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
         print(f"Initial motor angle set to: {initial_angle:.2f} degrees")
 
         # Initialize time
