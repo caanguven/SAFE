@@ -152,7 +152,7 @@ def adc_and_motor_control():
 
         # Read the initial potentiometer value
         initial_pot_value = mcp.read_adc(3)
-        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
+        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value) + 7
         print(f"Initial motor angle set to: {initial_angle:.2f} degrees")
 
         # Initialize time
