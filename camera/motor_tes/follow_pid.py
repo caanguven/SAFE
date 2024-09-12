@@ -65,6 +65,13 @@ def calculate_circular_error(set_position, current_angle):
     
     return error
 
+# Sawtooth wave generator that starts from the initial angle
+def sawtooth_wave(t, period, amplitude, initial_angle):
+    # Sawtooth wave starts from the initial angle and wraps within 0 to 360 degrees
+    normalized_wave = (t % period) * (amplitude / period)
+    set_position = (normalized_wave + initial_angle) % 360
+    return set_position
+
 # PID-Controller for motor control with dead zone handling
 def pid_control_motor(degrees_value, set_position):
     global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal, average_speed_before_dead_zone, speed_samples
@@ -143,6 +150,11 @@ def adc_and_motor_control():
         print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*range(8)))
         print('-' * 57)
 
+        # Read the initial potentiometer value
+        initial_pot_value = mcp.read_adc(3)
+        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
+        print(f"Initial motor angle set to: {initial_angle:.2f} degrees")
+
         # Initialize time
         start_time = millis()
 
@@ -154,9 +166,9 @@ def adc_and_motor_control():
             pot_value = values[3]
             degrees_value = map_potentiometer_value_to_degrees(pot_value)
 
-            # Calculate dynamic set position based on a sawtooth wave pattern
+            # Calculate dynamic set position based on a sawtooth wave pattern starting from initial angle
             current_time = millis()
-            set_position = (current_time - start_time) % 360  # Example dynamic set position
+            set_position = sawtooth_wave(current_time - start_time, 4000, 360, initial_angle)  # 4 seconds for a full cycle
 
             # Control motor 4 based on the potentiometer value (in degrees) and dynamic set position
             pid_control_motor(degrees_value, set_position)
