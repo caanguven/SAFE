@@ -40,7 +40,7 @@ except ValueError as e:
 OFFSET = 5  # Allowable offset range
 
 # PID constants (you may need to tune these)
-Kp = 0.1  # Proportional gain
+Kp = 0.05  # Proportional gain
 Ki = 0.05  # Integral gain
 Kd = 0.05   # Derivative gain
 
