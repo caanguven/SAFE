@@ -25,9 +25,8 @@ pwm = GPIO.PWM(M4_SPD, 1000)  # Set PWM frequency to 1kHz
 pwm.start(0)  # Start with 0% duty cycle (motor off)
 
 OFFSET = 5  # Allowable offset range
-DEAD_ZONE_START = 950  # Start of dead zone in potentiometer value (corresponds to 330 degrees)
-DEAD_ZONE_END = 1023   # End of dead zone in potentiometer value (corresponds to 360 degrees)
-RESUME_ZONE = 200      # Resume zone (below this, the motor should start reading normally again)
+DEAD_ZONE_DEG_START = 330  # Start of dead zone in degrees
+DEAD_ZONE_DEG_END = 360    # End of dead zone in degrees
 
 # PID constants (you may need to tune these)
 Kp = 0.05  # Proportional gain
@@ -40,14 +39,21 @@ integral = 0
 last_time = time.time()
 in_dead_zone = False  # Track if the motor is in the dead zone
 last_valid_control_signal = 0  # Store the last valid control signal before entering the dead zone
+average_speed_before_dead_zone = 0  # To store the average speed before entering dead zone
+speed_samples = []  # Keep track of a few control signals to calculate average speed
+
+# Number of samples to use for averaging speed before dead zone
+NUM_SAMPLES_FOR_AVERAGE = 5
 
 # Millis equivalent in Python
 def millis():
     return int(time.time() * 1000)
 
-# Sawtooth wave generator for dynamic set position (between 0 and 1023)
-def sawtooth_wave(t, period, amplitude=1023):
-    return (t % period) * (amplitude / period)
+# Function to map potentiometer value to degrees (0 to 360)
+def map_potentiometer_value_to_degrees(value):
+    # Potentiometer values range from 0 to 1023
+    # We map this directly to 0 to 360 degrees
+    return value * (360 / 1023)
 
 # Circular error handling: Wrap errors to allow forward movement across 360 degrees
 def calculate_circular_error(set_position, current_angle):
@@ -55,33 +61,36 @@ def calculate_circular_error(set_position, current_angle):
     
     # If error is negative, wrap it to simulate forward movement across 360 degrees
     if error < 0:
-        error += 1023
+        error += 360
     
     return error
 
 # PID-Controller for motor control with dead zone handling
-def pid_control_motor(pot_value, set_position):
-    global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal
+def pid_control_motor(degrees_value, set_position):
+    global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal, average_speed_before_dead_zone, speed_samples
     
-    # Dead zone detection
-    if DEAD_ZONE_START <= pot_value <= DEAD_ZONE_END:
+    # Dead zone detection in degrees (330° to 360°)
+    if DEAD_ZONE_DEG_START <= degrees_value <= DEAD_ZONE_DEG_END:
         if not in_dead_zone:
+            # We are entering the dead zone, calculate the average speed based on previous values
             in_dead_zone = True
-            print("Entering dead zone. Maintaining last control signal.")
-        # Continue applying the last control signal (the motor keeps moving as per the previous command)
-        pwm.ChangeDutyCycle(last_valid_control_signal)
+            average_speed_before_dead_zone = sum(speed_samples) / len(speed_samples) if speed_samples else last_valid_control_signal
+            print(f"Entering dead zone. Maintaining average speed: {average_speed_before_dead_zone:.2f}%")
+        
+        # Continue applying the average speed calculated before entering the dead zone
+        pwm.ChangeDutyCycle(average_speed_before_dead_zone)
         GPIO.output(M4_IN1, GPIO.LOW)
         GPIO.output(M4_IN2, GPIO.HIGH)
-        print(f"Moving in dead zone. Last control signal: {last_valid_control_signal:.2f}%")
+        print(f"Moving in dead zone. Control signal: {average_speed_before_dead_zone:.2f}%")
         return
     
-    # Exit dead zone when the potentiometer value drops below the resume zone
-    if in_dead_zone and pot_value < RESUME_ZONE:
+    # Exit dead zone when degrees go back below 200°
+    if in_dead_zone and degrees_value < 200:
         in_dead_zone = False
         print("Exiting dead zone. Resuming normal control.")
 
-    # Calculate the error directly using potentiometer value as the angle
-    current_angle = pot_value  # No need to map, just use the raw potentiometer value
+    # Calculate the error directly using degrees
+    current_angle = degrees_value
 
     # Calculate circular error (with wrap-around handling for circular scale)
     error = calculate_circular_error(set_position, current_angle)
@@ -115,12 +124,17 @@ def pid_control_motor(pot_value, set_position):
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
-            print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
+            print(f"Moving forward: Potentiometer Value: {degrees_value:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
         
         # Update previous error, time, and store the last valid control signal
         previous_error = error
         last_time = current_time
         last_valid_control_signal = control_signal  # Store the last valid signal
+        
+        # Keep a sliding window of control signal samples to calculate average speed
+        if len(speed_samples) >= NUM_SAMPLES_FOR_AVERAGE:
+            speed_samples.pop(0)  # Remove the oldest sample
+        speed_samples.append(control_signal)  # Add the new control signal to the list
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
@@ -136,15 +150,16 @@ def adc_and_motor_control():
             # Read all the ADC channel values
             values = [mcp.read_adc(i) for i in range(8)]
             
-            # Use the potentiometer value from channel 3
+            # Map the potentiometer value to degrees
             pot_value = values[3]
+            degrees_value = map_potentiometer_value_to_degrees(pot_value)
 
             # Calculate dynamic set position based on a sawtooth wave pattern
             current_time = millis()
-            set_position = sawtooth_wave(current_time - start_time, 4000)  # 4 seconds for a full cycle
+            set_position = (current_time - start_time) % 360  # Example dynamic set position
 
-            # Control motor 4 based on the potentiometer value and dynamic set position
-            pid_control_motor(pot_value, set_position)
+            # Control motor 4 based on the potentiometer value (in degrees) and dynamic set position
+            pid_control_motor(degrees_value, set_position)
 
             time.sleep(0.1)
 
