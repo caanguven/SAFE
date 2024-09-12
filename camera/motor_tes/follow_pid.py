@@ -25,6 +25,9 @@ pwm = GPIO.PWM(M4_SPD, 1000)  # Set PWM frequency to 1kHz
 pwm.start(0)  # Start with 0% duty cycle (motor off)
 
 OFFSET = 5  # Allowable offset range
+DEAD_ZONE_START = 950  # Start of dead zone in potentiometer value (corresponds to 330 degrees)
+DEAD_ZONE_END = 1023   # End of dead zone in potentiometer value (corresponds to 360 degrees)
+RESUME_ZONE = 200      # Resume zone (below this, the motor should start reading normally again)
 
 # PID constants (you may need to tune these)
 Kp = 0.05  # Proportional gain
@@ -35,106 +38,12 @@ Kd = 0.05   # Derivative gain
 previous_error = 0
 integral = 0
 last_time = time.time()
-
-# Global variables for filtering state
-filter_active = False  # Tracks if we are in a spike event
-filter_count = 0       # Counts how many readings we have processed after a spike
-MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
-last_valid_reading = None  # Track last valid reading to reset the filter if needed
-last_pot_value = None  # To track the previous potentiometer value and detect circular motion
-
-# Initial set position for the sawtooth wave
-initial_angle = 0  # This will be set based on the initial potentiometer reading
-is_first_run = True  # Track if it's the first loop to start at the initial angle
+in_dead_zone = False  # Track if the motor is in the dead zone
+last_valid_control_signal = 0  # Store the last valid control signal before entering the dead zone
 
 # Millis equivalent in Python
 def millis():
     return int(time.time() * 1000)
-
-# Sawtooth wave generator that starts exactly from the initial angle and wraps correctly
-def sawtoothWave2(t, period, amplitude, initial_angle):
-    # If this is the first run, we start from the initial angle
-    if is_first_run:
-        return initial_angle
-
-    # Normal sawtooth wave calculation after the first run
-    normalized_wave = (t % int(period)) * (amplitude / period)
-    
-    # Wrap the wave within 0-360 degrees
-    return normalized_wave % 360
-
-# Function to check if the reading is part of a circular transition
-def is_circular_transition(current_value, previous_value):
-    if previous_value is None:
-        return False  # No comparison if there's no previous value
-
-    # Check if we are transitioning from high values near 1023 to low values near 0
-    if previous_value > 950 and current_value < 100:
-        return True
-
-    # Check if we are transitioning from low values near 0 to high values near 1023
-    if previous_value < 100 and current_value > 950:
-        return True
-
-    return False
-
-# Function to apply the custom spike filter
-def custom_spike_filter(new_value):
-    global filter_active, filter_count, last_valid_reading, last_pot_value
-    
-    # If the current value is part of a circular transition, skip filtering
-    if last_pot_value is not None and is_circular_transition(new_value, last_pot_value):
-        print(f"Circular transition detected: {last_pot_value} -> {new_value}. Skipping filter.")
-        last_valid_reading = new_value
-        last_pot_value = new_value
-        filter_active = False  # Deactivate filter if transitioning
-        return new_value
-
-    # Reset the filter if last valid reading was not in the spike range and filtering has completed
-    if filter_active and filter_count >= MAX_FILTER_COUNT:
-        filter_active = False
-        filter_count = 0
-        print(f"Filter reset after {MAX_FILTER_COUNT} readings.")
-
-    # Check if we are in the middle of a spike event
-    if filter_active:
-        filter_count += 1
-
-        # If the value is greater than 100 and lower than 950, discard the reading
-        if 100 < new_value < 950:
-            print(f"Discarding invalid reading: {new_value}")
-            return None  # Indicate that this value is invalid
-        else:
-            last_valid_reading = new_value  # Store last valid reading
-
-        last_pot_value = new_value  # Update the last potentiometer value
-        return new_value  # Return valid value
-    
-    # If a value is between 950 and 1023, start filtering for the next 5 readings
-    if 950 <= new_value <= 1023:
-        print(f"Spike detected: {new_value}, starting filter")
-        filter_active = True
-        filter_count = 0  # Reset the counter to begin checking next 5 readings
-        last_pot_value = new_value  # Update the last potentiometer value
-        return new_value  # Return the current spike value without filtering
-    
-    # Store the valid reading when no spike is detected
-    last_valid_reading = new_value
-    last_pot_value = new_value  # Update the last potentiometer value
-    return new_value
-
-# Function to map potentiometer value to degrees (0 to 360 degrees), handling dead zone
-def map_potentiometer_value_with_dead_zone(value):
-    # The value is from 0 to 1023. Convert it to 330 degrees for valid range
-    new_value = value * (330 / 1023)
-    
-    # Handle dead zone from 330 to 360 degrees by interpolating the wrap-around
-    if new_value > 330:
-        # Interpolating the 30 degrees dead zone
-        dead_zone_value = (new_value - 330) * (30 / (1023 - int(330 * (1023 / 330))))
-        new_value = 360 - dead_zone_value  # Normalize to the full 360 degrees
-    
-    return new_value
 
 # Circular error handling: Wrap errors to allow forward movement across 360 degrees
 def calculate_circular_error(set_position, current_angle):
@@ -146,13 +55,30 @@ def calculate_circular_error(set_position, current_angle):
     
     return error
 
-# PID-Controller for motor control with dead zone handling and circular error correction
-def pid_control_motor_with_dead_zone(pot_value, set_position):
-    global previous_error, integral, last_time
+# PID-Controller for motor control with dead zone handling
+def pid_control_motor(pot_value, set_position):
+    global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal
     
-    # Map the potentiometer reading to degrees, handling dead zone
-    current_angle = map_potentiometer_value_with_dead_zone(pot_value)
+    # Dead zone detection
+    if DEAD_ZONE_START <= pot_value <= DEAD_ZONE_END:
+        if not in_dead_zone:
+            in_dead_zone = True
+            print("Entering dead zone. Maintaining last control signal.")
+        # Continue applying the last control signal (the motor keeps moving as per the previous command)
+        pwm.ChangeDutyCycle(last_valid_control_signal)
+        GPIO.output(M4_IN1, GPIO.LOW)
+        GPIO.output(M4_IN2, GPIO.HIGH)
+        print(f"Moving in dead zone. Last control signal: {last_valid_control_signal:.2f}%")
+        return
     
+    # Exit dead zone when the potentiometer value drops below the resume zone
+    if in_dead_zone and pot_value < RESUME_ZONE:
+        in_dead_zone = False
+        print("Exiting dead zone. Resuming normal control.")
+
+    # Calculate the error directly using potentiometer value as the angle
+    current_angle = pot_value  # No need to map, just use the raw potentiometer value
+
     # Calculate circular error (with wrap-around handling for circular scale)
     error = calculate_circular_error(set_position, current_angle)
 
@@ -185,26 +111,21 @@ def pid_control_motor_with_dead_zone(pot_value, set_position):
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
-            print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
+            print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
         
-        # Update previous error and time
+        # Update previous error, time, and store the last valid control signal
         previous_error = error
         last_time = current_time
-
+        last_valid_control_signal = control_signal  # Store the last valid signal
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
-    global initial_angle, is_first_run
+    global initial_angle
 
     try:
         print('Reading MCP3008 values, press Ctrl-C to quit...')
         print('| {0:>4} | {1:>4} | {2:>4} | {3:>4} | {4:>4} | {5:>4} | {6:>4} | {7:>4} |'.format(*range(8)))
         print('-' * 57)
-
-        # Read the initial potentiometer value
-        initial_pot_value = mcp.read_adc(3)
-        initial_angle = map_potentiometer_value_with_dead_zone(initial_pot_value)
-        print(f"Initial angle set to: {initial_angle:.2f} degrees")
 
         while True:
             # Read all the ADC channel values
@@ -213,24 +134,11 @@ def adc_and_motor_control():
             # Use the potentiometer value from channel 3
             pot_value = values[3]
 
-            # Apply the custom spike filter
-            filtered_pot_value = custom_spike_filter(pot_value)
+            # Simulate the set position (you can set this as needed)
+            set_position = 512  # Example target, halfway point of the potentiometer range (0 to 1023)
 
-            # If the filter returns None (invalid reading), skip to the next iteration
-            if filtered_pot_value is None:
-                continue
-
-            # Apply sawtooth wave for dynamic set point, starting from initial angle
-            current_millis = millis()
-            time_for_one_cycle = 4000.0  # One cycle in milliseconds
-            set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360, initial_angle)
-
-            # On the first run, we use the initial angle, then switch to the normal wave
-            if is_first_run:
-                is_first_run = False  # Disable the first run flag after initial set position
-
-            # Control motor 4 based on the filtered potentiometer value and dynamic set point
-            pid_control_motor_with_dead_zone(filtered_pot_value, set_position)
+            # Control motor 4 based on the potentiometer value and set position
+            pid_control_motor(pot_value, set_position)
 
             time.sleep(0.1)
 
