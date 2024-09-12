@@ -197,7 +197,7 @@ def adc_and_motor_control():
 
             # Apply sawtooth wave for dynamic set point
             current_millis = millis()
-            time_for_one_cycle = 4000.0  # One cycle in milliseconds
+            time_for_one_cycle = 1000.0  # One cycle in milliseconds
             set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360)
 
             # Control motor 4 based on the filtered potentiometer value and dynamic set point
