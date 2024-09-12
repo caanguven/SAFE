@@ -94,7 +94,7 @@ def custom_spike_filter(new_value):
         filter_count += 1
 
         # If the value is greater than 300 and lower than 950, discard the reading
-        if 300 < new_value < 950:
+        if 150 < new_value < 950:
             print(f"Discarding invalid reading: {new_value}")
             return None  # Indicate that this value is invalid
         else:
