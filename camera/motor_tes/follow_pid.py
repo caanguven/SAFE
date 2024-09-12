@@ -92,13 +92,18 @@ def map_potentiometer_value_to_degrees(value):
     # We map this directly to 0 to 360 degrees
     return value * (360 / 1023)
 
-# Circular error handling: Wrap errors to always move forward in circular motion (non-negative)
+# Circular error handling: Wrap errors to allow forward movement across 360 degrees
 def calculate_circular_error(set_position, current_angle):
     error = set_position - current_angle
-    # Ensure the error is always positive by wrapping within the circular range
-    if error < 0:
+
+    # Adjust for circular motion (wrap-around handling)
+    if error > 180:
+        error -= 360
+    elif error < -180:
         error += 360
+    
     return error
+
 
 # Sawtooth wave generator that starts from the initial angle
 def sawtooth_wave(t, period, amplitude, initial_angle):
@@ -134,14 +139,6 @@ def pid_control_motor(degrees_value, set_position):
 
     # Calculate the error directly using degrees
     current_angle = degrees_value
-
-    # Stop the motor if the current angle exceeds the set position
-    if current_angle > set_position:
-        GPIO.output(M4_IN1, GPIO.LOW)
-        GPIO.output(M4_IN2, GPIO.LOW)
-        pwm.ChangeDutyCycle(0)
-        print(f"Motor stopped because current angle {current_angle:.2f}° exceeds set position {set_position:.2f}°")
-        return
 
     # Calculate circular error (with wrap-around handling for circular scale)
     error = calculate_circular_error(set_position, current_angle)
