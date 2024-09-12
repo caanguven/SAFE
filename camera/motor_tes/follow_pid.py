@@ -132,19 +132,25 @@ def map_potentiometer_value_with_dead_zone(value):
     
     return new_value
 
-# PID-Controller for motor control with dead zone handling
+# Circular error handling: Wrap errors to allow forward movement across 360 degrees
+def calculate_circular_error(set_position, current_angle):
+    error = set_position - current_angle
+    
+    # If error is negative, wrap it to simulate forward movement across 360 degrees
+    if error < 0:
+        error += 360
+    
+    return error
+
+# PID-Controller for motor control with dead zone handling and circular error correction
 def pid_control_motor_with_dead_zone(pot_value, set_position):
     global previous_error, integral, last_time
     
     # Map the potentiometer reading to degrees, handling dead zone
     current_angle = map_potentiometer_value_with_dead_zone(pot_value)
     
-    # Calculate error (with wrap-around handling for circular scale)
-    error = set_position - current_angle
-    
-    # If the error is negative, force it to be positive (since we want forward movement only)
-    if error < 0:
-        error = abs(error)  # Take absolute value of error for forward-only control
+    # Calculate circular error (with wrap-around handling for circular scale)
+    error = calculate_circular_error(set_position, current_angle)
 
     # Get the current time
     current_time = time.time()
