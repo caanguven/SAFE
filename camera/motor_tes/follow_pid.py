@@ -167,7 +167,7 @@ def pid_control_motor_with_dead_zone(pot_value, set_position):
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
-            print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
+            print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
         
         # Update previous error and time
         previous_error = error
@@ -197,7 +197,7 @@ def adc_and_motor_control():
 
             # Apply sawtooth wave for dynamic set point
             current_millis = millis()
-            time_for_one_cycle = 1000.0  # One cycle in milliseconds
+            time_for_one_cycle = 4000.0  # One cycle in milliseconds
             set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360)
 
             # Control motor 4 based on the filtered potentiometer value and dynamic set point
