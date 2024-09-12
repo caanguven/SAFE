@@ -30,7 +30,7 @@ DEAD_ZONE_DEG_START = 330  # Start of dead zone in degrees
 DEAD_ZONE_DEG_END = 360    # End of dead zone in degrees
 
 # PID constants (you may need to tune these)
-Kp = 0.03  # Reduced proportional gain for smoother control
+Kp = 0.1  # Reduced proportional gain for smoother control
 Ki = 0.01  # Reduced integral gain to prevent large buildup
 Kd = 0.02  # Increased derivative gain for smoother transitions
 
