@@ -92,13 +92,11 @@ def map_potentiometer_value_to_degrees(value):
     # We map this directly to 0 to 360 degrees
     return value * (360 / 1023)
 
-# Circular error handling: Wrap errors to allow forward movement across 360 degrees
+# Circular error handling: Wrap errors to always move forward in circular motion (non-negative)
 def calculate_circular_error(set_position, current_angle):
     error = set_position - current_angle
-    # Wrap error to handle circular motion between 0 and 360 degrees
-    if error > 180:
-        error -= 360
-    elif error < -180:
+    # Ensure the error is always positive by wrapping within the circular range
+    if error < 0:
         error += 360
     return error
 
