@@ -43,12 +43,48 @@ last_valid_control_signal = 0  # Store the last valid control signal before ente
 average_speed_before_dead_zone = 0  # To store the average speed before entering dead zone
 speed_samples = []  # Keep track of a few control signals to calculate average speed
 
+# Filter state variables
+filter_active = False  # Is the filter currently active?
+filter_count = 0       # How many readings we've processed since the spike
+MAX_FILTER_COUNT = 5   # Maximum number of readings to process after a spike
+last_valid_reading = None
+
 # Number of samples to use for averaging speed before dead zone
 NUM_SAMPLES_FOR_AVERAGE = 5
 
 # Millis equivalent in Python
 def millis():
     return int(time.time() * 1000)
+
+# Custom filter function to discard invalid readings after a spike
+def custom_spike_filter(new_value):
+    global filter_active, filter_count, last_valid_reading
+    
+    # If filter is active, check the next few readings
+    if filter_active:
+        filter_count += 1
+        
+        # If the reading is between 300 and 950, discard it
+        if 300 < new_value < 950:
+            print(f"Discarding invalid reading: {new_value}")
+            return None
+        
+        # If we've processed enough readings, disable the filter
+        if filter_count >= MAX_FILTER_COUNT:
+            filter_active = False
+            filter_count = 0
+            print(f"Filter reset after {MAX_FILTER_COUNT} readings.")
+    
+    # Activate the filter if we detect a spike (reading > 950)
+    if new_value > 950:
+        print(f"Spike detected: {new_value}, starting filter")
+        filter_active = True
+        filter_count = 0
+        return new_value
+
+    # If the filter is not active, return the valid reading
+    last_valid_reading = new_value
+    return new_value
 
 # Function to map potentiometer value to degrees (0 to 360)
 def map_potentiometer_value_to_degrees(value):
@@ -155,7 +191,7 @@ def adc_and_motor_control():
 
         # Read the initial potentiometer value
         initial_pot_value = mcp.read_adc(3)
-        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value) + 5
+        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
         print(f"Initial motor angle set to: {initial_angle:.2f} degrees")
 
         # Initialize time
@@ -165,9 +201,18 @@ def adc_and_motor_control():
             # Read all the ADC channel values
             values = [mcp.read_adc(i) for i in range(8)]
             
-            # Map the potentiometer value to degrees
+            # Use the potentiometer value from channel 3
             pot_value = values[3]
-            degrees_value = map_potentiometer_value_to_degrees(pot_value)
+            
+            # Apply the custom spike filter
+            filtered_pot_value = custom_spike_filter(pot_value)
+
+            # If the filter returns None (indicating an invalid reading), skip this iteration
+            if filtered_pot_value is None:
+                continue
+
+            # Map the filtered potentiometer value to degrees
+            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
 
             # Calculate dynamic set position based on a sawtooth wave pattern starting from initial angle
             current_time = millis()
