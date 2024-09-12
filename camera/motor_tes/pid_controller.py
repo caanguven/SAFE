@@ -69,15 +69,12 @@ def pid_control_motor_with_dead_zone(pot_value):
     # Map the potentiometer reading to degrees, handling dead zone
     current_angle = map_potentiometer_value_with_dead_zone(pot_value)
     
-    # Calculate error and handle circular wrap-around
+    # Calculate error (with wrap-around handling for circular scale)
     error = SET_POINT - current_angle
     
-    # Handle circular boundary crossing (wrap-around)
-    if abs(error) > 180:
-        if current_angle < SET_POINT:
-            error = (360 - SET_POINT) + current_angle
-        else:
-            error = (360 - current_angle) + SET_POINT
+    # If the error is negative, force it to be positive (since we want forward movement only)
+    if error < 0:
+        error = abs(error)  # Take absolute value of error for forward-only control
 
     # Get the current time
     current_time = time.time()
@@ -96,7 +93,7 @@ def pid_control_motor_with_dead_zone(pot_value):
         # Clamp control signal to valid PWM range (0-100%)
         control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
 
-        # Check if the current angle is within the acceptable range of the target (SET_POINT ± OFFSET)
+        # If the error is within the acceptable range of the target (SET_POINT ± OFFSET)
         if abs(error) <= OFFSET:
             # Stop the motor if within the target range
             GPIO.output(M4_IN1, GPIO.LOW)
@@ -105,14 +102,15 @@ def pid_control_motor_with_dead_zone(pot_value):
             print(f"Motor stopped at target: {current_angle:.2f} degrees")
         else:
             # Always move forward (ignore backward)
-            GPIO.output(M4_IN1, GPIO.HIGH)
-            GPIO.output(M4_IN2, GPIO.LOW)
+            GPIO.output(M4_IN1, GPIO.LOW)
+            GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
             print(f"Moving forward: Potentiometer Value: {pot_value}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%")
         
         # Update previous error and time
         previous_error = error
         last_time = current_time
+
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
