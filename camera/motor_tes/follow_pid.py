@@ -30,9 +30,9 @@ DEAD_ZONE_DEG_START = 330  # Start of dead zone in degrees
 DEAD_ZONE_DEG_END = 360    # End of dead zone in degrees
 
 # PID constants (you may need to tune these)
-Kp = 0.05  # Proportional gain
-Ki = 0.05  # Integral gain
-Kd = 0.05   # Derivative gain
+Kp = 0.03  # Reduced proportional gain for smoother control
+Ki = 0.01  # Reduced integral gain to prevent large buildup
+Kd = 0.02  # Increased derivative gain for smoother transitions
 
 # Variables for PID controller
 previous_error = 0
@@ -59,11 +59,11 @@ def map_potentiometer_value_to_degrees(value):
 # Circular error handling: Wrap errors to allow forward movement across 360 degrees
 def calculate_circular_error(set_position, current_angle):
     error = set_position - current_angle
-    
-    # If error is negative, wrap it to simulate forward movement across 360 degrees
-    if error < 0:
+    # Wrap error to handle circular motion between 0 and 360 degrees
+    if error > 180:
+        error -= 360
+    elif error < -180:
         error += 360
-    
     return error
 
 # Sawtooth wave generator that starts from the initial angle
