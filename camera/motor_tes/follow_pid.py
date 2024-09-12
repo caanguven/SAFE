@@ -160,7 +160,7 @@ def pid_control_motor(degrees_value, set_position):
         control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
 
         # Slow down gradually as the error approaches the target
-        slowdown_threshold = 15  # Degrees within which to slow down the motor
+        slowdown_threshold = 20  # Degrees within which to slow down the motor
 
         if abs(error) <= OFFSET:
             # Stop the motor if within the target range (small error)
