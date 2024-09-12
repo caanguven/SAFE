@@ -42,7 +42,7 @@ OFFSET = 5  # Allowable offset range
 # PID constants (you may need to tune these)
 Kp = 0.1  # Proportional gain
 Ki = 0.05  # Integral gain
-Kd = 0.1   # Derivative gain
+Kd = 0.05   # Derivative gain
 
 # Variables for PID controller
 previous_error = 0
