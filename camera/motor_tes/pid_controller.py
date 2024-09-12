@@ -53,7 +53,6 @@ last_time = time.time()
 filter_active = False  # Tracks if we are in a spike event
 filter_count = 0       # Counts how many readings we have processed after a spike
 MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
-filtered_values = []   # List to store valid filtered readings
 
 # Function to apply the custom spike filter
 def custom_spike_filter(new_value):
@@ -63,8 +62,8 @@ def custom_spike_filter(new_value):
     if filter_active:
         filter_count += 1
         
-        # If the value is greater than 200, we discard this reading
-        if new_value > 200:
+        # If the value is greater than 300, we discard this reading
+        if new_value > 300:
             print(f"Discarding invalid reading: {new_value}")
             return None  # Indicate that this value is invalid
 
@@ -72,10 +71,10 @@ def custom_spike_filter(new_value):
         if filter_count >= MAX_FILTER_COUNT:
             filter_active = False
             filter_count = 0
-        return new_value  # Return the valid value if it's below 200
+        return new_value  # Return the valid value if it's below or equal to 300
     
-    # If a value exceeds 950, start filtering for the next 5 readings
-    if new_value > 950:
+    # If a value is between 950 and 1023, start filtering for the next 5 readings
+    if 950 <= new_value <= 1023:
         print(f"Spike detected: {new_value}, starting filter")
         filter_active = True
         filter_count = 0  # Reset the counter to begin checking next 5 readings
