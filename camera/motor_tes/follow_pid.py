@@ -45,6 +45,7 @@ last_pot_value = None  # To track the previous potentiometer value and detect ci
 
 # Initial set position for the sawtooth wave
 initial_angle = 0  # This will be set based on the initial potentiometer reading
+is_first_run = True  # Track if it's the first loop to start at the initial angle
 
 # Millis equivalent in Python
 def millis():
@@ -52,12 +53,15 @@ def millis():
 
 # Sawtooth wave generator that starts exactly from the initial angle and wraps correctly
 def sawtoothWave2(t, period, amplitude, initial_angle):
-    # Calculate the normalized sawtooth wave
+    # If this is the first run, we start from the initial angle
+    if is_first_run:
+        return initial_angle
+
+    # Normal sawtooth wave calculation after the first run
     normalized_wave = (t % int(period)) * (amplitude / period)
     
-    # Shift it back to start from initial_angle and wrap between 0 and 360 degrees
-    set_position = (normalized_wave + initial_angle) % 360
-    return set_position
+    # Wrap the wave within 0-360 degrees
+    return normalized_wave % 360
 
 # Function to check if the reading is part of a circular transition
 def is_circular_transition(current_value, previous_value):
@@ -190,7 +194,7 @@ def pid_control_motor_with_dead_zone(pot_value, set_position):
 
 # Main loop to read ADC values and control motor 4
 def adc_and_motor_control():
-    global initial_angle
+    global initial_angle, is_first_run
 
     try:
         print('Reading MCP3008 values, press Ctrl-C to quit...')
@@ -220,6 +224,10 @@ def adc_and_motor_control():
             current_millis = millis()
             time_for_one_cycle = 4000.0  # One cycle in milliseconds
             set_position = sawtoothWave2(current_millis, time_for_one_cycle, 360, initial_angle)
+
+            # On the first run, we use the initial angle, then switch to the normal wave
+            if is_first_run:
+                is_first_run = False  # Disable the first run flag after initial set position
 
             # Control motor 4 based on the filtered potentiometer value and dynamic set point
             pid_control_motor_with_dead_zone(filtered_pot_value, set_position)
