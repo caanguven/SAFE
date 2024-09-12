@@ -49,6 +49,41 @@ previous_error = 0
 integral = 0
 last_time = time.time()
 
+# Global variables for filtering state
+filter_active = False  # Tracks if we are in a spike event
+filter_count = 0       # Counts how many readings we have processed after a spike
+MAX_FILTER_COUNT = 5   # Only check the next 5 values after detecting a spike
+filtered_values = []   # List to store valid filtered readings
+
+# Function to apply the custom spike filter
+def custom_spike_filter(new_value):
+    global filter_active, filter_count
+    
+    # Check if we are in the middle of a spike event
+    if filter_active:
+        filter_count += 1
+        
+        # If the value is greater than 200, we discard this reading
+        if new_value > 200:
+            print(f"Discarding invalid reading: {new_value}")
+            return None  # Indicate that this value is invalid
+
+        # If we have processed 5 readings, reset the filter state
+        if filter_count >= MAX_FILTER_COUNT:
+            filter_active = False
+            filter_count = 0
+        return new_value  # Return the valid value if it's below 200
+    
+    # If a value exceeds 950, start filtering for the next 5 readings
+    if new_value > 950:
+        print(f"Spike detected: {new_value}, starting filter")
+        filter_active = True
+        filter_count = 0  # Reset the counter to begin checking next 5 readings
+        return new_value  # Return the current spike value without filtering
+    
+    # If no spike, return the value as it is
+    return new_value
+
 # Function to map potentiometer value to degrees (0 to 360 degrees), handling dead zone
 def map_potentiometer_value_with_dead_zone(value):
     # The value is from 0 to 1023. Convert it to 330 degrees for valid range
@@ -126,8 +161,15 @@ def adc_and_motor_control():
             # Use the potentiometer value from channel 3
             pot_value = values[3]
 
-            # Control motor 4 based on the potentiometer value with dead zone handling
-            pid_control_motor_with_dead_zone(pot_value)
+            # Apply the custom spike filter
+            filtered_pot_value = custom_spike_filter(pot_value)
+
+            # If the filter returns None (invalid reading), skip to the next iteration
+            if filtered_pot_value is None:
+                continue
+
+            # Control motor 4 based on the filtered potentiometer value with dead zone handling
+            pid_control_motor_with_dead_zone(filtered_pot_value)
 
             time.sleep(0.1)
 
