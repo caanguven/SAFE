@@ -108,6 +108,7 @@ def sawtooth_wave(t, period, amplitude, initial_angle):
     return set_position
 
 # PID-Controller for motor control with dead zone handling
+# PID-Controller for motor control with dead zone handling
 def pid_control_motor(degrees_value, set_position):
     global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal, average_speed_before_dead_zone, speed_samples
     
@@ -133,6 +134,14 @@ def pid_control_motor(degrees_value, set_position):
 
     # Calculate the error directly using degrees
     current_angle = degrees_value
+
+    # Stop the motor if the current angle exceeds the set position
+    if current_angle > set_position:
+        GPIO.output(M4_IN1, GPIO.LOW)
+        GPIO.output(M4_IN2, GPIO.LOW)
+        pwm.ChangeDutyCycle(0)
+        print(f"Motor stopped because current angle {current_angle:.2f}° exceeds set position {set_position:.2f}°")
+        return
 
     # Calculate circular error (with wrap-around handling for circular scale)
     error = calculate_circular_error(set_position, current_angle)
