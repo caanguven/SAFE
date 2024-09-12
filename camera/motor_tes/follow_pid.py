@@ -50,10 +50,10 @@ initial_angle = 0  # This will be set based on the initial potentiometer reading
 def millis():
     return int(time.time() * 1000)
 
-# Sawtooth wave generator starting from the initial angle
+# Sawtooth wave generator starting from the initial angle and wrapping between 0 and 360 degrees
 def sawtoothWave2(t, period, amplitude, initial_angle):
-    # Generate the sawtooth wave and offset by initial angle
-    return initial_angle + (t % int(period)) * (amplitude / period)
+    # Generate the sawtooth wave and wrap it within 0-360 degrees
+    return (initial_angle + (t % int(period)) * (amplitude / period)) % 360
 
 # Function to check if the reading is part of a circular transition
 def is_circular_transition(current_value, previous_value):
