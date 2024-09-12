@@ -3,21 +3,8 @@ import time
 import sys
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
-import collections
 
 # Pin Definitions
-M1_IN1 = 7
-M1_IN2 = 26
-M1_SPD = 18
-
-M2_IN1 = 22
-M2_IN2 = 29
-M2_SPD = 31
-
-M3_IN1 = 11
-M3_IN2 = 32
-M3_SPD = 33
-
 M4_IN1 = 12
 M4_IN2 = 13
 M4_SPD = 35
@@ -39,7 +26,7 @@ pwm.start(0)  # Start with 0% duty cycle (motor off)
 
 # Command-line argument handling for SET_POINT
 if len(sys.argv) != 2:
-    print("Usage: python pid.py <set_point>")
+    print("Usage: python pid_with_dead_zone.py <set_point>")
     sys.exit(1)
 
 try:
@@ -62,91 +49,41 @@ previous_error = 0
 integral = 0
 last_time = time.time()
 
-# Deque to hold the moving window for circular median filtering
-WINDOW_SIZE = 5
-adc_values = collections.deque(maxlen=WINDOW_SIZE)
-
-# Function to calculate the circular distance between two points on a circular scale
-def circular_distance(value1, value2, max_value=1023):
-    diff = abs(value1 - value2)
-    return min(diff, max_value - diff)
-
-# Function to apply a circular median filter on ADC values
-def circular_median_filter(new_value):
-    adc_values.append(new_value)
-    
-    # Sort values based on circular distance to the middle value
-    sorted_values = sorted(adc_values, key=lambda x: circular_distance(x, adc_values[len(adc_values) // 2]))
-    
-    # Return the circular median
-    return sorted_values[len(sorted_values) // 2]
-
-# Function to apply a custom filter on ADC values
-# Function to apply a custom filter on ADC values
-# Global variable to keep track of filtering state
-filter_active = False
-filter_count = 0
-
-# Function to apply a custom filter on ADC values
-def custom_filter(new_value):
-    global filter_active, filter_count
-
-    # If we're filtering (i.e., after a reading > 960), process the next readings
-    if filter_active:
-        # Continue filtering for the next 3 readings
-        if filter_count < 3:
-            filter_count += 1
-            if new_value <= 200:
-                return new_value  # If valid, return the filtered value
-            else:
-                return 200  # Otherwise, return a fixed value (e.g., 200) for values > 200
-        else:
-            # Reset filter after 3 readings
-            filter_active = False
-            filter_count = 0
-
-    # If the current value is greater than 960, activate the filter
-    if new_value > 960:
-        filter_active = True
-        filter_count = 0  # Reset the count to start filtering the next 3 readings
-        return new_value  # Return the current reading without filtering
-
-    # Otherwise, return the unfiltered value
-    return new_value
-
-
-
-
-# Function to map potentiometer value to degrees (0 to 330 degrees mapped from 0 to 1023)
-def map_potentiometer_value(value):
-    # The value is from 0 to 1023. Convert it to 330 degrees 
+# Function to map potentiometer value to degrees (0 to 360 degrees), handling dead zone
+def map_potentiometer_value_with_dead_zone(value):
+    # The value is from 0 to 1023. Convert it to 330 degrees for valid range
     new_value = value * (330 / 1023)
-    # If the new_value is bigger than 330, normalize it to 360
+    
+    # Handle dead zone from 330 to 360 degrees by interpolating the wrap-around
     if new_value > 330:
-        new_value = 360
+        # Interpolating the 30 degrees dead zone
+        dead_zone_value = (new_value - 330) * (30 / (1023 - int(330 * (1023 / 330))))
+        new_value = 360 - dead_zone_value  # Normalize to the full 360 degrees
+    
     return new_value
 
-# PID-Controller for motor control with forward-only movement
-# PID-Controller for motor control with forward-only movement
-def pid_control_motor_4(pot_value):
+# PID-Controller for motor control with dead zone handling
+def pid_control_motor_with_dead_zone(pot_value):
     global previous_error, integral, last_time
     
-    # Map the potentiometer reading to degrees
-    current_angle = map_potentiometer_value(pot_value)
+    # Map the potentiometer reading to degrees, handling dead zone
+    current_angle = map_potentiometer_value_with_dead_zone(pot_value)
     
-    # Calculate error with circular wrap-around handling
+    # Calculate error and handle circular wrap-around
     error = SET_POINT - current_angle
     
-    # Check if the error crosses the circular boundary
-    if current_angle > SET_POINT:
-        # If we're wrapping around the 360-degree boundary, adjust error
-        error = (360 - current_angle) + SET_POINT
-    
+    # Handle circular boundary crossing (wrap-around)
+    if abs(error) > 180:
+        if current_angle < SET_POINT:
+            error = (360 - SET_POINT) + current_angle
+        else:
+            error = (360 - current_angle) + SET_POINT
+
     # Get the current time
     current_time = time.time()
     delta_time = current_time - last_time
     
-    if delta_time >= 0.01:  # Avoid division by zero and ensure the loop doesn't update too frequently
+    if delta_time >= 0.01:  # Ensure the loop doesn't update too frequently
         # Calculate integral (sum of errors over time)
         integral += error * delta_time
         
@@ -188,19 +125,11 @@ def adc_and_motor_control():
             # Read all the ADC channel values
             values = [mcp.read_adc(i) for i in range(8)]
             
-            # Apply the circular median filter to the raw ADC value from channel 3 (potentiometer)
-            filtered_pot_value = circular_median_filter(values[3])
+            # Use the potentiometer value from channel 3
+            pot_value = values[3]
 
-            filtered_pot_value2 = custom_filter(values[3])
-
-            # Check if the custom filter returned None (no valid reading), if so skip this iteration
-            if filtered_pot_value2 is None:
-                print("No valid reading after filtering, skipping motor control.")
-                continue
-
-
-            # Control motor 4 based on the filtered potentiometer value
-            pid_control_motor_4(filtered_pot_value2)
+            # Control motor 4 based on the potentiometer value with dead zone handling
+            pid_control_motor_with_dead_zone(pot_value)
 
             time.sleep(0.1)
 
