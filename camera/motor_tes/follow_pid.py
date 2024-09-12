@@ -113,7 +113,6 @@ def sawtooth_wave(t, period, amplitude, initial_angle):
     return set_position
 
 # PID-Controller for motor control with dead zone handling
-# PID-Controller for motor control with dead zone handling
 def pid_control_motor(degrees_value, set_position):
     global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal, average_speed_before_dead_zone, speed_samples
     
@@ -160,20 +159,28 @@ def pid_control_motor(degrees_value, set_position):
         # Clamp control signal to valid PWM range (0-100%)
         control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
 
-        # If the error is within the acceptable range of the target (SET_POINT ± OFFSET)
+        # Slow down gradually as the error approaches the target
+        slowdown_threshold = 15  # Degrees within which to slow down the motor
+
         if abs(error) <= OFFSET:
-            # Stop the motor if within the target range
+            # Stop the motor if within the target range (small error)
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.LOW)
             pwm.ChangeDutyCycle(0)
             print(f"Motor stopped at target: {current_angle:.2f} degrees")
+        elif abs(error) <= slowdown_threshold:
+            # Reduce speed as we approach the target
+            slowdown_factor = abs(error) / slowdown_threshold  # Proportional slowdown
+            slow_control_signal = control_signal * slowdown_factor
+            GPIO.output(M4_IN1, GPIO.LOW)
+            GPIO.output(M4_IN2, GPIO.HIGH)
+            pwm.ChangeDutyCycle(slow_control_signal)
+            print(f"Slowing down: Potentiometer Value: {degrees_value:.2f}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}")
         else:
             # Always move forward (ignore backward)
             GPIO.output(M4_IN1, GPIO.LOW)
             GPIO.output(M4_IN2, GPIO.HIGH)
             pwm.ChangeDutyCycle(control_signal)
-
-            # Format and print the information in the required pattern
             print(f"Moving forward: Potentiometer Value: {degrees_value:.2f}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
         
         # Update previous error, time, and store the last valid control signal
