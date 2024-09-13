@@ -121,7 +121,10 @@ def control_motor():
 
     try:
         data = request.get_json()
+        print(f"Received data from frontend: {data}")  # Log the received data
+
         direction = data.get('direction')
+        print(f"Received direction: {direction}")  # Log the direction
 
         # If there's an existing motor process, terminate it
         if motor_process and motor_process.poll() is None:
@@ -132,17 +135,14 @@ def control_motor():
         # Depending on the direction, start a new motor control process
         if direction == 'forward':
             print("Moving forward")
-            # Start follow_pid.py for forward movement
             motor_process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
 
         elif direction == 'backward':
             print("Moving backward")
-            # Handle backward logic or reverse logic (if applicable)
             motor_process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
 
         elif direction == 'stop':
             print("Stopping motor")
-            # If the motor is running, stop the motor by terminating the process
             if motor_process:
                 motor_process.terminate()
                 motor_process = None
@@ -150,7 +150,9 @@ def control_motor():
         return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
 
     except Exception as e:
+        print(f"Error in control_motor route: {str(e)}")  # Log any errors
         return jsonify({'status': 'error', 'message': str(e)})
+
 
 
 
