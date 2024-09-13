@@ -248,4 +248,4 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
