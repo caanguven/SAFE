@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Motor Control Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Live Motor Control Graph</h1>
+    <canvas id="motorGraph" width="400" height="200"></canvas>
+
+    <script>
+        const ctx = document.getElementById('motorGraph').getContext('2d');
+        const motorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Potentiometer Value (degrees)',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }, {
+                    label: 'Control Signal (%)',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: { type: 'linear', position: 'bottom' }
+                }
+            }
+        });
+
+        const eventSource = new EventSource('/motor_data_stream');
+        eventSource.onmessage = function(event) {
+            const motorData = JSON.parse(event.data);
+            const time = motorData.time;
+            const potValue = motorData.pot_value;
+            const controlSignal = motorData.control_signal;
+
+            motorChart.data.labels.push(time);
+            motorChart.data.datasets[0].data.push(potValue);
+            motorChart.data.datasets[1].data.push(controlSignal);
+
+            motorChart.update();
+        };
+    </script>
+</body>
+</html>
