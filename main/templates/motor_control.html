@@ -4,53 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Motor Control</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding-top: 50px;
-        }
-        .button-container {
-            margin-top: 30px;
-        }
-        .service-button {
-            display: inline-block;
-            margin: 10px;
-            padding: 15px 30px;
-            font-size: 18px;
-            color: white;
-            background-color: #007bff;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            text-decoration: none;
-        }
-        .service-button:hover {
-            background-color: #0056b3;
-        }
-    </style>
+    <script>
+        // Function to handle key press events
+        document.addEventListener('keydown', function(event) {
+            let direction = null;
+            if (event.code === 'ArrowUp') {
+                direction = 'forward';
+            } else if (event.code === 'ArrowDown') {
+                direction = 'backward';
+            } else if (event.code === 'Escape') {
+                direction = 'stop';
+            }
+
+            // If a valid direction is detected, send it to the Flask backend
+            if (direction) {
+                fetch('/control_motor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ direction: direction })
+                })
+                .then(response => response.json())
+                .then(data => console.log(data))
+                .catch(error => console.error('Error:', error));
+            }
+        });
+    </script>
 </head>
 <body>
-    <h1>Motor Control</h1>
-    <div class="button-container">
-        <button class="service-button" onclick="startMotor()">Start Motor</button>
-    </div>
-
-    <script>
-        function startMotor() {
-            fetch('/start_motor', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            }).then(response => response.json())
-            .then(data => {
-                console.log(data.message);
-                alert(data.message);
-            }).catch(error => {
-                console.error('Error:', error);
-            });
-        }
-    </script>
+    <h1>Motor Control Interface</h1>
+    <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
 </body>
 </html>
