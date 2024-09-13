@@ -98,6 +98,10 @@ def motor_data_stream():
 def main_page():
     return render_template('main.html')
 
+@app.route('/gyro')
+def gyro():
+    return "Gyro Service - Not implemented yet"
+
 # The rest of the camera and AprilTag detection routes
 @app.route('/video_feed')
 def video_feed():
