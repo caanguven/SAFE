@@ -117,31 +117,41 @@ def main_page():
 
 @app.route('/control_motor', methods=['POST'])
 def control_motor():
+    global motor_process
+
     try:
         data = request.get_json()
         direction = data.get('direction')
 
-        # Depending on the direction, run the appropriate motor control logic
+        # If there's an existing motor process, terminate it
+        if motor_process and motor_process.poll() is None:
+            print("Stopping previous motor process")
+            motor_process.terminate()
+            motor_process = None
+
+        # Depending on the direction, start a new motor control process
         if direction == 'forward':
             print("Moving forward")
-            # Run your follow_pid.py logic for forward movement here
-            # You can also modify it to run as a subprocess if needed:
-            subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
+            # Start follow_pid.py for forward movement
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
 
         elif direction == 'backward':
             print("Moving backward")
-            # You can handle backward logic or reverse logic here if needed
-            subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
+            # Handle backward logic or reverse logic (if applicable)
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
 
         elif direction == 'stop':
             print("Stopping motor")
-            # Handle stopping logic
-            subprocess.Popen(['sudo', '-E', 'python', 'stop_motor.py'])  # Example stop script
+            # If the motor is running, stop the motor by terminating the process
+            if motor_process:
+                motor_process.terminate()
+                motor_process = None
 
         return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
 
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
 
 
 # Route to start motor control using follow_pid.py
