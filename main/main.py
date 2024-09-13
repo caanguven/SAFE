@@ -3,6 +3,7 @@ from picamera2 import Picamera2
 import cv2
 import numpy as np
 from pupil_apriltags import Detector
+import subprocess
 
 app = Flask(__name__)
 
@@ -113,6 +114,22 @@ def detect_april_tag_direction(camera):
 @app.route('/')
 def main_page():
     return render_template('main.html')
+
+@app.route('/start_motor', methods=['POST'])
+def start_motor():
+    try:
+        # Start the follow_pid.py script as a background process
+        process = subprocess.Popen(['python3', 'follow_pid.py'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return jsonify({"status": "success", "message": "Motor control started!"}), 200
+    except Exception as e:
+        print(f"Error starting motor control: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# Route to start motor control using follow_pid.py
+@app.route('/motor_control')
+def motor_control():
+    return render_template('motor_control.html')
 
 @app.route('/click')
 def click():
