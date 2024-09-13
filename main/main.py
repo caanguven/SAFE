@@ -118,8 +118,8 @@ def main_page():
 @app.route('/start_motor', methods=['POST'])
 def start_motor():
     try:
-        # Use sudo to run the script with elevated privileges
-        process = subprocess.Popen(['sudo', '-E', 'python3', 'follow_pid.py'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Use sudo and -E option to run the script with the right environment and Python version
+        process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return jsonify({"status": "success", "message": "Motor control started!"}), 200
     except Exception as e:
         print(f"Error starting motor control: {e}")
