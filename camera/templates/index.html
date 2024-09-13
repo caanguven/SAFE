@@ -2,26 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Video Feed</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Main Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
             text-align: center;
             padding-top: 50px;
         }
-        .container {
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            gap: 20px; /* Space between the live feed and captured image */
-        }
-        .video-container, .image-container {
-            text-align: center;
-        }
         img {
-            width: 640px;
-            height: 480px;
-            border: 1px solid #ccc;
+            height: auto;
         }
         .button-container {
             margin-top: 30px;
@@ -41,67 +32,115 @@
         .service-button:hover {
             background-color: #0056b3;
         }
-        #turnAngleDisplay {
-            margin-top: 20px;
-            font-size: 24px;
-            color: #333;
+        .image-container {
+            display: flex;
+            justify-content: center; /* Centers the images horizontally */
+            gap: 20px; /* Adds space between the images */
+        }
+        .image-container img:first-child {
+            width: 200px; /* Width of the first image */
+        }
+        .image-container img:last-child {
+            width: 400px; /* Width of the second image */
+        }
+        .chart-container {
+            margin-top: 50px;
         }
     </style>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            var videoElement = document.getElementById('videoFeed');
-            var turnAngleDisplay = document.getElementById('turnAngleDisplay');
-            var capturedImageElement = document.getElementById('capturedImage');
-
-            videoElement.addEventListener('click', function(e) {
-                var rect = videoElement.getBoundingClientRect();
-                var x = e.clientX - rect.left; // x position within the element.
-                var y = e.clientY - rect.top;  // y position within the element.
-                console.log("X: " + x + " Y: " + y); // For testing: print coordinates in the browser console
-
-                // Send the position data to the server
-                fetch('/click_position', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({x: x, y: y}),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Success:', data);
-                    // Update the turn angle display
-                    turnAngleDisplay.textContent = `Turn Angle: ${data.turn_angle}°`;
-                    // Update the captured image display
-                    if (data.image_path) {
-                        capturedImageElement.src = data.image_path + '?t=' + new Date().getTime(); // Cache-busting
-                    }
-                })
-                .catch((error) => {
-                    console.error('Error:', error);
-                });
-            });
-        });
-    </script>
 </head>
 <body>
-    <div class="container">
-        <div class="video-container">
-            <h2>Live Video Feed</h2>
-            <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
-        </div>
-        <div class="image-container">
-            <h2>Captured Image</h2>
-            <img src="" alt="Captured Image" id="capturedImage">
-        </div>
+    <h1>Welcome to the Control Center of S.A.F.E. (Soft Assistive Flexible Explorer)</h1>
+
+    <div class="image-container">
+        <img src="{{ url_for('static', filename='robot.png') }}" alt="Robot">
+        <img src="{{ url_for('static', filename='nrg.png') }}" alt="NRG">
     </div>
     
-    <div id="turnAngleDisplay">Turn Angle: 0°</div>
-    <div style="text-align:center; margin-top:20px; font-size:20px;">Advanced Quadruped</div>
-    
-    <!-- Back Button -->
     <div class="button-container">
-        <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
+        <a href="{{ url_for('gyro') }}" class="service-button">Gyro</a>
+        <a href="{{ url_for('click') }}" class="service-button">Click</a>
+        <a href="{{ url_for('video_feed') }}" class="service-button">Video Feed</a>
+        <a href="{{ url_for('manual_drive') }}" class="service-button">Manual Drive</a>
+        <a href="{{ url_for('autonoms_drive') }}" class="service-button">Autonomous Drive</a>
+        <a href="{{ url_for('face_detection') }}" class="service-button">Face Detection</a>
+        <a href="{{ url_for('motor_graph') }}" class="service-button">Motor Graph</a>
     </div>
+
+    <!-- Section for the live motor graph -->
+    <div class="chart-container">
+        <h2>Live Motor Data Graph</h2>
+        <canvas id="motorGraph" width="600" height="400"></canvas>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('motorGraph').getContext('2d');
+        const motorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],  // Timestamps
+                datasets: [
+                    {
+                        label: 'Control Signal',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        fill: true,
+                        data: []  // Control signal data
+                    },
+                    {
+                        label: 'Set Position',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        fill: true,
+                        data: []  // Set position data
+                    },
+                    {
+                        label: 'Potentiometer Value',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        fill: true,
+                        data: []  // Potentiometer value (degrees)
+                    }
+                ]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'second'
+                        },
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Value'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Connect to the motor data stream using Server-Sent Events (SSE)
+        const source = new EventSource("/motor_data_stream");
+
+        source.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const timestamp = new Date(data.time * 1000);  // Convert Unix timestamp to JS date object
+
+            // Push data to the chart
+            motorChart.data.labels.push(timestamp);
+            motorChart.data.datasets[0].data.push(data.control_signal);  // Control signal
+            motorChart.data.datasets[1].data.push(data.set_position);    // Set position
+            motorChart.data.datasets[2].data.push(data.pot_value);       // Potentiometer value (degrees)
+            
+            // Update the chart
+            motorChart.update();
+        };
+    </script>
 </body>
 </html>
