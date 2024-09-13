@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Autonomous Drive</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        img {
+            width: 640px;
+            height: 480px;
+        }
+        .button-container {
+            margin-top: 30px;
+        }
+        .service-button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .service-button:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            font-size: 24px;
+            margin-top: 20px;
+            color: #333;
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const statusElement = document.getElementById('status');
+
+            const eventSource = new EventSource("/autonoms_drive_stream");
+
+            eventSource.onmessage = function(event) {
+                statusElement.textContent = event.data;
+            };
+        });
+    </script>
+</head>
+<body>
+    <h2>Autonomous Drive</h2>
+    <div id="status" class="status">Waiting for detection...</div>
+    
+    <!-- Back Button -->
+    <div class="button-container">
+        <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
+    </div>
+</body>
+</html>

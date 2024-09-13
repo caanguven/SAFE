@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Feed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 20px; /* Space between the live feed and captured image */
+        }
+        .video-container, .image-container {
+            text-align: center;
+        }
+        img {
+            width: 640px;
+            height: 480px;
+            border: 1px solid #ccc;
+        }
+        .button-container {
+            margin-top: 30px;
+        }
+        .service-button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .service-button:hover {
+            background-color: #0056b3;
+        }
+        #turnAngleDisplay {
+            margin-top: 20px;
+            font-size: 24px;
+            color: #333;
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var videoElement = document.getElementById('videoFeed');
+            var turnAngleDisplay = document.getElementById('turnAngleDisplay');
+            var capturedImageElement = document.getElementById('capturedImage');
+
+            videoElement.addEventListener('click', function(e) {
+                var rect = videoElement.getBoundingClientRect();
+                var x = e.clientX - rect.left; // x position within the element.
+                var y = e.clientY - rect.top;  // y position within the element.
+                console.log("X: " + x + " Y: " + y); // For testing: print coordinates in the browser console
+
+                // Send the position data to the server
+                fetch('/click_position', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({x: x, y: y}),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Success:', data);
+                    // Update the turn angle display
+                    turnAngleDisplay.textContent = `Turn Angle: ${data.turn_angle}°`;
+                    // Update the captured image display
+                    if (data.image_path) {
+                        capturedImageElement.src = data.image_path + '?t=' + new Date().getTime(); // Cache-busting
+                    }
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="video-container">
+            <h2>Live Video Feed</h2>
+            <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+        </div>
+        <div class="image-container">
+            <h2>Captured Image</h2>
+            <img src="" alt="Captured Image" id="capturedImage">
+        </div>
+    </div>
+    
+    <div id="turnAngleDisplay">Turn Angle: 0°</div>
+    <div style="text-align:center; margin-top:20px; font-size:20px;">Advanced Quadruped</div>
+    
+    <!-- Back Button -->
+    <div class="button-container">
+        <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
+    </div>
+</body>
+</html>
