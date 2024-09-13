@@ -115,15 +115,33 @@ def detect_april_tag_direction(camera):
 def main_page():
     return render_template('main.html')
 
-@app.route('/start_motor', methods=['POST'])
-def start_motor():
+@app.route('/control_motor', methods=['POST'])
+def control_motor():
     try:
-        # Use sudo and -E option to run the script with the right environment and Python version
-        process = subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return jsonify({"status": "success", "message": "Motor control started!"}), 200
+        data = request.get_json()
+        direction = data.get('direction')
+
+        # Depending on the direction, run the appropriate motor control logic
+        if direction == 'forward':
+            print("Moving forward")
+            # Run your follow_pid.py logic for forward movement here
+            # You can also modify it to run as a subprocess if needed:
+            subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
+
+        elif direction == 'backward':
+            print("Moving backward")
+            # You can handle backward logic or reverse logic here if needed
+            subprocess.Popen(['sudo', '-E', 'python', 'follow_pid.py'])
+
+        elif direction == 'stop':
+            print("Stopping motor")
+            # Handle stopping logic
+            subprocess.Popen(['sudo', '-E', 'python', 'stop_motor.py'])  # Example stop script
+
+        return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
+
     except Exception as e:
-        print(f"Error starting motor control: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({'status': 'error', 'message': str(e)})
 
 
 # Route to start motor control using follow_pid.py
