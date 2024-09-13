@@ -1,4 +1,4 @@
-import re
+lsimport re
 import RPi.GPIO as GPIO
 import time
 import sys
