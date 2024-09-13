@@ -12,6 +12,7 @@ haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_def
 
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
+motor_process = None  # Initialize motor_process as None
 
 # Check if the cascade loaded successfully
 if face_cascade.empty():
