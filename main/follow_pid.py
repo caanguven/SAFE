@@ -4,7 +4,7 @@ import time
 import sys
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
-import keyboard  # For capturing arrow key input
+import curses  # For capturing arrow key input in the terminal
 
 # Pin Definitions
 M4_IN1 = 12
@@ -30,7 +30,7 @@ OFFSET = 5  # Allowable offset range
 DEAD_ZONE_DEG_START = 330  # Start of dead zone in degrees
 DEAD_ZONE_DEG_END = 360    # End of dead zone in degrees
 
-# PID constants (you may need to tune these)
+# PID constants
 Kp = 0.1  # Reduced proportional gain for smoother control
 Ki = 0.01  # Reduced integral gain to prevent large buildup
 Kd = 0.02  # Increased derivative gain for smoother transitions
@@ -107,7 +107,6 @@ def calculate_circular_error(set_position, current_angle):
 
 # Sawtooth wave generator that starts from the initial angle
 def sawtooth_wave(t, period, amplitude, initial_angle, reverse=False):
-    # Sawtooth wave starts from the initial angle and wraps within 0 to 360 degrees
     normalized_wave = (t % period) * (amplitude / period)
     set_position = (normalized_wave + initial_angle) % 360
     return (360 - set_position) if reverse else set_position  # Reverse the wave if backward
@@ -172,19 +171,26 @@ def pid_control_motor(degrees_value, set_position, reverse=False):
         speed_samples.append(control_signal)
 
 # Main loop to read ADC values and control motor 4
-def adc_and_motor_control():
+def adc_and_motor_control(stdscr):
+    stdscr.nodelay(1)  # Don't block on key press
+    stdscr.timeout(100)  # Set a timeout for key press
+
     try:
-        print('Reading MCP3008 values, press "Up" to move forward, "Down" to move backward, "Esc" to quit...')
+        print('Press "Up" to move forward, "Down" to move backward, "Esc" to quit...')
         initial_pot_value = mcp.read_adc(3)
         initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
         start_time = millis()
 
+        direction = None
+
         while True:
-            if keyboard.is_pressed('up'):
+            key = stdscr.getch()
+
+            if key == curses.KEY_UP:
                 direction = 'forward'
-            elif keyboard.is_pressed('down'):
+            elif key == curses.KEY_DOWN:
                 direction = 'backward'
-            elif keyboard.is_pressed('esc'):
+            elif key == 27:  # Escape key
                 print("Exiting...")
                 break
             else:
@@ -215,7 +221,7 @@ def adc_and_motor_control():
 
 # Main function to run the test for motor 4
 def main():
-    adc_and_motor_control()
+    curses.wrapper(adc_and_motor_control)
 
 if __name__ == "__main__":
     main()
