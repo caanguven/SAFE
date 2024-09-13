@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Main Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -42,6 +43,9 @@
         .image-container img:last-child {
             width: 400px; /* Width of the second image */
         }
+        .chart-container {
+            margin-top: 50px;
+        }
     </style>
 </head>
 <body>
@@ -59,6 +63,84 @@
         <a href="{{ url_for('manual_drive') }}" class="service-button">Manual Drive</a>
         <a href="{{ url_for('autonoms_drive') }}" class="service-button">Autonomous Drive</a>
         <a href="{{ url_for('face_detection') }}" class="service-button">Face Detection</a>
+        <a href="{{ url_for('motor_graph') }}" class="service-button">Motor Graph</a>
     </div>
+
+    <!-- Section for the live motor graph -->
+    <div class="chart-container">
+        <h2>Live Motor Data Graph</h2>
+        <canvas id="motorGraph" width="600" height="400"></canvas>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('motorGraph').getContext('2d');
+        const motorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],  // Timestamps
+                datasets: [
+                    {
+                        label: 'Control Signal',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        fill: true,
+                        data: []  // Control signal data
+                    },
+                    {
+                        label: 'Set Position',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        fill: true,
+                        data: []  // Set position data
+                    },
+                    {
+                        label: 'Potentiometer Value',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        fill: true,
+                        data: []  // Potentiometer value (degrees)
+                    }
+                ]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'second'
+                        },
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Value'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Connect to the motor data stream using Server-Sent Events (SSE)
+        const source = new EventSource("/motor_data_stream");
+
+        source.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const timestamp = new Date(data.time * 1000);  // Convert Unix timestamp to JS date object
+
+            // Push data to the chart
+            motorChart.data.labels.push(timestamp);
+            motorChart.data.datasets[0].data.push(data.control_signal);  // Control signal
+            motorChart.data.datasets[1].data.push(data.set_position);    // Set position
+            motorChart.data.datasets[2].data.push(data.pot_value);       // Potentiometer value (degrees)
+            
+            // Update the chart
+            motorChart.update();
+        };
+    </script>
 </body>
 </html>
