@@ -16,6 +16,7 @@ setup_motor_pins(MOTOR_NUM)
 
 # Motor control loop
 def adc_and_motor_control():
+    pwm = None  # Initialize pwm variable to None
     try:
         last_valid_reading = None
         filter_active = False
@@ -47,7 +48,8 @@ def adc_and_motor_control():
     except KeyboardInterrupt:
         print("Stopping motor control")
     finally:
-        pwm.stop()
+        if pwm:
+            pwm.stop()  # Stop PWM only if it was started
         GPIO.cleanup()
 
 if __name__ == "__main__":

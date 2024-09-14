@@ -11,7 +11,6 @@ integral = 0
 last_time = time.time()
 
 def pid_control(set_position, current_angle, OFFSET=5):
-    """PID control logic to calculate the control signal for the motor."""
     global previous_error, integral, last_time
 
     # Calculate the error
@@ -26,6 +25,8 @@ def pid_control(set_position, current_angle, OFFSET=5):
     # Get the current time
     current_time = time.time()
     delta_time = current_time - last_time
+
+    control_signal = 0  # Initialize control_signal
 
     if delta_time >= 0.01:  # Update only every 10ms
         integral += error * delta_time  # Accumulate integral
