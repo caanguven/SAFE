@@ -19,22 +19,24 @@ class MotorController:
 
     def map_potentiometer_value_to_degrees(self, value):
         # Potentiometer values range from 0 to 1023
-        # Map to 0 to 360 degrees
-        return value * (330 / 1023)  # Adjusted to map 0-1023 to 0-330 degrees
+        # Map to 0 to 330 degrees (since the potentiometer only reads up to 330°)
+        return value * (330 / 1023)
 
     def calculate_error(self, set_position, current_angle):
-        # Calculate the forward-only error
-        if set_position >= current_angle:
-            error = set_position - current_angle
-        else:
-            # If set position has reset to 0, adjust for wrap-around
-            error = (360 - current_angle) + set_position
+        # Calculate the error, handling wrap-around
+        error = (set_position - current_angle + 360) % 360
+        if error > 180:
+            # Error is negative in terms of forward movement
+            error = error - 360  # Convert to negative value
+
+        # For forward-only movement, if error is negative (we are ahead), set error to zero
+        if error < 0:
+            error = 0
         return error
 
     def pid_control_motor(self, degrees_value, set_position):
         # Configuration parameters
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
-        DEAD_ZONE_DEG_END = self.config['dead_zone_end']
         OFFSET = self.config['offset']
         NUM_SAMPLES_FOR_AVERAGE = self.config['num_samples_for_average']
         slowdown_threshold = self.config['slowdown_threshold']
@@ -61,7 +63,7 @@ class MotorController:
             self.in_dead_zone = False
             print(f"{self.name}: Exiting dead zone. Resuming normal control.")
 
-        # Calculate error (forward-only)
+        # Calculate error
         error = self.calculate_error(set_position, degrees_value)
 
         # Update set point in PID controller
@@ -74,18 +76,16 @@ class MotorController:
         control_signal = max(0, min(100, control_signal))
 
         # Ensure the motor doesn't move backward
-        if error < 0:
-            # Set control signal to zero if error is negative (we're ahead)
-            control_signal = 0
+        if error == 0:
             self.motor.stop()
-            print(f"{self.name}: Ahead of set position. Holding position.")
-        elif abs(error) <= OFFSET:
+            print(f"{self.name}: Ahead of set position or at target. Holding position.")
+        elif error <= OFFSET:
             # Stop the motor if within target range
             self.motor.stop()
             print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
-        elif abs(error) <= slowdown_threshold:
+        elif error <= slowdown_threshold:
             # Reduce speed as approaching target
-            slowdown_factor = abs(error) / slowdown_threshold
+            slowdown_factor = error / slowdown_threshold
             slow_control_signal = control_signal * slowdown_factor
             self.motor.set_speed(slow_control_signal)
             self.motor.forward()
@@ -128,9 +128,6 @@ class MotorController:
 
                 # Get set position from sawtooth wave generator
                 set_position = self.sawtooth_generator.get_set_position()
-
-                # Adjust set_position to wrap around at 360 degrees
-                set_position %= 360
 
                 # Control motor
                 self.pid_control_motor(degrees_value, set_position)
