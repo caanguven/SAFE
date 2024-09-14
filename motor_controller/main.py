@@ -1,175 +1,127 @@
-import time
-import Adafruit_GPIO.SPI as SPI
-import Adafruit_MCP3008
-from motor_pins import MOTOR_PINS
-from motor_controller import MotorController
+import RPi.GPIO as GPIO
+from motor import Motor
 from pid_controller import PIDController
-from filter import Filter
+from spike_filter import SpikeFilter
+from adc_reader import ADCReader
+from sawtooth_wave_generator import SawtoothWaveGenerator
+from motor_controller import MotorController
 
-SPI_PORT = 0
-SPI_DEVICE = 0
-OFFSET = 5
-DEAD_ZONE_DEG_START = 330
-DEAD_ZONE_DEG_END = 360
-Kp = 0.5  # Increased proportional gain
-Ki = 0.05  # Increased integral gain
-Kd = 0.1  # Increased derivative gain
-MAX_FILTER_COUNT = 5
-NUM_SAMPLES_FOR_AVERAGE = 5
+import threading
+import time
 
-previous_error = 0
-integral = 0
-last_time = time.time()
-in_dead_zone = False
-last_valid_control_signal = 0
-average_speed_before_dead_zone = 0
-speed_samples = []
-
-def millis():
-    return int(time.time() * 1000)
-
-def map_potentiometer_value_to_degrees(value):
-    return value * (330 / 1023)
-
-def sawtooth_wave(t, period, amplitude, initial_angle):
-    normalized_wave = (t % period) * (amplitude / period)
-    set_position = (normalized_wave + initial_angle) % 360
-    return set_position
-
-def calculate_circular_error(set_position, current_angle):
-    error = set_position - current_angle
-    if error > 180:
-        error -= 360
-    elif error < -180:
-        error += 360
-    return error
-
-def pid_control_motor(degrees_value, set_position, motor, pid):
-    global previous_error, integral, last_time, in_dead_zone, last_valid_control_signal, average_speed_before_dead_zone, speed_samples
-    
-    # Dead zone detection in degrees (330° to 360°)
-    if DEAD_ZONE_DEG_START <= degrees_value <= DEAD_ZONE_DEG_END:
-        if not in_dead_zone:
-            # We are entering the dead zone, calculate the average speed based on previous values
-            in_dead_zone = True
-            average_speed_before_dead_zone = sum(speed_samples) / len(speed_samples) if speed_samples else last_valid_control_signal
-            print(f"Entering dead zone. Maintaining average speed: {average_speed_before_dead_zone:.2f}%")
-        
-        # Continue applying the average speed calculated before entering the dead zone
-        motor.set_speed(average_speed_before_dead_zone)
-        print(f"Moving in dead zone. Control signal: {average_speed_before_dead_zone:.2f}%")
-        return
-    
-    # Exit dead zone when degrees go back below 200°
-    if in_dead_zone and degrees_value < 200:
-        in_dead_zone = False
-        print("Exiting dead zone. Resuming normal control.")
-
-    # Calculate the error directly using degrees
-    current_angle = degrees_value
-
-    # Calculate circular error (with wrap-around handling for circular scale)
-    error = calculate_circular_error(set_position, current_angle)
-
-    # Get the current time
-    current_time = time.time()
-    delta_time = current_time - last_time
-    
-    if delta_time >= 0.01:  # Ensure the loop doesn't update too frequently
-        # Calculate integral (sum of errors over time)
-        integral += error * delta_time
-        
-        # Calculate derivative (rate of change of error)
-        derivative = (error - previous_error) / delta_time
-
-        # Calculate the control signal using the PID controller
-        control_signal = (Kp * error) + (Ki * integral) + (Kd * derivative)
-
-        # Clamp control signal to valid PWM range (0-100%)
-        control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
-
-        # Slow down gradually as the error approaches the target
-        slowdown_threshold = 20  # Degrees within which to slow down the motor
-
-        if abs(error) <= OFFSET:
-            # Stop the motor if within the target range (small error)
-            motor.stop()
-            print(f"Motor stopped at target: {current_angle:.2f} degrees")
-        elif abs(error) <= slowdown_threshold:
-            # Reduce speed as we approach the target
-            slowdown_factor = abs(error) / slowdown_threshold  # Proportional slowdown
-            slow_control_signal = control_signal * slowdown_factor
-            motor.set_speed(slow_control_signal)
-            print(f"Slowing down: Potentiometer Value: {degrees_value:.2f}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}")
-        else:
-            # Always move forward (ignore backward)
-            motor.set_speed(control_signal)
-            print(f"Moving forward: Potentiometer Value: {degrees_value:.2f}, Current Angle: {current_angle:.2f} degrees, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
-        
-        # Update previous error, time, and store the last valid control signal
-        previous_error = error
-        last_time = current_time
-        last_valid_control_signal = control_signal  # Store the last valid signal
-        
-        # Keep a sliding window of control signal samples to calculate average speed
-        if len(speed_samples) >= NUM_SAMPLES_FOR_AVERAGE:
-            speed_samples.pop(0)  # Remove the oldest sample
-        speed_samples.append(control_signal)  # Add the new control signal to the list
+def run_motor_controller(motor_controller, stop_event):
+    motor_controller.control_loop(stop_event)
 
 def main():
-    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
-    motor_pins = MOTOR_PINS[4]  # Example for motor 4
-    motor = MotorController(motor_pins['IN1'], motor_pins['IN2'], motor_pins['SPD'])
-    pid = PIDController(Kp, Ki, Kd)
-    filter = Filter(MAX_FILTER_COUNT)
-
     try:
-        initial_pot_value = mcp.read_adc(3)
-        initial_angle = map_potentiometer_value_to_degrees(initial_pot_value)
-        start_time = millis()
+        # Set up GPIO
+        GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering
 
-        # Move motor to 180 degrees at the start
-        target_angle = 180
+        # Create ADCReader instance
+        adc_reader = ADCReader(spi_port=0, spi_device=0)
+
+        # Shared configuration (adjust per motor if needed)
+        config = {
+            'dead_zone_start': 330,
+            'dead_zone_end': 360,
+            'offset': 5,
+            'num_samples_for_average': 5,
+            'slowdown_threshold': 20
+        }
+
+        # PID constants (tune as necessary)
+        Kp = 0.1
+        Ki = 0.01
+        Kd = 0.02
+
+        # Define motors and their configurations
+        motors_info = [
+            {
+                'name': 'Motor 1',
+                'in1': 7,
+                'in2': 26,
+                'spd': 18,
+                'adc_channel': 0,  # Potentiometer connected to ADC channel 0
+            },
+            {
+                'name': 'Motor 2',
+                'in1': 22,
+                'in2': 29,
+                'spd': 31,
+                'adc_channel': 1,  # Potentiometer connected to ADC channel 1
+            },
+            {
+                'name': 'Motor 3',
+                'in1': 11,
+                'in2': 32,
+                'spd': 33,
+                'adc_channel': 2,  # Potentiometer connected to ADC channel 2
+            },
+            {
+                'name': 'Motor 4',
+                'in1': 12,
+                'in2': 13,
+                'spd': 35,
+                'adc_channel': 3,  # Potentiometer connected to ADC channel 3
+            },
+        ]
+
+        # Create a list to hold motor controllers
+        motor_controllers = []
+        stop_event = threading.Event()
+
+        # For each motor, create the necessary instances
+        for motor_info in motors_info:
+            # Create Motor instance
+            motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
+
+            # Create PIDController instance
+            pid_controller = PIDController(Kp, Ki, Kd)
+
+            # Create SpikeFilter instance
+            spike_filter = SpikeFilter(max_filter_count=5)
+
+            # Read initial potentiometer value for initial angle
+            initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
+            initial_angle = initial_pot_value * (360 / 1023)
+
+            # Create SawtoothWaveGenerator instance
+            sawtooth_generator = SawtoothWaveGenerator(period=4000, amplitude=360, initial_angle=initial_angle)
+
+            # Create MotorController instance
+            motor_controller = MotorController(
+                motor=motor,
+                pid_controller=pid_controller,
+                adc_reader=adc_reader,
+                channel=motor_info['adc_channel'],
+                spike_filter=spike_filter,
+                sawtooth_generator=sawtooth_generator,
+                config=config,
+                name=motor_info['name']  # Pass the name for logging
+            )
+
+            # Add to the list of motor controllers
+            motor_controllers.append(motor_controller)
+
+        # Create and start threads for each motor controller
+        threads = []
+        for mc in motor_controllers:
+            t = threading.Thread(target=run_motor_controller, args=(mc, stop_event))
+            t.start()
+            threads.append(t)
+
+        # Wait for KeyboardInterrupt to stop
         while True:
-            pot_value = mcp.read_adc(3)
-            filtered_pot_value = filter.apply(pot_value)
-            if filtered_pot_value is None:
-                continue
-            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
-            control_signal = pid.calculate(target_angle, degrees_value)
-            motor.set_speed(control_signal)
-
-            # Print the values
-            print(f"Potentiometer Value: {pot_value}, Degrees: {degrees_value:.2f}, Target Angle: {target_angle}, Control Signal: {control_signal:.2f}%")
-
-            # Check if the motor has reached the target angle within the offset range
-            if abs(degrees_value - target_angle) <= OFFSET:
-                motor.stop()
-                break
-
-            time.sleep(0.1)
-
-        # Wait for 5 seconds
-        print("Motor reached 180 degrees. Waiting for 5 seconds...")
-        time.sleep(5)
-
-        # Main control loop
-        while True:
-            pot_value = mcp.read_adc(3)
-            filtered_pot_value = filter.apply(pot_value)
-            if filtered_pot_value is None:
-                continue
-            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
-            current_time = millis()
-            set_position = sawtooth_wave(current_time - start_time, 10000, 360, initial_angle)  # Increased period to 10 seconds
-            pid_control_motor(degrees_value, set_position, motor, pid)
-
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("Program stopped by user")
+        stop_event.set()  # Signal all threads to stop
+        for t in threads:
+            t.join()  # Wait for all threads to finish
     finally:
-        motor.cleanup()
+        GPIO.cleanup()
+        print("GPIO cleaned up")
 
 if __name__ == "__main__":
     main()
