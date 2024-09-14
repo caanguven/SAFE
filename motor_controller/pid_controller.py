@@ -1,54 +1,44 @@
 import time
-import Adafruit_GPIO.SPI as SPI
-import Adafruit_MCP3008
-from motor_pins import setup_motor_pins, control_motor
-from pid_controller import pid_control
-from utils import map_potentiometer_value_to_degrees, custom_spike_filter
 
-# MCP3008 setup
-SPI_PORT = 0
-SPI_DEVICE = 0
-mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+# PID constants (tune these as needed)
+Kp = 0.1
+Ki = 0.01
+Kd = 0.02
 
-# Setup for a specific motor
-MOTOR_NUM = 4
-setup_motor_pins(MOTOR_NUM)
+# PID control state
+previous_error = 0
+integral = 0
+last_time = time.time()
 
-# Motor control loop
-def adc_and_motor_control():
-    try:
-        last_valid_reading = None
-        filter_active = False
-        filter_count = 0
-        start_time = time.time()
+def pid_control(set_position, current_angle, OFFSET=5):
+    """PID control logic to calculate the control signal for the motor."""
+    global previous_error, integral, last_time
 
-        while True:
-            # Read potentiometer value from channel 3 (for motor 4)
-            pot_value = mcp.read_adc(3)
-            filtered_pot_value, filter_active, filter_count = custom_spike_filter(
-                pot_value, last_valid_reading, filter_active, filter_count)
+    # Calculate the error
+    error = set_position - current_angle
 
-            if filtered_pot_value is None:
-                continue
+    # Adjust for circular motion (wrap-around handling)
+    if error > 180:
+        error -= 360
+    elif error < -180:
+        error += 360
 
-            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
+    # Get the current time
+    current_time = time.time()
+    delta_time = current_time - last_time
 
-            # Set position dynamically (e.g., using a wave or constant value)
-            set_position = 180  # Example set position
+    if delta_time >= 0.01:  # Update only every 10ms
+        integral += error * delta_time  # Accumulate integral
+        derivative = (error - previous_error) / delta_time  # Calculate derivative
 
-            # Use PID to calculate the control signal
-            control_signal = pid_control(set_position, degrees_value)
+        # Calculate control signal
+        control_signal = Kp * error + Ki * integral + Kd * derivative
 
-            # Apply the control signal to the motor
-            pwm = control_motor(MOTOR_NUM, "forward", control_signal)
+        # Clamp control signal to valid range (0-100%)
+        control_signal = max(0, min(100, control_signal))
 
-            time.sleep(0.1)
+        # Update state
+        previous_error = error
+        last_time = current_time
 
-    except KeyboardInterrupt:
-        print("Stopping motor control")
-    finally:
-        pwm.stop()
-        GPIO.cleanup()
-
-if __name__ == "__main__":
-    adc_and_motor_control()
+    return control_signal
