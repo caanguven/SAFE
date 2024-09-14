@@ -20,21 +20,19 @@ class MotorController:
     def map_potentiometer_value_to_degrees(self, value):
         # Potentiometer values range from 0 to 1023
         # Map to 0 to 360 degrees
-        return value * (360 / 1023)
+        return value * (330 / 1023)  # Adjusted to map 0-1023 to 0-330 degrees
 
-    def calculate_circular_error(self, set_position, current_angle):
-        error = set_position - current_angle
-
-        # Adjust for circular motion (wrap-around handling)
-        if error > 180:
-            error -= 360
-        elif error < -180:
-            error += 360
-
+    def calculate_error(self, set_position, current_angle):
+        # Calculate the forward-only error
+        if set_position >= current_angle:
+            error = set_position - current_angle
+        else:
+            # If set position has reset to 0, adjust for wrap-around
+            error = (360 - current_angle) + set_position
         return error
 
     def pid_control_motor(self, degrees_value, set_position):
-        # Dead zone detection in degrees
+        # Configuration parameters
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
         DEAD_ZONE_DEG_END = self.config['dead_zone_end']
         OFFSET = self.config['offset']
@@ -42,7 +40,7 @@ class MotorController:
         slowdown_threshold = self.config['slowdown_threshold']
 
         # Dead zone detection
-        if DEAD_ZONE_DEG_START <= degrees_value <= DEAD_ZONE_DEG_END:
+        if degrees_value >= DEAD_ZONE_DEG_START:
             if not self.in_dead_zone:
                 # Entering dead zone, calculate average speed
                 self.in_dead_zone = True
@@ -58,13 +56,13 @@ class MotorController:
             print(f"{self.name}: Moving in dead zone. Control signal: {self.average_speed_before_dead_zone:.2f}%")
             return
 
-        # Exit dead zone when degrees go back below 200°
-        if self.in_dead_zone and degrees_value < 200:
+        # Exit dead zone when degrees go back below DEAD_ZONE_DEG_START
+        if self.in_dead_zone and degrees_value < DEAD_ZONE_DEG_START:
             self.in_dead_zone = False
             print(f"{self.name}: Exiting dead zone. Resuming normal control.")
 
-        # Calculate circular error
-        error = self.calculate_circular_error(set_position, degrees_value)
+        # Calculate error (forward-only)
+        error = self.calculate_error(set_position, degrees_value)
 
         # Update set point in PID controller
         self.pid_controller.set_point = set_position
@@ -75,8 +73,13 @@ class MotorController:
         # Clamp control signal to 0-100%
         control_signal = max(0, min(100, control_signal))
 
-        # Slow down gradually as the error approaches the target
-        if abs(error) <= OFFSET:
+        # Ensure the motor doesn't move backward
+        if error < 0:
+            # Set control signal to zero if error is negative (we're ahead)
+            control_signal = 0
+            self.motor.stop()
+            print(f"{self.name}: Ahead of set position. Holding position.")
+        elif abs(error) <= OFFSET:
             # Stop the motor if within target range
             self.motor.stop()
             print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
@@ -125,6 +128,9 @@ class MotorController:
 
                 # Get set position from sawtooth wave generator
                 set_position = self.sawtooth_generator.get_set_position()
+
+                # Adjust set_position to wrap around at 360 degrees
+                set_position %= 360
 
                 # Control motor
                 self.pid_control_motor(degrees_value, set_position)
