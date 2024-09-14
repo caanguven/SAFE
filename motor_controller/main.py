@@ -36,27 +36,27 @@ def main():
 
         # Define motors and their configurations
         motors_info = [
-            {
-                'name': 'Motor 1',
-                'in1': 7,
-                'in2': 26,
-                'spd': 18,
-                'adc_channel': 0,  # Potentiometer connected to ADC channel 0
-            },
-            {
-                'name': 'Motor 2',
-                'in1': 22,
-                'in2': 29,
-                'spd': 31,
-                'adc_channel': 1,  # Potentiometer connected to ADC channel 1
-            },
-            {
-                'name': 'Motor 3',
-                'in1': 11,
-                'in2': 32,
-                'spd': 33,
-                'adc_channel': 2,  # Potentiometer connected to ADC channel 2
-            },
+            # {
+            #     'name': 'Motor 1',
+            #     'in1': 7,
+            #     'in2': 26,
+            #     'spd': 18,
+            #     'adc_channel': 0,  # Potentiometer connected to ADC channel 0
+            # },
+            # {
+            #     'name': 'Motor 2',
+            #     'in1': 22,
+            #     'in2': 29,
+            #     'spd': 31,
+            #     'adc_channel': 1,  # Potentiometer connected to ADC channel 1
+            # },
+            # {
+            #     'name': 'Motor 3',
+            #     'in1': 11,
+            #     'in2': 32,
+            #     'spd': 33,
+            #     'adc_channel': 2,  # Potentiometer connected to ADC channel 2
+            # },
             {
                 'name': 'Motor 4',
                 'in1': 12,
