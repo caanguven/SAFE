@@ -24,17 +24,14 @@ class MotorController:
 
     def calculate_error(self, set_position, current_angle):
         # Calculate the error, handling wrap-around
-        error = (set_position - current_angle + 360) % 360
-        if error > 180:
-            # Error is negative in terms of forward movement
-            error = error - 360  # Convert to negative value
+        error = set_position - current_angle
 
-        ahead_of_set_position = False
-        # For forward-only movement, if error is negative (we are ahead), set error to zero
-        if error < 0:
-            error = 0
-            ahead_of_set_position = True
-        return error, ahead_of_set_position
+        if error > 180:
+            error -= 360
+        elif error < -180:
+            error += 360
+
+        return error
 
     def pid_control_motor(self, degrees_value, set_position):
         # Configuration parameters
@@ -66,7 +63,7 @@ class MotorController:
             print(f"{self.name}: Exiting dead zone. Resuming normal control.")
 
         # Calculate error
-        error, ahead_of_set_position = self.calculate_error(set_position, degrees_value)
+        error = self.calculate_error(set_position, degrees_value)
 
         # Update set point in PID controller
         self.pid_controller.set_point = set_position
@@ -75,28 +72,25 @@ class MotorController:
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Clamp control signal to 0-100%
-        control_signal = max(0, min(100, control_signal))
+        control_signal = max(0, min(100, abs(control_signal)))
 
-        # Ensure the motor doesn't move backward
-        if ahead_of_set_position:
-            self.motor.stop()
-            print(f"{self.name}: Ahead of set position. Holding position.")
-            print(f"{self.name}: Current Angle: {degrees_value:.2f}°, Set Position: {set_position:.2f}°")
-        elif error <= OFFSET:
+        # Always move forward
+        self.motor.forward()
+
+        # Apply control signal
+        if abs(error) <= OFFSET:
             # Stop the motor if within target range
             self.motor.stop()
             print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
-        elif error <= slowdown_threshold:
+        elif abs(error) <= slowdown_threshold:
             # Reduce speed as approaching target
-            slowdown_factor = error / slowdown_threshold
+            slowdown_factor = abs(error) / slowdown_threshold
             slow_control_signal = control_signal * slowdown_factor
             self.motor.set_speed(slow_control_signal)
-            self.motor.forward()
             print(f"{self.name}: Slowing down: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}")
         else:
-            # Move forward
+            # Move forward at calculated speed
             self.motor.set_speed(control_signal)
-            self.motor.forward()
             print(f"{self.name}: Moving forward: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
 
         # Update last valid control signal

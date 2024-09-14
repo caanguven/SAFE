@@ -19,21 +19,19 @@ class PIDController:
             delta_time = 0.0001  # Avoid division by zero
 
         # Calculate error considering wrap-around
-        error = (self.set_point - current_value + 360) % 360
-        if error > 180:
-            error = error - 360  # Convert to negative value if over 180°
+        error = self.set_point - current_value
 
-        # For forward-only movement, if error is negative, set to zero
-        if error < 0:
-            error = 0
+        if error > 180:
+            error -= 360
+        elif error < -180:
+            error += 360
 
         # Integral term with anti-windup
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
 
-        # Derivative term, considering wrap-around
-        delta_error = error - self.previous_error
-        derivative = delta_error / delta_time
+        # Derivative term
+        derivative = (error - self.previous_error) / delta_time
 
         # Compute control signal
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
