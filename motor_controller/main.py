@@ -135,4 +135,41 @@ def main():
             filtered_pot_value = filter.apply(pot_value)
             if filtered_pot_value is None:
                 continue
-            degrees_value
+            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
+            control_signal = pid.calculate(target_angle, degrees_value)
+            motor.set_speed(control_signal)
+
+            # Print the values
+            print(f"Potentiometer Value: {pot_value}, Degrees: {degrees_value:.2f}, Target Angle: {target_angle}, Control Signal: {control_signal:.2f}%")
+
+            # Check if the motor has reached the target angle within the offset range
+            if abs(degrees_value - target_angle) <= OFFSET:
+                motor.stop()
+                break
+
+            time.sleep(0.1)
+
+        # Wait for 5 seconds
+        print("Motor reached 180 degrees. Waiting for 5 seconds...")
+        time.sleep(5)
+
+        # Main control loop
+        while True:
+            pot_value = mcp.read_adc(3)
+            filtered_pot_value = filter.apply(pot_value)
+            if filtered_pot_value is None:
+                continue
+            degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
+            current_time = millis()
+            set_position = sawtooth_wave(current_time - start_time, 10000, 360, initial_angle)  # Increased period to 10 seconds
+            pid_control_motor(degrees_value, set_position, motor, pid)
+
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("Program stopped by user")
+    finally:
+        motor.cleanup()
+
+if __name__ == "__main__":
+    main()
