@@ -11,9 +11,9 @@ SPI_DEVICE = 0
 OFFSET = 5
 DEAD_ZONE_DEG_START = 330
 DEAD_ZONE_DEG_END = 360
-Kp = 0.1
-Ki = 0.01
-Kd = 0.02
+Kp = 0.5  # Increased proportional gain
+Ki = 0.05  # Increased integral gain
+Kd = 0.1  # Increased derivative gain
 MAX_FILTER_COUNT = 5
 NUM_SAMPLES_FOR_AVERAGE = 5
 
@@ -22,6 +22,11 @@ def millis():
 
 def map_potentiometer_value_to_degrees(value):
     return value * (360 / 1023)
+
+def sawtooth_wave(t, period, amplitude, initial_angle):
+    normalized_wave = (t % period) * (amplitude / period)
+    set_position = (normalized_wave + initial_angle) % 360
+    return set_position
 
 def main():
     mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -42,7 +47,7 @@ def main():
                 continue
             degrees_value = map_potentiometer_value_to_degrees(filtered_pot_value)
             current_time = millis()
-            set_position = (current_time - start_time) % 360
+            set_position = sawtooth_wave(current_time - start_time, 10000, 360, initial_angle)  # Increased period to 10 seconds
             control_signal = pid.calculate(set_position, degrees_value)
             motor.set_speed(control_signal)
 
