@@ -45,6 +45,10 @@ def main():
             set_position = (current_time - start_time) % 360
             control_signal = pid.calculate(set_position, degrees_value)
             motor.set_speed(control_signal)
+
+            # Print the values
+            print(f"Potentiometer Value: {pot_value}, Degrees: {degrees_value:.2f}, Set Position: {set_position:.2f}, Control Signal: {control_signal:.2f}%")
+
             time.sleep(0.1)
 
     except KeyboardInterrupt:
