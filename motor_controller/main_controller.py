@@ -4,6 +4,7 @@ import Adafruit_MCP3008
 from motor_pins import setup_motor_pins, control_motor
 from pid_controller import pid_control
 from utils import map_potentiometer_value_to_degrees, custom_spike_filter
+import RPi.GPIO as GPIO  # Make sure GPIO is properly imported
 
 # MCP3008 setup
 SPI_PORT = 0
@@ -47,10 +48,12 @@ def adc_and_motor_control():
 
     except KeyboardInterrupt:
         print("Stopping motor control")
+    except Exception as e:
+        print(f"Error occurred: {e}")
     finally:
         if pwm:
             pwm.stop()  # Stop PWM only if it was started
-        GPIO.cleanup()
+        GPIO.cleanup()  # Make sure GPIO.cleanup() is always called
 
 if __name__ == "__main__":
     adc_and_motor_control()
