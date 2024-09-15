@@ -306,7 +306,7 @@ def run_motor_controller(command_queue):
     from motor import Motor
 
     # Initialize components
-    motor = Motor()
+    motor = Motor(in1_pin=12, in2_pin=13, spd_pin=35)
     pid_controller = PIDController(Kp=1.0, Ki=0.1, Kd=0.05)
     adc_reader = ADCReader()
     spike_filter = SpikeFilter()
