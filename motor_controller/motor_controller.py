@@ -71,35 +71,36 @@ class MotorController:
         # Compute control signal using PID controller
         control_signal = self.pid_controller.compute(degrees_value)
 
-        # Clamp control signal to 0-100%
-        control_signal = max(0, min(100, abs(control_signal)))
+        # Clamp control signal to -100% to 100%
+        control_signal = max(-100, min(100, control_signal))
 
-        # Always move forward
-        self.motor.forward()
-
-        # Apply control signal
+        # Determine motor direction and speed
         if abs(error) <= OFFSET:
             # Stop the motor if within target range
             self.motor.stop()
             print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
-        elif abs(error) <= slowdown_threshold:
-            # Reduce speed as approaching target
-            slowdown_factor = abs(error) / slowdown_threshold
-            slow_control_signal = control_signal * slowdown_factor
-            self.motor.set_speed(slow_control_signal)
-            print(f"{self.name}: Slowing down: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}")
         else:
-            # Move forward at calculated speed
-            self.motor.set_speed(control_signal)
-            print(f"{self.name}: Moving forward: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
+            speed = abs(control_signal)
+            # Ensure speed is within 0-100%
+            speed = max(0, min(100, speed))
+
+            if control_signal > 0:
+                self.motor.forward()
+                direction = 'forward'
+            else:
+                self.motor.backward()
+                direction = 'backward'
+
+            self.motor.set_speed(speed)
+            print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
 
         # Update last valid control signal
-        self.last_valid_control_signal = control_signal
+        self.last_valid_control_signal = abs(control_signal)
 
         # Keep sliding window of speed samples
         if len(self.speed_samples) >= NUM_SAMPLES_FOR_AVERAGE:
             self.speed_samples.pop(0)
-        self.speed_samples.append(control_signal)
+        self.speed_samples.append(abs(control_signal))
 
     def control_loop(self, stop_event):
         try:
