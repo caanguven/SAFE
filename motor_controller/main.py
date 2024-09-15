@@ -20,14 +20,16 @@ def main():
         # Create ADCReader instance
         adc_reader = ADCReader(spi_port=0, spi_device=0)
 
-        # Shared configuration (adjust per motor if needed)
+        # Shared configuration
         config = {
             'dead_zone_start': 330,
-            'dead_zone_end': 360,
             'offset': 5,
             'num_samples_for_average': 5,
-            'slowdown_threshold': 20
+            'slowdown_threshold': 20,
+            'max_control_change': 5,  
+            'max_degrees_per_second': 60  
         }
+
 
         # PID constants (tune as necessary)
         Kp = 0.1
