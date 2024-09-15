@@ -32,7 +32,7 @@ def main():
         # PID constants (tune as necessary)
         Kp = 0.1
         Ki = 0.01
-        Kd = 0.02
+        Kd = 0.2
 
         # Define motors and their configurations
         motors_info = [
