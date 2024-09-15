@@ -23,14 +23,14 @@ class MotorController:
         return value * (330 / 1023)
 
     def calculate_error(self, set_position, current_angle):
-        # Calculate the error, handling wrap-around
-        error = set_position - current_angle
-
+        # Calculate the forward-only error, handling wrap-around
+        error = (set_position - current_angle + 360) % 360
         if error > 180:
-            error -= 360
-        elif error < -180:
-            error += 360
+            error = error - 360  # Convert to negative value if over 180°
 
+        # For forward-only movement, set negative errors to zero
+        if error < 0:
+            error = 0
         return error
 
     def pid_control_motor(self, degrees_value, set_position):
@@ -71,36 +71,40 @@ class MotorController:
         # Compute control signal using PID controller
         control_signal = self.pid_controller.compute(degrees_value)
 
-        # Clamp control signal to -100% to 100%
-        control_signal = max(-100, min(100, control_signal))
+        # Clamp control signal to 0-100%
+        control_signal = max(0, min(100, control_signal))
 
-        # Determine motor direction and speed
-        if abs(error) <= OFFSET:
+        # Apply control signal based on error
+        if error == 0:
+            # Motor is at or ahead of set position; stop or maintain current speed
+            self.motor.set_speed(0)
+            self.motor.stop()
+            print(f"{self.name}: At or ahead of set position. Holding position.")
+        elif error <= OFFSET:
             # Stop the motor if within target range
+            self.motor.set_speed(0)
             self.motor.stop()
             print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
+        elif error <= slowdown_threshold:
+            # Reduce speed as approaching target
+            slowdown_factor = error / slowdown_threshold
+            slow_control_signal = control_signal * slowdown_factor
+            self.motor.set_speed(slow_control_signal)
+            self.motor.forward()
+            print(f"{self.name}: Slowing down: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
         else:
-            speed = abs(control_signal)
-            # Ensure speed is within 0-100%
-            speed = max(0, min(100, speed))
-
-            if control_signal > 0:
-                self.motor.forward()
-                direction = 'forward'
-            else:
-                self.motor.backward()
-                direction = 'backward'
-
-            self.motor.set_speed(speed)
-            print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}, Error: {error:.2f}, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}")
+            # Move forward at calculated speed
+            self.motor.set_speed(control_signal)
+            self.motor.forward()
+            print(f"{self.name}: Moving forward: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
 
         # Update last valid control signal
-        self.last_valid_control_signal = abs(control_signal)
+        self.last_valid_control_signal = control_signal
 
         # Keep sliding window of speed samples
         if len(self.speed_samples) >= NUM_SAMPLES_FOR_AVERAGE:
             self.speed_samples.pop(0)
-        self.speed_samples.append(abs(control_signal))
+        self.speed_samples.append(control_signal)
 
     def control_loop(self, stop_event):
         try:
