@@ -19,6 +19,7 @@ class MotorController:
         self.dead_zone_start_time = None
         self.estimated_position = None
         self.last_degrees_value = None
+        self.last_time = time.time()  # Initialize last_time
 
     def map_potentiometer_value_to_degrees(self, value):
         # Potentiometer values range from 0 to 1023
@@ -44,6 +45,8 @@ class MotorController:
         slowdown_threshold = self.config['slowdown_threshold']
 
         current_time = time.time()
+        delta_time = current_time - self.last_time
+        self.last_time = current_time  # Update last_time here
 
         # Dead zone detection
         if degrees_value is None:
@@ -61,9 +64,9 @@ class MotorController:
                 # In dead zone, estimate position
                 time_in_dead_zone = current_time - self.dead_zone_start_time
                 speed = self.average_speed_before_dead_zone  # Percentage of max speed
-                # Estimate position based on speed and time
+                # Estimate position based on speed and delta_time
                 degrees_per_second = self.config['max_degrees_per_second'] * (speed / 100)
-                self.estimated_position = (self.estimated_position + degrees_per_second * (current_time - self.last_time)) % 360
+                self.estimated_position = (self.estimated_position + degrees_per_second * delta_time) % 360
                 degrees_value = self.estimated_position
                 print(f"{self.name}: Estimated position in dead zone: {degrees_value:.2f}°")
         else:
@@ -75,8 +78,6 @@ class MotorController:
                 degrees_value = (self.estimated_position + degrees_value) / 2  # Average estimated and actual
                 print(f"{self.name}: Exiting dead zone. Adjusted position: {degrees_value:.2f}°")
             self.last_degrees_value = degrees_value
-
-        self.last_time = current_time
 
         # Calculate error
         error = self.calculate_error(set_position, degrees_value)
@@ -131,7 +132,7 @@ class MotorController:
 
     def control_loop(self, stop_event):
         try:
-            self.last_time = time.time()
+            # Removed self.last_time initialization here
             # Read initial potentiometer value
             initial_pot_value = self.adc_reader.read_channel(self.channel)
             initial_angle = self.map_potentiometer_value_to_degrees(initial_pot_value)
