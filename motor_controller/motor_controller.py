@@ -122,7 +122,7 @@ class MotorController:
                 if filtered_pot_value is None:
                     continue
 
-                degrees_value = self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                degrees_value = self.map_potentiometer_value_to_degrees(pot_value)
 
                 # Get set position from sawtooth wave generator
                 set_position = self.sawtooth_generator.get_set_position()
