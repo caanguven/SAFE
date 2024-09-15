@@ -79,7 +79,7 @@ def main():
             pid_controller = PIDController(Kp, Ki, Kd)
 
             # Create SpikeFilter instance
-            spike_filter = SpikeFilter(max_filter_count=5)
+            spike_filter = SpikeFilter()
 
             # Read initial potentiometer value for initial angle
             initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
