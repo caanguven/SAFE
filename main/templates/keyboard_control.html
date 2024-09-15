@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Keyboard Control</title>
+    <script>
+        document.addEventListener('keydown', function(event) {
+            let direction = null;
+            if (event.key === 'ArrowUp') {
+                direction = 'forward';
+            } else if (event.key === 'ArrowDown') {
+                direction = 'backward';
+            } else if (event.key === ' ') {
+                direction = 'stop';
+            }
+
+            if (direction) {
+                fetch('/send_command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ direction: direction })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data.message);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+        });
+    </script>
+</head>
+<body>
+    <h1>Keyboard Control</h1>
+    <p>Use the arrow keys to control the motor.</p>
+    <ul>
+        <li>Up Arrow: Move Forward</li>
+        <li>Down Arrow: Move Backward</li>
+        <li>Spacebar: Stop</li>
+    </ul>
+</body>
+</html>
