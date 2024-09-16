@@ -41,25 +41,30 @@ class MotorController:
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
         OFFSET = self.config['offset']
         slowdown_threshold = self.config['slowdown_threshold']
+        max_control_change = self.config['max_control_change']
+        max_degrees_per_second = self.config['max_degrees_per_second']
 
         current_time = time.time()
         delta_time = current_time - self.last_time
         self.last_time = current_time  # Update last_time here
 
+        # Dead zone detection
         if degrees_value is None:
+            # Entering dead zone
             if not self.in_dead_zone:
-                # Entering dead zone
                 self.in_dead_zone = True
                 self.dead_zone_start_time = current_time
 
                 # Ensure last_degrees_value and estimated_position are initialized properly
                 if self.last_degrees_value is not None:
                     self.estimated_position = self.last_degrees_value
+                    print(f"{self.name}: Setting estimated_position from last_degrees_value: {self.estimated_position:.2f}°")
                 elif set_position is not None:
                     self.estimated_position = set_position % 360
+                    print(f"{self.name}: Setting estimated_position from set_position: {self.estimated_position:.2f}°")
                 else:
                     self.estimated_position = 0.0  # Default to 0 degrees if nothing is available
-                print(f"{self.name}: last_degrees_value is None, setting estimated_position to {self.estimated_position:.2f}°")
+                    print(f"{self.name}: last_degrees_value and set_position are None, setting estimated_position to 0.0°")
 
                 # Calculate average speed before entering dead zone
                 if self.speed_samples:
@@ -67,28 +72,43 @@ class MotorController:
                 else:
                     self.average_speed_before_dead_zone = self.last_valid_control_signal
                 print(f"{self.name}: Entering dead zone. Maintaining average speed: {self.average_speed_before_dead_zone:.2f}%")
+
             else:
                 # In dead zone, estimate position
                 speed = self.average_speed_before_dead_zone  # Percentage of max speed
                 if speed is None:
                     speed = self.config.get('default_speed', 10)  # Default speed if not available
-                degrees_per_second = self.config['max_degrees_per_second'] * (speed / 100)
 
+                # Ensure that estimated_position is not None
                 if self.estimated_position is None:
                     self.estimated_position = 0.0  # Default to 0 if uninitialized
 
-                self.estimated_position = (self.estimated_position + degrees_per_second * delta_time) % 360
+                # Estimate degrees per second
+                degrees_per_second = max_degrees_per_second * (speed / 100)
+
+                # Ensure delta_time is valid and perform position estimation
+                if delta_time > 0:
+                    self.estimated_position = (self.estimated_position + degrees_per_second * delta_time) % 360
+                else:
+                    print(f"{self.name}: Delta time is zero or negative, skipping position update")
+
                 degrees_value = self.estimated_position
                 print(f"{self.name}: Estimated position in dead zone: {degrees_value:.2f}°")
+
         else:
+            # Exiting dead zone
             if self.in_dead_zone:
-                # Exiting dead zone
                 self.in_dead_zone = False
                 self.dead_zone_start_time = None
                 # Smooth transition by using estimated position
                 degrees_value = (self.estimated_position + degrees_value) / 2  # Average estimated and actual
                 print(f"{self.name}: Exiting dead zone. Adjusted position: {degrees_value:.2f}°")
             self.last_degrees_value = degrees_value
+
+        # Ensure degrees_value is valid before proceeding
+        if degrees_value is None:
+            print(f"{self.name}: degrees_value is None, setting it to 0.0°")
+            degrees_value = 0.0  # Default to 0 if degrees_value is None
 
         # Calculate error
         error = self.calculate_error(set_position, degrees_value)
@@ -100,7 +120,6 @@ class MotorController:
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Apply rate limiter to control signal
-        max_control_change = self.config['max_control_change']
         control_signal_change = control_signal - self.last_valid_control_signal
         if abs(control_signal_change) > max_control_change:
             control_signal = self.last_valid_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
@@ -144,6 +163,7 @@ class MotorController:
             if len(self.speed_samples) >= self.config['num_samples_for_average']:
                 self.speed_samples.pop(0)
             self.speed_samples.append(control_signal)
+
 
 
     def control_loop(self, stop_event, direction='forward'):
