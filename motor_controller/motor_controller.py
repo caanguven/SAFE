@@ -37,7 +37,7 @@ class MotorController:
             error = 0
         return error
 
-    def pid_control_motor(self, degrees_value, set_position, direction='forward'):
+    def pid_control_motor(self, degrees_value, set_position, direction='reverse'):
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
         OFFSET = self.config['offset']
         slowdown_threshold = self.config['slowdown_threshold']
@@ -163,7 +163,7 @@ class MotorController:
                 self.speed_samples.pop(0)
             self.speed_samples.append(control_signal)
 
-    def control_loop(self, stop_event, direction='forward'):
+    def control_loop(self, stop_event, direction='reverse'):
         try:
             initial_pot_value = self.adc_reader.read_channel(self.channel)
             initial_angle = self.map_potentiometer_value_to_degrees(initial_pot_value)

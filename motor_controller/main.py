@@ -89,6 +89,10 @@ def main():
 
             # Create SawtoothWaveGenerator instance
             sawtooth_generator = SawtoothWaveGenerator(period=4000, amplitude=360, initial_angle=initial_angle)
+            
+
+            sawtooth_generator.set_direction('reverse')
+
 
             # Create MotorController instance
             motor_controller = MotorController(
