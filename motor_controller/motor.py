@@ -25,7 +25,7 @@ class Motor:
         GPIO.output(self.in1_pin, GPIO.LOW)
         GPIO.output(self.in2_pin, GPIO.HIGH)
 
-    def backward(self):
+    def reverse(self):
         GPIO.output(self.in1_pin, GPIO.HIGH)
         GPIO.output(self.in2_pin, GPIO.LOW)
 
