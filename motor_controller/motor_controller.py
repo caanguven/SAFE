@@ -48,36 +48,67 @@ class MotorController:
 
         if degrees_value is None:
             if not self.in_dead_zone:
+                # Entering dead zone
                 self.in_dead_zone = True
                 self.dead_zone_start_time = current_time
-                self.estimated_position = self.last_degrees_value or set_position % 360
-                self.average_speed_before_dead_zone = sum(self.speed_samples) / len(self.speed_samples) if self.speed_samples else self.last_valid_control_signal
+
+                # Ensure last_degrees_value and estimated_position are initialized properly
+                if self.last_degrees_value is not None:
+                    self.estimated_position = self.last_degrees_value
+                elif set_position is not None:
+                    self.estimated_position = set_position % 360
+                else:
+                    self.estimated_position = 0.0  # Default to 0 degrees if nothing is available
+                print(f"{self.name}: last_degrees_value is None, setting estimated_position to {self.estimated_position:.2f}°")
+
+                # Calculate average speed before entering dead zone
+                if self.speed_samples:
+                    self.average_speed_before_dead_zone = sum(self.speed_samples) / len(self.speed_samples)
+                else:
+                    self.average_speed_before_dead_zone = self.last_valid_control_signal
                 print(f"{self.name}: Entering dead zone. Maintaining average speed: {self.average_speed_before_dead_zone:.2f}%")
             else:
-                speed = self.average_speed_before_dead_zone
+                # In dead zone, estimate position
+                speed = self.average_speed_before_dead_zone  # Percentage of max speed
+                if speed is None:
+                    speed = self.config.get('default_speed', 10)  # Default speed if not available
                 degrees_per_second = self.config['max_degrees_per_second'] * (speed / 100)
+
+                if self.estimated_position is None:
+                    self.estimated_position = 0.0  # Default to 0 if uninitialized
+
                 self.estimated_position = (self.estimated_position + degrees_per_second * delta_time) % 360
                 degrees_value = self.estimated_position
                 print(f"{self.name}: Estimated position in dead zone: {degrees_value:.2f}°")
         else:
             if self.in_dead_zone:
+                # Exiting dead zone
                 self.in_dead_zone = False
-                degrees_value = (self.estimated_position + degrees_value) / 2
+                self.dead_zone_start_time = None
+                # Smooth transition by using estimated position
+                degrees_value = (self.estimated_position + degrees_value) / 2  # Average estimated and actual
                 print(f"{self.name}: Exiting dead zone. Adjusted position: {degrees_value:.2f}°")
             self.last_degrees_value = degrees_value
 
+        # Calculate error
         error = self.calculate_error(set_position, degrees_value)
 
+        # Update set point in PID controller
         self.pid_controller.set_point = set_position
+
+        # Compute control signal using PID controller
         control_signal = self.pid_controller.compute(degrees_value)
 
+        # Apply rate limiter to control signal
         max_control_change = self.config['max_control_change']
         control_signal_change = control_signal - self.last_valid_control_signal
         if abs(control_signal_change) > max_control_change:
             control_signal = self.last_valid_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
 
+        # Clamp control signal to 0-100%
         control_signal = max(0, min(100, control_signal))
 
+        # Apply control signal based on error
         if error == 0:
             self.motor.set_speed(0)
             self.motor.stop()
@@ -104,13 +135,16 @@ class MotorController:
                 self.motor.set_speed(control_signal)
                 self.motor.reverse()
             print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
-        
+
+        # Update last valid control signal
         self.last_valid_control_signal = control_signal
 
+        # Keep sliding window of speed samples
         if not self.in_dead_zone:
             if len(self.speed_samples) >= self.config['num_samples_for_average']:
                 self.speed_samples.pop(0)
             self.speed_samples.append(control_signal)
+
 
     def control_loop(self, stop_event, direction='forward'):
         try:
