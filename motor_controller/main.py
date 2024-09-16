@@ -32,7 +32,7 @@ def main():
 
 
         # PID constants (tune as necessary)
-        Kp = 0.5
+        Kp = 0.2
         Ki = 0.01
         Kd = 0.1
 
