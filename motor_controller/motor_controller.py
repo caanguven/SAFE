@@ -50,21 +50,19 @@ class MotorController:
 
         # Dead zone detection
         if degrees_value is None:
-            # Entering dead zone
             if not self.in_dead_zone:
+                # Entering dead zone
                 self.in_dead_zone = True
                 self.dead_zone_start_time = current_time
 
                 # Ensure last_degrees_value and estimated_position are initialized properly
                 if self.last_degrees_value is not None:
                     self.estimated_position = self.last_degrees_value
-                    print(f"{self.name}: Setting estimated_position from last_degrees_value: {self.estimated_position:.2f}°")
                 elif set_position is not None:
                     self.estimated_position = set_position % 360
-                    print(f"{self.name}: Setting estimated_position from set_position: {self.estimated_position:.2f}°")
                 else:
                     self.estimated_position = 0.0  # Default to 0 degrees if nothing is available
-                    print(f"{self.name}: last_degrees_value and set_position are None, setting estimated_position to 0.0°")
+                print(f"{self.name}: Setting estimated_position from last_degrees_value: {self.estimated_position:.2f}°")
 
                 # Calculate average speed before entering dead zone
                 if self.speed_samples:
@@ -89,20 +87,21 @@ class MotorController:
                 # Ensure delta_time is valid and perform position estimation
                 if delta_time > 0:
                     self.estimated_position = (self.estimated_position + degrees_per_second * delta_time) % 360
-                else:
-                    print(f"{self.name}: Delta time is zero or negative, skipping position update")
-
                 degrees_value = self.estimated_position
                 print(f"{self.name}: Estimated position in dead zone: {degrees_value:.2f}°")
 
         else:
-            # Exiting dead zone
             if self.in_dead_zone:
+                # Exiting dead zone
                 self.in_dead_zone = False
                 self.dead_zone_start_time = None
-                # Smooth transition by using estimated position
-                degrees_value = (self.estimated_position + degrees_value) / 2  # Average estimated and actual
-                print(f"{self.name}: Exiting dead zone. Adjusted position: {degrees_value:.2f}°")
+
+                # Smooth transition by gradually adjusting the degrees_value
+                transition_factor = 0.2  # Control the rate of transition (smaller values for slower transitions)
+                degrees_value = (self.estimated_position * (1 - transition_factor)) + (degrees_value * transition_factor)
+
+                print(f"{self.name}: Exiting dead zone. Smoothed adjusted position: {degrees_value:.2f}°")
+
             self.last_degrees_value = degrees_value
 
         # Ensure degrees_value is valid before proceeding
@@ -163,8 +162,6 @@ class MotorController:
             if len(self.speed_samples) >= self.config['num_samples_for_average']:
                 self.speed_samples.pop(0)
             self.speed_samples.append(control_signal)
-
-
 
     def control_loop(self, stop_event, direction='forward'):
         try:
