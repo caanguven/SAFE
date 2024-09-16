@@ -88,7 +88,7 @@ def main():
             initial_angle = initial_pot_value * (360 / 1023)
 
             # Create SawtoothWaveGenerator instance
-            sawtooth_generator = SawtoothWaveGenerator(period=2000, amplitude=360, initial_angle=initial_angle)
+            sawtooth_generator = SawtoothWaveGenerator(period=4000, amplitude=360, initial_angle=initial_angle)
 
             # Create MotorController instance
             motor_controller = MotorController(
