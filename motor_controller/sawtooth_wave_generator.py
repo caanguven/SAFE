@@ -1,17 +1,22 @@
 import time
 
 class SawtoothWaveGenerator:
-    def __init__(self, period, amplitude, initial_angle):
-        self.period = period
-        self.amplitude = amplitude
-        self.initial_angle = initial_angle
-        self.start_time = self.current_millis()
+    def __init__(self, period_ms, amplitude_degrees, direction='forward'):
+        self.period_ms = period_ms
+        self.amplitude_degrees = amplitude_degrees
+        self.start_time = 0
+        self.direction = direction  # 'forward' or 'reverse'
 
     def current_millis(self):
         return int(time.time() * 1000)
 
     def get_set_position(self):
-        t = self.current_millis() - self.start_time
-        normalized_wave = (t % self.period) * (self.amplitude / self.period)
-        set_position = (normalized_wave + self.initial_angle) % 360
-        return set_position
+        elapsed_time = (self.current_millis() - self.start_time) % self.period_ms
+        normalized_wave = (elapsed_time / self.period_ms) * self.amplitude_degrees
+
+        if self.direction == 'forward':
+            return normalized_wave % 360
+        elif self.direction == 'reverse':
+            return (360 - normalized_wave) % 360
+        else:
+            raise ValueError("Invalid direction. Must be 'forward' or 'reverse'.")
