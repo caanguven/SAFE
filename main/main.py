@@ -136,11 +136,11 @@ def control_motor():
         # Depending on the direction, start a new motor control process
         if direction == 'forward':
             print("Moving forward")
-            motor_process = subprocess.Popen(['python', 'motor_controller/main.py', 'forward'])
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'forward'])
 
         elif direction == 'backward':
             print("Moving backward")
-            motor_process = subprocess.Popen(['python', 'motor_controller/main.py', 'reverse'])
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'reverse'])
 
         elif direction == 'stop':
             print("Stopping motor")
