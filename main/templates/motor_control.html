@@ -4,20 +4,65 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Motor Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f8ff;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            background-color: #fff;
+            border: 2px solid #007BFF;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            width: 300px;
+        }
+        h1 {
+            color: #007BFF;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        p {
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        #key-feedback {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 20px 0;
+            color: #FF5733;
+        }
+        .key-display {
+            font-size: 36px;
+            font-weight: bold;
+            color: #007BFF;
+            padding: 20px;
+        }
+    </style>
     <script>
         // Function to handle key press events
         document.addEventListener('keydown', function(event) {
             let direction = null;
             if (event.code === 'ArrowUp') {
                 direction = 'forward';
+                document.getElementById('key-feedback').innerText = 'Moving Forward';
             } else if (event.code === 'ArrowDown') {
                 direction = 'backward';
+                document.getElementById('key-feedback').innerText = 'Moving Backward';
             } else if (event.code === 'Escape') {
                 direction = 'stop';
+                document.getElementById('key-feedback').innerText = 'Stopping Motor';
             }
 
-            // Log to see what direction is detected
-            console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
+            // Update key display
+            document.getElementById('key-display').innerText = event.code;
 
             // If a valid direction is detected, send it to the Flask backend
             if (direction) {
@@ -36,7 +81,11 @@
     </script>
 </head>
 <body>
-    <h1>Motor Control Interface</h1>
-    <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
+    <div class="container">
+        <h1>Motor Control Interface</h1>
+        <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
+        <p id="key-feedback">Waiting for input...</p>
+        <div id="key-display" class="key-display">---</div>
+    </div>
 </body>
 </html>
