@@ -43,60 +43,73 @@ class MotorController:
 
 
 
-    def pid_control_motor(self, degrees_value, set_position, direction):
-        if degrees_value is None:
-            return
-    
-        # Calculate the error directly using degrees
-        error = self.calculate_circular_error(set_position, degrees_value)
-    
-        # Get the current time
+    def pid_control_motor(self, degrees_value, set_position, direction='forward'):
+        DEAD_ZONE_DEG_START = self.config['dead_zone_start']
+        OFFSET = self.config['offset']
+        slowdown_threshold = self.config['slowdown_threshold']
+        max_control_change = self.config['max_control_change']
+
         current_time = time.time()
         delta_time = current_time - self.last_time
-    
-        if delta_time >= 0.01:  # Ensure the loop doesn't update too frequently
-            # Calculate integral (sum of errors over time)
-            self.integral += error * delta_time
-    
-            # Calculate derivative (rate of change of error)
-            derivative = (error - self.previous_error) / delta_time
-    
-            # Calculate the control signal using the PID controller
-            control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
-    
-            # Clamp control signal to valid PWM range (0-100%)
-            control_signal = max(0, min(100, control_signal))  # Clamping to 0-100
-    
-            # Slow down gradually as the error approaches the target
-            slowdown_threshold = 20  # Degrees within which to slow down the motor
-    
-            if abs(error) <= self.OFFSET:
-                # Stop the motor if within the target range (small error)
-                self.motor.stop()
-                print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees ({direction})")
-            elif abs(error) <= slowdown_threshold:
-                # Reduce speed as we approach the target
-                slowdown_factor = abs(error) / slowdown_threshold  # Proportional slowdown
-                slow_control_signal = control_signal * slowdown_factor
+        self.last_time = current_time  # Update last_time here
+
+        if degrees_value is None:
+            print(f"{self.name}: degrees_value is None, setting it to 0.0°")
+            degrees_value = 0.0  # Default to 0 if degrees_value is None
+
+        # Calculate error based on direction (forward or reverse)
+        error = self.calculate_error(set_position, degrees_value, direction)
+
+        # Update set point in PID controller
+        self.pid_controller.set_point = set_position
+
+        # Compute control signal using PID controller
+        control_signal = self.pid_controller.compute(degrees_value)
+
+        # Apply rate limiter to control signal
+        control_signal_change = control_signal - self.last_valid_control_signal
+        if abs(control_signal_change) > max_control_change:
+            control_signal = self.last_valid_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
+
+        # Clamp control signal to 0-100%
+        control_signal = max(0, min(100, control_signal))
+
+        # Apply control signal based on error
+        if error == 0:
+            self.motor.set_speed(0)
+            self.motor.stop()
+            print(f"{self.name}: At or ahead of set position. Holding position ({direction}).")
+        elif error <= OFFSET:
+            self.motor.set_speed(0)
+            self.motor.stop()
+            print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees ({direction})")
+        elif error <= slowdown_threshold:
+            slowdown_factor = error / slowdown_threshold
+            slow_control_signal = control_signal * slowdown_factor
+            if direction == 'forward':
                 self.motor.set_speed(slow_control_signal)
-                self.motor.reverse() if direction == 'reverse' else self.motor.forward()
-                print(f"{self.name}: Slowing down ({direction}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
+                self.motor.forward()
             else:
-                # Always move forward (ignore backward)
+                self.motor.set_speed(slow_control_signal)
+                self.motor.reverse()
+            print(f"{self.name}: Slowing down ({direction}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
+        else:
+            if direction == 'forward':
                 self.motor.set_speed(control_signal)
-                self.motor.reverse() if direction == 'reverse' else self.motor.forward()
-                print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
-    
-            # Update previous error, time, and store the last valid control signal
-            self.previous_error = error
-            self.last_time = current_time
-            self.last_valid_control_signal = control_signal  # Store the last valid signal
-    
-            # Keep a sliding window of control signal samples to calculate average speed
-            if not self.in_dead_zone:
-                if len(self.speed_samples) >= self.config['num_samples_for_average']:
-                    self.speed_samples.pop(0)  # Remove the oldest sample
-                self.speed_samples.append(control_signal)  # Add the new control signal to the list
+                self.motor.forward()
+            else:
+                self.motor.set_speed(control_signal)
+                self.motor.reverse()
+            print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
+
+        # Update last valid control signal
+        self.last_valid_control_signal = control_signal
+
+        # Keep sliding window of speed samples
+        if not self.in_dead_zone:
+            if len(self.speed_samples) >= self.config['num_samples_for_average']:
+                self.speed_samples.pop(0)
+            self.speed_samples.append(control_signal)
 
     def control_loop(self, stop_event, direction='reverse'):
         try:
