@@ -8,12 +8,21 @@ from motor_controller import MotorController
 
 import threading
 import time
+import argparse  # Import argparse module
 
-def run_motor_controller(motor_controller, stop_event):
-    motor_controller.control_loop(stop_event)
+def run_motor_controller(motor_controller, stop_event, direction):
+    motor_controller.control_loop(stop_event, direction)
 
 def main():
     try:
+        # Set up argument parser
+        parser = argparse.ArgumentParser(description='Motor Control Program')
+        parser.add_argument('direction', choices=['forward', 'reverse'], help='Direction to move the motor')
+        args = parser.parse_args()
+
+        # Extract the direction
+        direction = args.direction
+
         # Set up GPIO
         GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering
 
@@ -30,7 +39,6 @@ def main():
             'max_degrees_per_second': 60  
         }
 
-
         # PID constants (tune as necessary)
         Kp = 0.1
         Ki = 0.01
@@ -38,27 +46,6 @@ def main():
 
         # Define motors and their configurations
         motors_info = [
-            # {
-            #     'name': 'Motor 1',
-            #     'in1': 7,
-            #     'in2': 26,
-            #     'spd': 18,
-            #     'adc_channel': 0,  # Potentiometer connected to ADC channel 0
-            # },
-            # {
-            #     'name': 'Motor 2',
-            #     'in1': 22,
-            #     'in2': 29,
-            #     'spd': 31,
-            #     'adc_channel': 1,  # Potentiometer connected to ADC channel 1
-            # },
-            # {
-            #     'name': 'Motor 3',
-            #     'in1': 11,
-            #     'in2': 32,
-            #     'spd': 33,
-            #     'adc_channel': 2,  # Potentiometer connected to ADC channel 2
-            # },
             {
                 'name': 'Motor 4',
                 'in1': 12,
@@ -87,13 +74,14 @@ def main():
             initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
             initial_angle = initial_pot_value * (360 / 1023)
 
-            # Create SawtoothWaveGenerator instance
-            sawtooth_generator = SawtoothWaveGenerator(period=4000, amplitude=360, initial_angle=initial_angle)
+            # Create SawtoothWaveGenerator instance with direction
+            sawtooth_generator = SawtoothWaveGenerator(
+                period=4000,
+                amplitude=360,
+                initial_angle=initial_angle,
+                direction=direction  # Pass the direction here
+            )
             
-
-            sawtooth_generator.set_direction('reverse')
-
-
             # Create MotorController instance
             motor_controller = MotorController(
                 motor=motor,
@@ -112,7 +100,7 @@ def main():
         # Create and start threads for each motor controller
         threads = []
         for mc in motor_controllers:
-            t = threading.Thread(target=run_motor_controller, args=(mc, stop_event))
+            t = threading.Thread(target=run_motor_controller, args=(mc, stop_event, direction))
             t.start()
             threads.append(t)
 
