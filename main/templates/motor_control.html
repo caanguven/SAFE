@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motor Control</title>
+    <script>
+        // Function to handle key press events
+        document.addEventListener('keydown', function(event) {
+            let direction = null;
+            if (event.code === 'ArrowUp') {
+                direction = 'forward';
+            } else if (event.code === 'ArrowDown') {
+                direction = 'backward';
+            } else if (event.code === 'Escape') {
+                direction = 'stop';
+            }
+
+            // Log to see what direction is detected
+            console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
+
+            // If a valid direction is detected, send it to the Flask backend
+            if (direction) {
+                fetch('/control_motor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ direction: direction })
+                })
+                .then(response => response.json())
+                .then(data => console.log('Backend response:', data))
+                .catch(error => console.error('Error:', error));
+            }
+        });
+    </script>
+</head>
+<body>
+    <h1>Motor Control Interface</h1>
+    <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
+</body>
+</html>

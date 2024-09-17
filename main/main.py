@@ -3,6 +3,7 @@ from picamera2 import Picamera2
 import cv2
 import numpy as np
 from pupil_apriltags import Detector
+import subprocess
 
 app = Flask(__name__)
 
@@ -11,6 +12,7 @@ haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_def
 
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
+motor_process = None  # Initialize motor_process as None
 
 # Check if the cascade loaded successfully
 if face_cascade.empty():
@@ -113,6 +115,52 @@ def detect_april_tag_direction(camera):
 @app.route('/')
 def main_page():
     return render_template('main.html')
+
+@app.route('/control_motor', methods=['POST'])
+def control_motor():
+    global motor_process
+
+    try:
+        data = request.get_json()
+        print(f"Received data from frontend: {data}")  # Log the received data
+
+        direction = data.get('direction')
+        print(f"Received direction: {direction}")  # Log the direction
+
+        # If there's an existing motor process, terminate it
+        if motor_process and motor_process.poll() is None:
+            print("Stopping previous motor process")
+            motor_process.terminate()
+            motor_process = None
+
+        # Depending on the direction, start a new motor control process
+        if direction == 'forward':
+            print("Moving forward")
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'forward'])
+
+        elif direction == 'backward':
+            print("Moving backward")
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'reverse'])
+
+        elif direction == 'stop':
+            print("Stopping motor")
+            if motor_process:
+                motor_process.terminate()
+                motor_process = None
+
+        return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
+
+    except Exception as e:
+        print(f"Error in control_motor route: {str(e)}")  # Log any errors
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+
+
+# Route to start motor control using follow_pid.py
+@app.route('/motor_control')
+def motor_control():
+    return render_template('motor_control.html')
 
 @app.route('/click')
 def click():
@@ -231,4 +279,4 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
