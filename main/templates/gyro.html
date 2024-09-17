@@ -13,7 +13,7 @@
             text-align: center;
             padding-top: 50px;
         }
-        #cube-container {
+        #model-container {
             width: 600px;
             height: 400px;
             margin: auto;
@@ -27,36 +27,52 @@
         <p>Pitch: <span id="pitch">0</span>°</p>
         <p>Yaw: <span id="yaw">0</span>°</p>
     </div>
-    <div id="cube-container"></div>
+    <div id="model-container"></div>
 
     <script>
-        let scene, camera, renderer, cube;
+        let scene, camera, renderer, model, controls;
 
         function initThreeJS() {
-            const container = document.getElementById('cube-container');
+            const container = document.getElementById('model-container');
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer();
             renderer.setSize(container.clientWidth, container.clientHeight);
             container.appendChild(renderer.domElement);
 
-            const geometry = new THREE.BoxGeometry();
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-            cube = new THREE.Mesh(geometry, material);
-            scene.add(cube);
+            // Add light to scene
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(1, 1, 1).normalize();
+            scene.add(light);
 
+            // Load STL model using STLLoader
+            const loader = new THREE.STLLoader();
+            loader.load('/static/model.stl', function (geometry) {
+                const material = new THREE.MeshNormalMaterial();
+                model = new THREE.Mesh(geometry, material);
+                scene.add(model);
+            });
+
+            // Set camera position
             camera.position.z = 5;
+
+            // Orbit controls to allow user to rotate and zoom the scene
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.update();
         }
 
         function animate() {
             requestAnimationFrame(animate);
+            controls.update();
             renderer.render(scene, camera);
         }
 
-        function updateCubeRotation(roll, pitch, yaw) {
-            cube.rotation.x = pitch * (Math.PI / 180);
-            cube.rotation.y = yaw * (Math.PI / 180);
-            cube.rotation.z = roll * (Math.PI / 180);
+        function updateModelRotation(roll, pitch, yaw) {
+            if (model) {
+                model.rotation.x = pitch * (Math.PI / 180);
+                model.rotation.y = yaw * (Math.PI / 180);
+                model.rotation.z = roll * (Math.PI / 180);
+            }
         }
 
         function fetchIMUData() {
@@ -66,7 +82,7 @@
                     document.getElementById('roll').innerText = data.roll.toFixed(2);
                     document.getElementById('pitch').innerText = data.pitch.toFixed(2);
                     document.getElementById('yaw').innerText = data.yaw.toFixed(2);
-                    updateCubeRotation(data.roll, data.pitch, data.yaw);
+                    updateModelRotation(data.roll, data.pitch, data.yaw);
                 })
                 .catch(error => console.error('Error fetching IMU data:', error));
         }
