@@ -86,20 +86,26 @@ class MotorController:
         elif error <= slowdown_threshold:
             slowdown_factor = error / slowdown_threshold
             slow_control_signal = control_signal * slowdown_factor
+
             if direction == 'forward':
                 self.motor.set_speed(slow_control_signal)
                 self.motor.forward()
             else:
+                # Apply the reverse control signal
                 self.motor.set_speed(slow_control_signal)
                 self.motor.reverse()
+            
             print(f"{self.name}: Slowing down ({direction}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
         else:
+            # Full-speed movement forward or reverse
             if direction == 'forward':
                 self.motor.set_speed(control_signal)
                 self.motor.forward()
             else:
+                # Apply reverse motion
                 self.motor.set_speed(control_signal)
                 self.motor.reverse()
+            
             print(f"{self.name}: Moving {direction}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
 
         # Update last valid control signal
@@ -110,6 +116,7 @@ class MotorController:
             if len(self.speed_samples) >= self.config['num_samples_for_average']:
                 self.speed_samples.pop(0)
             self.speed_samples.append(control_signal)
+
 
     def control_loop(self, stop_event, direction='reverse'):
         try:
