@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMU Data Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.1/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        #cube-container {
+            width: 600px;
+            height: 400px;
+            margin: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>IMU Data Visualization</h1>
+    <div id="imu-data">
+        <p>Roll: <span id="roll">0</span>°</p>
+        <p>Pitch: <span id="pitch">0</span>°</p>
+        <p>Yaw: <span id="yaw">0</span>°</p>
+    </div>
+    <div id="cube-container"></div>
+
+    <script>
+        let scene, camera, renderer, cube;
+
+        function initThreeJS() {
+            const container = document.getElementById('cube-container');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            const geometry = new THREE.BoxGeometry();
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            cube = new THREE.Mesh(geometry, material);
+            scene.add(cube);
+
+            camera.position.z = 5;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function updateCubeRotation(roll, pitch, yaw) {
+            cube.rotation.x = pitch * (Math.PI / 180);
+            cube.rotation.y = yaw * (Math.PI / 180);
+            cube.rotation.z = roll * (Math.PI / 180);
+        }
+
+        initThreeJS();
+        animate();
+
+        // Simulate IMU data updates
+        setInterval(() => {
+            const roll = Math.random() * 360;
+            const pitch = Math.random() * 360;
+            const yaw = Math.random() * 360;
+            document.getElementById('roll').innerText = roll.toFixed(2);
+            document.getElementById('pitch').innerText = pitch.toFixed(2);
+            document.getElementById('yaw').innerText = yaw.toFixed(2);
+            updateCubeRotation(roll, pitch, yaw);
+        }, 1000);
+    </script>
+</body>
+</html>

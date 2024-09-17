@@ -245,7 +245,7 @@ def manual_drive_action():
 @app.route('/gyro')
 def gyro():
     Camera.release_instance()
-    return "Gyro Service - Not implemented yet"
+    return render_template('gyro.html')
 
 def gen_face_detection(camera):
     """Video streaming generator function with face detection."""
