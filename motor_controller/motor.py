@@ -18,7 +18,7 @@ class Motor:
 
     def set_speed(self, duty_cycle):
         # Clamp duty_cycle to 0-100%
-        duty_cycle = max(0, min(100, duty_cycle))
+        duty_cycle = max(-100, min(100, duty_cycle))
         self.pwm.ChangeDutyCycle(duty_cycle)
 
     def forward(self):
