@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motor Control</title>
+    <title>Motor Control with Camera</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             background-color: #f0f8ff;
             color: #333;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
             height: 100vh;
             margin: 0;
@@ -22,7 +22,8 @@
             border-radius: 10px;
             padding: 20px;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            width: 300px;
+            width: 80%;
+            margin-top: 20px;
         }
         h1 {
             color: #007BFF;
@@ -45,6 +46,29 @@
             color: #007BFF;
             padding: 20px;
         }
+        img {
+            width: 640px;
+            height: 480px;
+            margin-top: 20px;
+        }
+        .button-container {
+            margin-top: 30px;
+        }
+        .service-button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .service-button:hover {
+            background-color: #0056b3;
+        }
     </style>
     <script>
         // Function to handle key press events
@@ -52,17 +76,19 @@
             let direction = null;
             if (event.code === 'ArrowUp') {
                 direction = 'forward';
-                document.getElementById('key-feedback').innerText = 'Moving Forward';
             } else if (event.code === 'ArrowDown') {
                 direction = 'backward';
-                document.getElementById('key-feedback').innerText = 'Moving Backward';
             } else if (event.code === 'Escape') {
                 direction = 'stop';
-                document.getElementById('key-feedback').innerText = 'Stopping Motor';
             }
 
-            // Update key display
-            document.getElementById('key-display').innerText = event.code;
+            // Log to see what direction is detected
+            console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
+
+            // Update key feedback on the UI
+            if (direction) {
+                document.getElementById('key-feedback').innerText = `Motor moving: ${direction}`;
+            }
 
             // If a valid direction is detected, send it to the Flask backend
             if (direction) {
@@ -82,10 +108,18 @@
 </head>
 <body>
     <div class="container">
-        <h1>Motor Control Interface</h1>
+        <h1>Motor Control with Camera</h1>
         <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
         <p id="key-feedback">Waiting for input...</p>
         <div id="key-display" class="key-display">---</div>
+        
+        <h2>Live Camera Feed</h2>
+        <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+
+        <!-- Back Button -->
+        <div class="button-container">
+            <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
+        </div>
     </div>
 </body>
 </html>
