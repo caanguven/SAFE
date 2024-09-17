@@ -28,7 +28,7 @@ class MotorController:
 
     def calculate_error(self, set_position, current_angle, direction='reverse'):
         if direction == 'reverse':
-            # Reverse logic: handle wrap-around for reverse motion
+            # Reverse logic: calculate error for reverse motion
             error = (current_angle - set_position + 360) % 360
             if error > 180:
                 error = error - 360
@@ -38,11 +38,9 @@ class MotorController:
             if error > 180:
                 error = error - 360
 
-        # For reverse movement, allow negative errors for proper reverse control
-        if direction == 'reverse' and error < 0:
-            error = 0
-
+        # Do not clamp errors to zero for reverse; they should remain negative or positive
         return error
+
 
 
     def pid_control_motor(self, degrees_value, set_position, direction='forward'):
@@ -50,15 +48,11 @@ class MotorController:
         OFFSET = self.config['offset']
         slowdown_threshold = self.config['slowdown_threshold']
         max_control_change = self.config['max_control_change']
-        max_degrees_per_second = self.config['max_degrees_per_second']
 
         current_time = time.time()
         delta_time = current_time - self.last_time
         self.last_time = current_time  # Update last_time here
 
-        # Dead zone detection logic remains the same...
-
-        # Ensure degrees_value is valid before proceeding
         if degrees_value is None:
             print(f"{self.name}: degrees_value is None, setting it to 0.0°")
             degrees_value = 0.0  # Default to 0 if degrees_value is None
@@ -84,11 +78,11 @@ class MotorController:
         if error == 0:
             self.motor.set_speed(0)
             self.motor.stop()
-            print(f"{self.name}: At or ahead of set position. Holding position (reverse).")
+            print(f"{self.name}: At or ahead of set position. Holding position ({direction}).")
         elif error <= OFFSET:
             self.motor.set_speed(0)
             self.motor.stop()
-            print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees (reverse)")
+            print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees ({direction})")
         elif error <= slowdown_threshold:
             slowdown_factor = error / slowdown_threshold
             slow_control_signal = control_signal * slowdown_factor
@@ -98,7 +92,7 @@ class MotorController:
             else:
                 self.motor.set_speed(slow_control_signal)
                 self.motor.reverse()
-            print(f"{self.name}: Slowing down (reverse): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
+            print(f"{self.name}: Slowing down ({direction}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {slow_control_signal:.2f}%, Set Position: {set_position:.2f}°")
         else:
             if direction == 'forward':
                 self.motor.set_speed(control_signal)
