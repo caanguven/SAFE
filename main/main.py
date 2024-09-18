@@ -16,7 +16,6 @@ app = Flask(__name__)
 
 # Specify the path to the Haar cascade XML file
 haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml'
-bno_lock = threading.Lock()
 
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
@@ -37,6 +36,8 @@ bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
 imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
 calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
+
+imu_data_lock = threading.Lock()
 
 
 # Initialize the AprilTag libraries
@@ -261,52 +262,61 @@ def manual_drive_action():
     return jsonify({"status": "success"})
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++ GYRO++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-# Function to convert quaternion to Euler angles
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles.
+    """
     roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 1 - 2 * (quat_i**2 + quat_j**2))
     pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
     yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
     return roll, pitch, yaw
 
-# Function to calibrate the IMU
-def calibrate_imu():
-    global calibration_offsets, calibrated
-    with bno_lock:
-        quat_i, quat_j, quat_k, quat_real = bno.quaternion
-        roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-        calibration_offsets['roll'] = math.degrees(roll)
-        calibration_offsets['pitch'] = math.degrees(pitch)
-        calibration_offsets['yaw'] = math.degrees(yaw)
-        calibrated = True
 
-# Function to continuously update IMU data
+def calibrate_imu():
+    """
+    Capture the initial IMU readings to use as calibration offsets.
+    """
+    global calibration_offsets, calibrated
+    quat_i, quat_j, quat_k, quat_real = bno.quaternion
+    roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+    calibration_offsets['roll'] = math.degrees(roll)
+    calibration_offsets['pitch'] = math.degrees(pitch)
+    calibration_offsets['yaw'] = math.degrees(yaw)
+    calibrated = True
+
 def update_imu_data():
     global calibrated
     while True:
-        if not calibrated:
-            calibrate_imu()
-        with bno_lock:
+        try:
+            if not calibrated:
+                calibrate_imu()
             quat_i, quat_j, quat_k, quat_real = bno.quaternion
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
             
-            imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
-            imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
-            imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
-            
-            time.sleep(0.05)  # Update at 50ms intervals
+            with imu_data_lock:
+                imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
+                imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
+                imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+        except Exception as e:
+            print(f"Exception in update_imu_data: {e}")
+        time.sleep(0.05)
 
-# Start the IMU data update thread
-threading.Thread(target=update_imu_data, daemon=True).start()
+
 
 # Route to serve the gyro.html page
 @app.route('/gyro')
 def gyro():
+    # Start the IMU data update thread
+    threading.Thread(target=update_imu_data, daemon=True).start()
     return render_template('gyro.html')
 
 # Route to fetch IMU data
 @app.route('/imu_data')
 def get_imu_data():
-    return jsonify(imu_data)
+    with imu_data_lock:
+        data = imu_data.copy()
+    return jsonify(data)
+
 
 
 def gen_face_detection(camera):

@@ -34,48 +34,75 @@
 
         function initThreeJS() {
             const container = document.getElementById('cube-container');
+
+            // Scene 
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer();
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
             container.appendChild(renderer.domElement);
 
-            const geometry = new THREE.BoxGeometry();
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-            cube = new THREE.Mesh(geometry, material);
-            scene.add(cube);
+            // STL
+            const loader = new THREE.STLLoader();
+            loader.load('/static/model.stl', function (geometry) {
+				geometry.center();
+				console.log('STL Loaded');
+                const material = new THREE.MeshPhongMaterial({ color: 0x555555, specular: 0x111111, shininess: 200 });
+                cube = new THREE.Mesh(geometry, material);
+// change the values here for a initial rotation of the robot
+//                cube.rotation.x = Math.PI / 2; 
+               // cube.rotation.z = Math.PI/2;
+                cube.scale.set(0.02, 0.02, 0.02); // Scale 
+                cube.castShadow = true;
+                cube.receiveShadow = true;
+
+                scene.add(cube);
+            });
 
             camera.position.z = 5;
+			// lights
+            const ambientLight = new THREE.AmbientLight(0x404040); 
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1); 
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            animate();
         }
 
         function animate() {
             requestAnimationFrame(animate);
             renderer.render(scene, camera);
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+
         }
 
-        function updateCubeRotation(roll, pitch, yaw) {
-            cube.rotation.x = pitch * (Math.PI / 180);
-            cube.rotation.y = yaw * (Math.PI / 180);
-            cube.rotation.z = roll * (Math.PI / 180);
+        function setCubeRotation(roll, pitch, yaw) {
+            if (cube) {
+                // Convert degrees to radians and apply rotation
+                cube.rotation.x = roll * Math.PI / 180;
+                cube.rotation.y = -yaw * Math.PI / 180;
+                cube.rotation.z = -pitch * Math.PI / 180;
+            }
         }
 
         function fetchIMUData() {
             fetch('/imu_data')
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('roll').innerText = data.roll.toFixed(2);
-                    document.getElementById('pitch').innerText = data.pitch.toFixed(2);
-                    document.getElementById('yaw').innerText = data.yaw.toFixed(2);
-                    updateCubeRotation(data.roll, data.pitch, data.yaw);
+                    document.getElementById('roll').textContent = data.roll.toFixed(2);
+                    document.getElementById('pitch').textContent = data.pitch.toFixed(2);
+                    document.getElementById('yaw').textContent = data.yaw.toFixed(2);
+                    setCubeRotation(data.roll, data.pitch, data.yaw);
                 })
                 .catch(error => console.error('Error fetching IMU data:', error));
         }
 
+        // Initialize Three.js
         initThreeJS();
-        animate();
 
-        // Fetch IMU data every second
-        setInterval(fetchIMUData, 1000);
+        // Fetch the IMU data every 100 milliseconds
+        setInterval(fetchIMUData, 100);
     </script>
 </body>
 </html>
