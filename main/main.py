@@ -180,7 +180,6 @@ def control_motor():
 # Route to start motor control using follow_pid.py
 @app.route('/motor_control')
 def motor_control():
-    threading.Thread(target=update_imu_data, daemon=True).start()
     return render_template('motor_control.html')
 
 @app.route('/click')
@@ -287,28 +286,59 @@ def calibrate_imu():
 
 def update_imu_data():
     global calibrated
+    error_count = 0
+    max_errors = 10  # Maximum consecutive errors before taking action
     while True:
         try:
             if not calibrated:
                 calibrate_imu()
-            quat_i, quat_j, quat_k, quat_real = bno.quaternion
+            quat = bno.quaternion
+            if quat is None:
+                raise ValueError("Quaternion data is None")
+            quat_i, quat_j, quat_k, quat_real = quat
+            
+            # Check for invalid data (e.g., all 0xFF indicates an error)
+            if any(b == 0xFF for b in [quat_i, quat_j, quat_k, quat_real]):
+                raise ValueError("Received invalid quaternion data containing 0xFF")
+            
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
             
             with imu_data_lock:
                 imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
                 imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
                 imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+            
+            # Reset error count on successful read
+            error_count = 0
         except Exception as e:
-            print(f"Exception in update_imu_data: {e}")
-        time.sleep(0.05)
-
+            error_count += 1
+            if error_count <= max_errors:
+                print(f"Exception in update_imu_data: {e}")
+            elif error_count == max_errors + 1:
+                print("Max IMU errors reached. Attempting to reset IMU.")
+            elif error_count > max_errors:
+                # Attempt to reset the IMU
+                try:
+                    bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
+                    bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                    print("IMU has been reset and reinitialized.")
+                    calibrated = False  # Trigger recalibration
+                    error_count = 0  # Reset error count after reset
+                except Exception as reset_e:
+                    print(f"Failed to reset IMU: {reset_e}")
+                    # Optional: Sleep longer before retrying to prevent rapid failures
+                    time.sleep(2)
+        # Adjust sleep based on error state
+        if error_count > max_errors:
+            time.sleep(2)  # Longer sleep after attempting a reset
+        else:
+            time.sleep(0.05)  # Regular sleep interval
 
 
 # Route to serve the gyro.html page
 @app.route('/gyro')
 def gyro():
     # Start the IMU data update thread
-    threading.Thread(target=update_imu_data, daemon=True).start()
     return render_template('gyro.html')
 
 # Route to fetch IMU data
@@ -352,4 +382,5 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
+    threading.Thread(target=update_imu_data, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=True)
