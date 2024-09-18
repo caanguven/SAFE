@@ -4,6 +4,13 @@ import cv2
 import numpy as np
 from pupil_apriltags import Detector
 import subprocess
+import threading
+import time
+import math
+import busio
+import board
+from adafruit_bno08x.i2c import BNO08X_I2C
+from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 
 app = Flask(__name__)
 
@@ -19,6 +26,19 @@ if face_cascade.empty():
     print('Failed to load cascade classifier')
 else:
     print('Cascade classifier loaded successfully')
+
+# Initialize BNO08x IMU
+i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
+bno = BNO08X_I2C(i2c)
+bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+
+# Global variable for IMU data
+imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
+calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
+calibrated = False
+
+imu_data_lock = threading.Lock()
+
 
 # Initialize the AprilTag libraries
 at_detector = Detector(families='tag36h11 tag52h13',
@@ -240,12 +260,64 @@ def manual_drive_action():
     print(f"Direction: {direction}")
 
     return jsonify({"status": "success"})
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++ GYRO++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles.
+    """
+    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 1 - 2 * (quat_i**2 + quat_j**2))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
+    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
+    return roll, pitch, yaw
 
 
+def calibrate_imu():
+    """
+    Capture the initial IMU readings to use as calibration offsets.
+    """
+    global calibration_offsets, calibrated
+    quat_i, quat_j, quat_k, quat_real = bno.quaternion
+    roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+    calibration_offsets['roll'] = math.degrees(roll)
+    calibration_offsets['pitch'] = math.degrees(pitch)
+    calibration_offsets['yaw'] = math.degrees(yaw)
+    calibrated = True
+
+def update_imu_data():
+    global calibrated
+    while True:
+        try:
+            if not calibrated:
+                calibrate_imu()
+            quat_i, quat_j, quat_k, quat_real = bno.quaternion
+            roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+            
+            with imu_data_lock:
+                imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
+                imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
+                imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+        except Exception as e:
+            print(f"Exception in update_imu_data: {e}")
+        time.sleep(0.05)
+
+
+
+# Route to serve the gyro.html page
 @app.route('/gyro')
 def gyro():
-    Camera.release_instance()
-    return "Gyro Service - Not implemented yet"
+    # Start the IMU data update thread
+    threading.Thread(target=update_imu_data, daemon=True).start()
+    return render_template('gyro.html')
+
+# Route to fetch IMU data
+@app.route('/imu_data')
+def get_imu_data():
+    with imu_data_lock:
+        data = imu_data.copy()
+    return jsonify(data)
+
+
 
 def gen_face_detection(camera):
     """Video streaming generator function with face detection."""
