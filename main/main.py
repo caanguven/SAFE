@@ -16,6 +16,7 @@ app = Flask(__name__)
 
 # Specify the path to the Haar cascade XML file
 haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml'
+bno_lock = threading.Lock()
 
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
@@ -37,6 +38,9 @@ imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
 calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
 
+# disable all features before enabling the desired one
+bno.disable_all_features()
+bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
 
 
 # Initialize the AprilTag libraries
@@ -271,12 +275,13 @@ def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
 # Function to calibrate the IMU
 def calibrate_imu():
     global calibration_offsets, calibrated
-    quat_i, quat_j, quat_k, quat_real = bno.quaternion
-    roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-    calibration_offsets['roll'] = math.degrees(roll)
-    calibration_offsets['pitch'] = math.degrees(pitch)
-    calibration_offsets['yaw'] = math.degrees(yaw)
-    calibrated = True
+    with bno_lock:
+        quat_i, quat_j, quat_k, quat_real = bno.quaternion
+        roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+        calibration_offsets['roll'] = math.degrees(roll)
+        calibration_offsets['pitch'] = math.degrees(pitch)
+        calibration_offsets['yaw'] = math.degrees(yaw)
+        calibrated = True
 
 # Function to continuously update IMU data
 def update_imu_data():
@@ -284,14 +289,15 @@ def update_imu_data():
     while True:
         if not calibrated:
             calibrate_imu()
-        quat_i, quat_j, quat_k, quat_real = bno.quaternion
-        roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-        
-        imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
-        imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
-        imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
-        
-        time.sleep(0.05)  # Update at 50ms intervals
+        with bno_lock:
+            quat_i, quat_j, quat_k, quat_real = bno.quaternion
+            roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+            
+            imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
+            imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
+            imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+            
+            time.sleep(0.05)  # Update at 50ms intervals
 
 # Start the IMU data update thread
 threading.Thread(target=update_imu_data, daemon=True).start()
