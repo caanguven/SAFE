@@ -38,10 +38,6 @@ imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
 calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
 
-# disable all features before enabling the desired one
-bno.disable_all_features()
-bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-
 
 # Initialize the AprilTag libraries
 at_detector = Detector(families='tag36h11 tag52h13',
