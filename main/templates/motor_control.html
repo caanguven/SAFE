@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Motor Control with Camera and Gyro</title>
     <style>
-        /* Existing styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f0f8ff;
@@ -72,16 +71,23 @@
         .service-button:hover {
             background-color: #0056b3;
         }
+        /* Flexbox container for camera, IMU, and 3D viewer */
+        .content-container {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            margin-top: 20px;
+            gap: 20px;
+        }
         /* IMU Data styles */
         #imu-data {
             margin-top: 20px;
+            width: 200px;
         }
         /* Three.js Container */
         #cube-container {
             width: 600px;
             height: 400px;
-            margin: auto;
-            margin-top: 20px;
         }
     </style>
     <!-- Include Three.js and its dependencies -->
@@ -96,18 +102,25 @@
         <p id="key-feedback">Waiting for input...</p>
         <div id="key-display" class="key-display">---</div>
         
-        <h2>Live Camera Feed</h2>
-        <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+        <!-- Flexbox Container for Camera Feed, IMU Data, and STL Viewer -->
+        <div class="content-container">
+            <!-- Live Camera Feed -->
+            <div>
+                <h2>Live Camera Feed</h2>
+                <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+            </div>
 
-        <!-- IMU Data Display -->
-        <div id="imu-data">
-            <h2>IMU Data</h2>
-            <p>Roll: <span id="roll">0</span>°</p>
-            <p>Pitch: <span id="pitch">0</span>°</p>
-            <p>Yaw: <span id="yaw">0</span>°</p>
+            <!-- IMU Data Display -->
+            <div id="imu-data">
+                <h2>IMU Data</h2>
+                <p>Roll: <span id="roll">0</span>°</p>
+                <p>Pitch: <span id="pitch">0</span>°</p>
+                <p>Yaw: <span id="yaw">0</span>°</p>
+            </div>
+
+            <!-- Three.js Visualization -->
+            <div id="cube-container"></div>
         </div>
-        <!-- Three.js Visualization -->
-        <div id="cube-container"></div>
 
         <!-- Back Button -->
         <div class="button-container">
@@ -127,15 +140,12 @@
                 direction = 'stop';
             }
 
-            // Log to see what direction is detected
             console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
 
-            // Update key feedback on the UI
             if (direction) {
                 document.getElementById('key-feedback').innerText = `Motor moving: ${direction}`;
             }
 
-            // If a valid direction is detected, send it to the Flask backend
             if (direction) {
                 fetch('/control_motor', {
                     method: 'POST',
@@ -156,41 +166,31 @@
         function initThreeJS() {
             const container = document.getElementById('cube-container');
 
-            // Scene 
             scene = new THREE.Scene();
             cameraThree = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
             rendererThree = new THREE.WebGLRenderer({ antialias: true });
             rendererThree.setSize(container.clientWidth, container.clientHeight);
             container.appendChild(rendererThree.domElement);
 
-            // STL Loader
             const loader = new THREE.STLLoader();
             loader.load('/static/model.stl', function (geometry) {
                 geometry.center();
-                console.log('STL Loaded');
                 const material = new THREE.MeshPhongMaterial({ color: 0x555555, specular: 0x111111, shininess: 200 });
                 cube = new THREE.Mesh(geometry, material);
-                // Initial rotation
-                cube.scale.set(0.02, 0.02, 0.02); // Scale 
+                cube.scale.set(0.02, 0.02, 0.02); 
                 cube.castShadow = true;
                 cube.receiveShadow = true;
-
                 scene.add(cube);
-            }, undefined, function (error) {
-                console.error('Error loading STL:', error);
             });
 
             cameraThree.position.z = 10;
-            // Lights
             const ambientLight = new THREE.AmbientLight(0x404040); 
             scene.add(ambientLight);
             const directionalLight = new THREE.DirectionalLight(0xffffff, 1); 
             directionalLight.position.set(1, 1, 1).normalize();
             scene.add(directionalLight);
 
-            // Orbit Controls
             controls = new THREE.OrbitControls(cameraThree, rendererThree.domElement);
-
             animateThreeJS();
         }
 
@@ -202,14 +202,12 @@
 
         function setCubeRotation(roll, pitch, yaw) {
             if (cube) {
-                // Convert degrees to radians and apply rotation
                 cube.rotation.x = -pitch * Math.PI / 180;
                 cube.rotation.y = yaw * Math.PI / 180;
                 cube.rotation.z = -roll * Math.PI / 180;
             }
         }
 
-        // Function to fetch IMU data
         function fetchIMUData() {
             fetch('/imu_data')
                 .then(response => response.json())
@@ -222,10 +220,7 @@
                 .catch(error => console.error('Error fetching IMU data:', error));
         }
 
-        // Initialize Three.js
         initThreeJS();
-
-        // Fetch the IMU data every 100 milliseconds
         setInterval(fetchIMUData, 100);
     </script>
 </body>
