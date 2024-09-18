@@ -11,6 +11,10 @@ import busio
 import board
 from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
+import logging
+
+
+
 
 app = Flask(__name__)
 
@@ -38,6 +42,14 @@ calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
 
 imu_data_lock = threading.Lock()
+
+# Configure logging
+logging.basicConfig(
+    filename='imu_errors.log',
+    level=logging.ERROR,
+    format='%(asctime)s %(levelname)s:%(message)s'
+)
+logger = logging.getLogger()
 
 
 # Initialize the AprilTag libraries
@@ -285,55 +297,61 @@ def calibrate_imu():
     calibrated = True
 
 def update_imu_data():
-    global calibrated
+    global calibrated, bno
     error_count = 0
-    max_errors = 10  # Maximum consecutive errors before taking action
+    max_errors_before_reset = 5  # Number of consecutive errors before attempting a reset
+    sleep_after_error = 1  # Seconds to sleep after an error
+
     while True:
         try:
             if not calibrated:
                 calibrate_imu()
+
+            if bno is None:
+                raise RuntimeError("IMU not initialized.")
+
             quat = bno.quaternion
             if quat is None:
-                raise ValueError("Quaternion data is None")
+                raise ValueError("Quaternion data is None.")
+
             quat_i, quat_j, quat_k, quat_real = quat
-            
-            # Check for invalid data (e.g., all 0xFF indicates an error)
-            if any(b == 0xFF for b in [quat_i, quat_j, quat_k, quat_real]):
-                raise ValueError("Received invalid quaternion data containing 0xFF")
-            
+
+            # Validate quaternion data
+            if any(byte == 0xFF for byte in [quat_i, quat_j, quat_k, quat_real]):
+                raise ValueError("Received invalid quaternion data containing 0xFF.")
+
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-            
+
             with imu_data_lock:
                 imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
                 imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
                 imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
-            
+
             # Reset error count on successful read
             error_count = 0
+
         except Exception as e:
             error_count += 1
-            if error_count <= max_errors:
-                print(f"Exception in update_imu_data: {e}")
-            elif error_count == max_errors + 1:
-                print("Max IMU errors reached. Attempting to reset IMU.")
-            elif error_count > max_errors:
-                # Attempt to reset the IMU
-                try:
-                    bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
-                    bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-                    print("IMU has been reset and reinitialized.")
-                    calibrated = False  # Trigger recalibration
-                    error_count = 0  # Reset error count after reset
-                except Exception as reset_e:
-                    print(f"Failed to reset IMU: {reset_e}")
-                    # Optional: Sleep longer before retrying to prevent rapid failures
-                    time.sleep(2)
-        # Adjust sleep based on error state
-        if error_count > max_errors:
-            time.sleep(2)  # Longer sleep after attempting a reset
-        else:
-            time.sleep(0.05)  # Regular sleep interval
+            logger.error(f"Exception in update_imu_data: {e}")
 
+            if error_count >= max_errors_before_reset:
+                logger.error("Max consecutive IMU errors reached. Attempting to reset IMU.")
+                try:
+                    # Attempt to reset/reinitialize the IMU
+                    bno = BNO08X_I2C(i2c)
+                    bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                    logger.info("IMU has been reset and reinitialized.")
+                    calibrated = False  # Trigger recalibration
+                    error_count = 0  # Reset error count after successful reset
+                except Exception as reset_e:
+                    logger.error(f"Failed to reset IMU: {reset_e}")
+                    # Optional: Additional recovery steps or alerts can be added here
+
+            # Sleep to prevent tight error loops and reduce CPU usage
+            time.sleep(sleep_after_error)
+
+        # Regular sleep interval
+        time.sleep(0.05)
 
 # Route to serve the gyro.html page
 @app.route('/gyro')
@@ -382,5 +400,11 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    threading.Thread(target=update_imu_data, daemon=True).start()
+    if bno is not None:
+        # Start the IMU update thread
+        imu_thread = threading.Thread(target=update_imu_data, daemon=True)
+        imu_thread.start()
+        print("IMU update thread started.")
+    else:
+        print("IMU not initialized. Skipping IMU update thread.")
     app.run(host='0.0.0.0', port=5000, debug=True)
