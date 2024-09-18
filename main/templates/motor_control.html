@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motor Control with Camera</title>
+    <title>Motor Control with Camera and Gyro</title>
     <style>
+        /* Existing styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f0f8ff;
@@ -22,8 +23,10 @@
             border-radius: 10px;
             padding: 20px;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            width: 80%;
+            width: 90%;
+            max-width: 1200px;
             margin-top: 20px;
+            overflow-y: auto;
         }
         h1 {
             color: #007BFF;
@@ -69,9 +72,51 @@
         .service-button:hover {
             background-color: #0056b3;
         }
+        /* IMU Data styles */
+        #imu-data {
+            margin-top: 20px;
+        }
+        /* Three.js Container */
+        #cube-container {
+            width: 600px;
+            height: 400px;
+            margin: auto;
+            margin-top: 20px;
+        }
     </style>
+    <!-- Include Three.js and its dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.1/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Motor Control with Camera and Gyro</h1>
+        <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
+        <p id="key-feedback">Waiting for input...</p>
+        <div id="key-display" class="key-display">---</div>
+        
+        <h2>Live Camera Feed</h2>
+        <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+
+        <!-- IMU Data Display -->
+        <div id="imu-data">
+            <h2>IMU Data</h2>
+            <p>Roll: <span id="roll">0</span>°</p>
+            <p>Pitch: <span id="pitch">0</span>°</p>
+            <p>Yaw: <span id="yaw">0</span>°</p>
+        </div>
+        <!-- Three.js Visualization -->
+        <div id="cube-container"></div>
+
+        <!-- Back Button -->
+        <div class="button-container">
+            <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
+        </div>
+    </div>
+    
     <script>
-        // Function to handle key press events
+        // Motor control key press handling
         document.addEventListener('keydown', function(event) {
             let direction = null;
             if (event.code === 'ArrowUp') {
@@ -104,22 +149,84 @@
                 .catch(error => console.error('Error:', error));
             }
         });
-    </script>
-</head>
-<body>
-    <div class="container">
-        <h1>Motor Control with Camera</h1>
-        <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
-        <p id="key-feedback">Waiting for input...</p>
-        <div id="key-display" class="key-display">---</div>
-        
-        <h2>Live Camera Feed</h2>
-        <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
 
-        <!-- Back Button -->
-        <div class="button-container">
-            <a href="{{ url_for('main_page') }}" class="service-button">Back to Main Page</a>
-        </div>
-    </div>
+        // Initialize Three.js for 3D visualization
+        let scene, cameraThree, rendererThree, cube, controls;
+
+        function initThreeJS() {
+            const container = document.getElementById('cube-container');
+
+            // Scene 
+            scene = new THREE.Scene();
+            cameraThree = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+            rendererThree = new THREE.WebGLRenderer({ antialias: true });
+            rendererThree.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(rendererThree.domElement);
+
+            // STL Loader
+            const loader = new THREE.STLLoader();
+            loader.load('/static/model.stl', function (geometry) {
+                geometry.center();
+                console.log('STL Loaded');
+                const material = new THREE.MeshPhongMaterial({ color: 0x555555, specular: 0x111111, shininess: 200 });
+                cube = new THREE.Mesh(geometry, material);
+                // Initial rotation
+                cube.scale.set(0.02, 0.02, 0.02); // Scale 
+                cube.castShadow = true;
+                cube.receiveShadow = true;
+
+                scene.add(cube);
+            }, undefined, function (error) {
+                console.error('Error loading STL:', error);
+            });
+
+            cameraThree.position.z = 10;
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040); 
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1); 
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            // Orbit Controls
+            controls = new THREE.OrbitControls(cameraThree, rendererThree.domElement);
+
+            animateThreeJS();
+        }
+
+        function animateThreeJS() {
+            requestAnimationFrame(animateThreeJS);
+            rendererThree.render(scene, cameraThree);
+            controls.update();
+        }
+
+        function setCubeRotation(roll, pitch, yaw) {
+            if (cube) {
+                // Convert degrees to radians and apply rotation
+                cube.rotation.x = -pitch * Math.PI / 180;
+                cube.rotation.y = yaw * Math.PI / 180;
+                cube.rotation.z = -roll * Math.PI / 180;
+            }
+        }
+
+        // Function to fetch IMU data
+        function fetchIMUData() {
+            fetch('/imu_data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('roll').textContent = data.roll.toFixed(2);
+                    document.getElementById('pitch').textContent = data.pitch.toFixed(2);
+                    document.getElementById('yaw').textContent = data.yaw.toFixed(2);
+                    setCubeRotation(data.roll, data.pitch, data.yaw);
+                })
+                .catch(error => console.error('Error fetching IMU data:', error));
+        }
+
+        // Initialize Three.js
+        initThreeJS();
+
+        // Fetch the IMU data every 100 milliseconds
+        setInterval(fetchIMUData, 100);
+    </script>
 </body>
 </html>
