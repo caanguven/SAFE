@@ -307,7 +307,6 @@ def update_imu_data():
 @app.route('/gyro')
 def gyro():
     # Start the IMU data update thread
-    threading.Thread(target=update_imu_data, daemon=True).start()
     return render_template('gyro.html')
 
 # Route to fetch IMU data
@@ -351,4 +350,5 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
+    threading.Thread(target=update_imu_data, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=True)
