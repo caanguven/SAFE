@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motor Control with Camera and Gyro</title>
+    <title>Control Center</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -108,18 +108,20 @@
             <div>
                 <h2>Live Camera Feed</h2>
                 <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
-            </div>
+            </div>            
 
-            <!-- IMU Data Display -->
-            <div id="imu-data">
-                <h2>IMU Data</h2>
-                <p>Roll: <span id="roll">0</span>°</p>
-                <p>Pitch: <span id="pitch">0</span>°</p>
-                <p>Yaw: <span id="yaw">0</span>°</p>
-            </div>
+            <div class="imu-three-container">
+                <!-- IMU Data Display -->
+                <div id="imu-data">
+                    <h2>IMU Data</h2>
+                    <p>Roll: <span id="roll">0</span>°</p>
+                    <p>Pitch: <span id="pitch">0</span>°</p>
+                    <p>Yaw: <span id="yaw">0</span>°</p>
+                </div>
 
-            <!-- Three.js Visualization -->
-            <div id="cube-container"></div>
+                <!-- Three.js Visualization -->
+                <div id="cube-container"></div>
+            </div>
         </div>
 
         <!-- Back Button -->
