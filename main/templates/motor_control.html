@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Motor Control with Camera and Gyro</title>
     <style>
-        /* Existing styles */
+        /* Base Styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f0f8ff;
@@ -13,8 +13,8 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            height: 100vh;
             margin: 0;
+            padding: 20px;
         }
         .container {
             text-align: center;
@@ -23,10 +23,11 @@
             border-radius: 10px;
             padding: 20px;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            width: 90%;
+            width: 100%;
             max-width: 1200px;
-            margin-top: 20px;
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         h1 {
             color: #007BFF;
@@ -49,11 +50,6 @@
             color: #007BFF;
             padding: 20px;
         }
-        img {
-            width: 640px;
-            height: 480px;
-            margin-top: 20px;
-        }
         .button-container {
             margin-top: 30px;
         }
@@ -72,16 +68,66 @@
         .service-button:hover {
             background-color: #0056b3;
         }
-        /* IMU Data styles */
-        #imu-data {
-            margin-top: 20px;
+
+        /* Flex Containers */
+        .top-section {
+            width: 100%;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 20px;
         }
-        /* Three.js Container */
+        .camera-imu-container {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            flex: 1;
+            min-width: 300px;
+        }
+        .camera-feed, .imu-section {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            flex: 1;
+            min-width: 300px;
+        }
+        .camera-feed img {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .imu-section h2 {
+            margin-top: 0;
+            color: #007BFF;
+        }
+        .imu-data {
+            text-align: left;
+            margin-top: 10px;
+        }
+        .imu-data p {
+            margin: 5px 0;
+            font-size: 16px;
+        }
+
+        /* Three.js Visualization */
         #cube-container {
             width: 600px;
             height: 400px;
-            margin: auto;
-            margin-top: 20px;
+            margin: 20px auto;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 900px) {
+            .cube-container {
+                width: 100%;
+                height: auto;
+            }
+            #cube-container {
+                width: 100%;
+                height: 400px;
+            }
         }
     </style>
     <!-- Include Three.js and its dependencies -->
@@ -96,16 +142,27 @@
         <p id="key-feedback">Waiting for input...</p>
         <div id="key-display" class="key-display">---</div>
         
-        <h2>Live Camera Feed</h2>
-        <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
-
-        <!-- IMU Data Display -->
-        <div id="imu-data">
-            <h2>IMU Data</h2>
-            <p>Roll: <span id="roll">0</span>°</p>
-            <p>Pitch: <span id="pitch">0</span>°</p>
-            <p>Yaw: <span id="yaw">0</span>°</p>
+        <div class="top-section">
+            <!-- Camera and IMU Side by Side -->
+            <div class="camera-imu-container">
+                <!-- Live Camera Feed -->
+                <div class="camera-feed">
+                    <h2>Live Camera Feed</h2>
+                    <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
+                </div>
+                
+                <!-- IMU Data Display -->
+                <div class="imu-section">
+                    <h2>IMU Data</h2>
+                    <div class="imu-data">
+                        <p>Roll: <span id="roll">0</span>°</p>
+                        <p>Pitch: <span id="pitch">0</span>°</p>
+                        <p>Yaw: <span id="yaw">0</span>°</p>
+                    </div>
+                </div>
+            </div>
         </div>
+
         <!-- Three.js Visualization -->
         <div id="cube-container"></div>
 
