@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <!-- Existing head content -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control Center</title>
@@ -49,6 +50,14 @@
             color: #007BFF;
             padding: 20px;
             margin-bottom: 20px;
+        }
+        /* Gait Selection Styles */
+        .gait-selection {
+            margin: 20px 0;
+            font-size: 18px;
+        }
+        .gait-selection label {
+            margin-right: 20px;
         }
         /* Flexbox container for camera, IMU, and 3D viewer */
         .content-container {
@@ -165,6 +174,26 @@
 <body>
     <div class="container">
         <h1>Motor Control with Camera and Gyro</h1>
+        
+        <!-- Gait Selection -->
+        <div class="gait-selection">
+            <p>Select Gait:</p>
+            <label>
+                <input type="radio" name="gait" value="walk" checked>
+                Walk
+            </label>
+            <label>
+                <input type="radio" name="gait" value="trot">
+                Trot
+            </label>
+            <label>
+                <input type="radio" name="gait" value="gallop">
+                Gallop
+            </label>
+        </div>
+        
+        <p>Current Gait: <span id="current-gait">Walk</span></p>
+        
         <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
         <p id="key-feedback">Waiting for input...</p>
         <div id="key-display" class="key-display">---</div>
@@ -202,6 +231,18 @@
     
     <script>
         // Motor control key press handling
+        let gaitType = 'walk'; // Default gait
+
+        // Update gaitType when user changes selection
+        const gaitRadios = document.querySelectorAll('input[name="gait"]');
+        gaitRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                gaitType = this.value;
+                console.log(`Gait selected: ${gaitType}`);
+                document.getElementById('current-gait').innerText = gaitType.charAt(0).toUpperCase() + gaitType.slice(1);
+            });
+        });
+
         document.addEventListener('keydown', function(event) {
             let direction = null;
             if (event.code === 'ArrowUp') {
@@ -215,7 +256,7 @@
             console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
 
             if (direction) {
-                document.getElementById('key-feedback').innerText = `Motor moving: ${direction}`;
+                document.getElementById('key-feedback').innerText = `Motor moving: ${direction} with gait ${gaitType}`;
             }
 
             if (direction) {
@@ -224,7 +265,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ direction: direction })
+                    body: JSON.stringify({ direction: direction, gait: gaitType })
                 })
                 .then(response => response.json())
                 .then(data => {
