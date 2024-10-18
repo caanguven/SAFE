@@ -34,7 +34,7 @@ GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering
 # Define Motors
 motors = {
     1: Motor(in1=7, in2=26, spd=18, name="Motor 1"),
-    2: Motor(in1=22, in2=29, spd=31, name="Motor 2"),
+    2: Motor(in1=29, in2=22, spd=31, name="Motor 2"),
     3: Motor(in1=11, in2=32, spd=33, name="Motor 3"),
     4: Motor(in1=12, in2=13, spd=35, name="Motor 4"),
 }
