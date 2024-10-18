@@ -60,8 +60,8 @@ def main():
             {
                 'id': 2,
                 'name': 'Motor 2',
-                'in1': 22,
-                'in2': 29,
+                'in1': 29,
+                'in2': 22,
                 'spd': 31,
                 'adc_channel': 1,
             },
