@@ -18,10 +18,13 @@ def main():
         # Set up argument parser
         parser = argparse.ArgumentParser(description='Motor Control Program')
         parser.add_argument('direction', choices=['forward', 'reverse'], help='Direction to move the motor')
+        parser.add_argument('gait_type', nargs='?', default='default', help='Type of gait to use')
         args = parser.parse_args()
+
 
         # Extract the direction
         direction = args.direction
+        gait_type = args.gait_type
 
         # Set up GPIO
         GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering
@@ -47,13 +50,39 @@ def main():
         # Define motors and their configurations
         motors_info = [
             {
+                'id': 1,
+                'name': 'Motor 1',
+                'in1': 7,
+                'in2': 26,
+                'spd': 18,
+                'adc_channel': 0,
+            },
+            {
+                'id': 2,
+                'name': 'Motor 2',
+                'in1': 22,
+                'in2': 29,
+                'spd': 31,
+                'adc_channel': 1,
+            },
+            {
+                'id': 3,
+                'name': 'Motor 3',
+                'in1': 11,
+                'in2': 32,
+                'spd': 33,
+                'adc_channel': 2,
+            },
+            {
+                'id': 4,
                 'name': 'Motor 4',
                 'in1': 12,
                 'in2': 13,
                 'spd': 35,
-                'adc_channel': 3,  # Potentiometer connected to ADC channel 3
+                'adc_channel': 3,
             },
         ]
+
 
         # Create a list to hold motor controllers
         motor_controllers = []
@@ -70,9 +99,25 @@ def main():
             # Create SpikeFilter instance
             spike_filter = SpikeFilter()
 
-            # Read initial potentiometer value for initial angle
-            initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
-            initial_angle = initial_pot_value * (360 / 1023)
+            # Initialize initial_angle based on gait_type
+            if gait_type == 'trot':
+                if motor_info['id'] in [1, 4]:  # Diagonal pair 1
+                    initial_angle = 0
+                elif motor_info['id'] in [2, 3]:  # Diagonal pair 2
+                    initial_angle = 180
+            elif gait_type == 'gallop':
+                # Implement logic for gallop gait
+                pass
+            elif gait_type == 'pace':
+                # Implement logic for pace gait
+                pass
+            else:
+                # For default gait, initialize from potentiometer
+                initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
+                initial_angle = initial_pot_value * (360 / 1023)
+
+            # Ensure initial_angle is within [0, 360)
+            initial_angle = initial_angle % 360
 
             # Create SawtoothWaveGenerator instance with direction
             sawtooth_generator = SawtoothWaveGenerator(
@@ -81,7 +126,7 @@ def main():
                 initial_angle=initial_angle,
                 direction=direction  # Pass the direction here
             )
-            
+
             # Create MotorController instance
             motor_controller = MotorController(
                 motor=motor,
@@ -96,6 +141,7 @@ def main():
 
             # Add to the list of motor controllers
             motor_controllers.append(motor_controller)
+
 
         # Create and start threads for each motor controller
         threads = []
