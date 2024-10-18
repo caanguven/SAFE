@@ -121,7 +121,7 @@ def main():
 
             # Create SawtoothWaveGenerator instance with direction
             sawtooth_generator = SawtoothWaveGenerator(
-                period=4000,
+                period=2000,
                 amplitude=360,
                 initial_angle=initial_angle,
                 direction=direction  # Pass the direction here
