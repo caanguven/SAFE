@@ -21,6 +21,9 @@ class MotorController:
         self.last_degrees_value = None
         self.last_time = time.time()  # Initialize last_time
 
+        # Store initial_angle for initialization phase
+        self.initial_angle = self.sawtooth_generator.initial_angle  # Ensure this attribute exists
+
     def map_potentiometer_value_to_degrees(self, value):
         # Potentiometer values range from 0 to 1023
         # Map to 0 to 330 degrees (since the potentiometer only reads up to 330°)
@@ -40,8 +43,6 @@ class MotorController:
 
         # Do not clamp errors to zero for reverse; they should remain negative or positive
         return error
-
-
 
     def pid_control_motor(self, degrees_value, set_position, direction='forward'):
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
@@ -120,15 +121,27 @@ class MotorController:
                 self.speed_samples.pop(0)
             self.speed_samples.append(abs(control_signal))
 
-
-
     def control_loop(self, stop_event, direction='reverse'):
         try:
-            initial_pot_value = self.adc_reader.read_channel(self.channel)
-            initial_angle = self.map_potentiometer_value_to_degrees(initial_pot_value)
-            self.last_degrees_value = initial_angle
+            # Initialization Phase: Move to Initial Angle
+            print(f"{self.name}: Starting initialization to {self.initial_angle}°")
+            while not stop_event.is_set():
+                pot_value = self.adc_reader.read_channel(self.channel)
+                filtered_pot_value = self.spike_filter.filter(pot_value)
+                degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                set_position = self.initial_angle
+                self.pid_control_motor(degrees_value, set_position, direction)
+
+                error = self.calculate_error(set_position, degrees_value, direction)
+                if abs(error) <= 10:
+                    print(f"{self.name}: Reached starting position within ±10 degrees.")
+                    break  # Exit initialization phase
+                time.sleep(0.1)
+
+            # Start the sawtooth wave generator after initialization
             self.sawtooth_generator.start_time = self.sawtooth_generator.current_millis()
 
+            # Main Control Loop
             while not stop_event.is_set():
                 pot_value = self.adc_reader.read_channel(self.channel)
                 filtered_pot_value = self.spike_filter.filter(pot_value)
@@ -143,4 +156,3 @@ class MotorController:
         finally:
             self.motor.cleanup()
             print(f"{self.name}: Motor GPIO cleaned up")
-
