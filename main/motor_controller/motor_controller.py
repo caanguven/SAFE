@@ -1,4 +1,5 @@
 import time
+import threading
 
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, spike_filter, sawtooth_generator, config, name='Motor'):
@@ -23,6 +24,9 @@ class MotorController:
 
         # Store initial_angle for initialization phase
         self.initial_angle = self.sawtooth_generator.initial_angle  # Ensure this attribute exists
+
+        # Initialization event
+        self.initialized_event = threading.Event()
 
     def map_potentiometer_value_to_degrees(self, value):
         # Potentiometer values range from 0 to 1023
@@ -135,6 +139,7 @@ class MotorController:
                 error = self.calculate_error(set_position, degrees_value, direction)
                 if abs(error) <= 10:
                     print(f"{self.name}: Reached starting position within ±10 degrees.")
+                    self.initialized_event.set()  # Signal initialization complete
                     break  # Exit initialization phase
                 time.sleep(0.1)
 
