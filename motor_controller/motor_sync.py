@@ -135,16 +135,11 @@ class SpikeFilter:
     def filter(self, new_value):
         # If the filter is active, we are in the dead zone
         if self.filter_active:
-            # Discard readings between 150 and 700
-            if 150 <= new_value <= 700:
-                print(f"Discarding invalid reading during dead zone: {new_value}")
-                return None
-            else:
-                # Valid reading after dead zone
-                print(f"Valid reading after dead zone: {new_value}")
-                self.filter_active = False
-                self.last_valid_reading = new_value
-                return new_value
+            # Discard readings within the dead zone
+            # Dead zone ranges should be handled in the mapping function
+            # Here, assume dead zone is already handled, so return the value
+            print(f"Discarding invalid reading during dead zone: {new_value}")
+            return None
         else:
             # Not currently filtering
             if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
@@ -184,19 +179,35 @@ class MotorController:
         self.initialized = False
 
     def map_potentiometer_value_to_degrees(self, value):
-        # Adjust mapping to account for dead zone
-        DEAD_ZONE_MIN = self.config.get('dead_zone_min', 150)
-        DEAD_ZONE_MAX = self.config.get('dead_zone_max', 700)
-
-        if 0 <= value < DEAD_ZONE_MIN:
-            # Map ADC 0-DEAD_ZONE_MIN to degrees 0-114
-            degrees = value * (114 / DEAD_ZONE_MIN)
-        elif value > DEAD_ZONE_MAX and value <= 1023:
-            # Map ADC DEAD_ZONE_MAX-1023 to degrees 114-360
-            degrees = 114 + (value - DEAD_ZONE_MAX) * ((360 - 114) / (1023 - DEAD_ZONE_MAX))
+        # Define dead zone ranges based on calibration
+        if self.name == 'Motor 1':
+            DEAD_ZONE_MIN = 150
+            DEAD_ZONE_MAX = 200
+            if 0 <= value < DEAD_ZONE_MIN:
+                # Map ADC 0-DEAD_ZONE_MIN to degrees 0-90
+                degrees = (value / DEAD_ZONE_MIN) * 90
+            elif value > DEAD_ZONE_MAX and value <= 1023:
+                # Map ADC DEAD_ZONE_MAX-1023 to degrees 90-360
+                degrees = ((value - DEAD_ZONE_MAX) / (1023 - DEAD_ZONE_MAX)) * 270 + 90
+            else:
+                # Value is in dead zone
+                return None
+        elif self.name == 'Motor 3':
+            DEAD_ZONE_MIN = 700
+            DEAD_ZONE_MAX = 750
+            if 0 <= value < DEAD_ZONE_MIN:
+                # Map ADC 0-DEAD_ZONE_MIN to degrees 0-270
+                degrees = (value / DEAD_ZONE_MIN) * 270
+            elif value > DEAD_ZONE_MAX and value <= 1023:
+                # Map ADC DEAD_ZONE_MAX-1023 to degrees 270-360
+                degrees = ((value - DEAD_ZONE_MAX) / (1023 - DEAD_ZONE_MAX)) * 90 + 270
+            else:
+                # Value is in dead zone
+                return None
         else:
-            # Value is in dead zone
-            return None
+            # Default linear mapping for other motors
+            degrees = (value / 1023) * 360
+
         return degrees % 360
 
     def calculate_error(self, set_position, current_angle, direction='reverse'):
@@ -361,8 +372,8 @@ def main():
         # Shared configuration
         config = {
             'dead_zone_start': 330,  # Original value; adjust if needed
-            'dead_zone_min': 150,    # Minimum ADC value for dead zone
-            'dead_zone_max': 700,    # Maximum ADC value for dead zone
+            'dead_zone_min': 150,    # Minimum ADC value for dead zone (Motor 1)
+            'dead_zone_max': 200,    # Maximum ADC value for dead zone (Motor 1)
             'offset': 5,
             'num_samples_for_average': 5,
             'slowdown_threshold': 20,
