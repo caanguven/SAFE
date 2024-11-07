@@ -382,8 +382,8 @@ def main():
         }
 
         # PID constants (tune as necessary)
-        Kp = 0.1
-        Ki = 0.01
+        Kp = 0.15
+        Ki = 0.001
         Kd = 0.1
 
         # Define motors and their configurations
