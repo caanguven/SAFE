@@ -80,21 +80,32 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001
+            delta_time = 0.0001  # prevent division by zero
 
+        # Compute error and wrap to avoid large jumps
         error = self.set_point - current_value
         error = ((error + 180) % 360) - 180
 
+        # Integrate error and apply anti-windup
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
 
+        # Compute derivative
         derivative = (error - self.previous_error) / delta_time
+
+        # PID calculation
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
-        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
-
+        # Update for the next cycle
         self.previous_error = error
         self.last_time = current_time
+
+        # Smoothly clamp control signal to avoid aggressive reactions
+        max_signal_change = 20  # change per iteration
+        if abs(control_signal) > 100:
+            control_signal = max(-100, min(100, control_signal))
+        elif abs(control_signal - self.previous_error) > max_signal_change:
+            control_signal = self.previous_error + max_signal_change * (1 if control_signal > 0 else -1)
 
         return control_signal
 
@@ -168,33 +179,21 @@ class MotorController:
         self.name = name
         self.target_position = target_position
         self.sawtooth_wave = sawtooth_wave
-        self.reached_initial_position = False  # Flag to track if initial position is reached
-
-    def map_potentiometer_value_to_degrees(self, value):
-        degrees = (value / 1023) * 360
-        print(f"[{self.name}] Mapped ADC Value {value} to {degrees:.2f} degrees")
-        return degrees % 360
-
-    def calculate_error(self, set_position, current_angle):
-        error = (set_position - current_angle + 180) % 360 - 180
-        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle}°)")
-        return error
+        self.reached_initial_position = False
 
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
-        max_control_change = self.config['max_control_change']
-        MIN_CONTROL_SIGNAL = 10
+        MIN_CONTROL_SIGNAL = 5
 
-        if degrees_value is None:
-            print(f"[{self.name}] degrees_value is None, cannot compute PID control.")
-            self.motor.stop()
-            return
-
+        # Calculate error and apply PID
         error = self.calculate_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
         control_signal = self.pid_controller.compute(degrees_value)
 
+        # Clamp control signal to avoid oscillation
         control_signal = max(-100, min(100, control_signal))
+
+        # Determine motor direction and speed based on control signal
         if abs(error) <= OFFSET:
             self.motor.set_speed(0)
             self.motor.stop()
@@ -231,11 +230,11 @@ class MotorController:
                     self.motor.stop()
 
                 time.sleep(0.1)
-
         except Exception as e:
             print(f"[{self.name}] Exception occurred: {e}")
         finally:
             self.motor.cleanup()
+
 
 # ==========================
 # Main Function
