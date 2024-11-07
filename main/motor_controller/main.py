@@ -8,7 +8,7 @@ from motor_controller import MotorController
 
 import threading
 import time
-import argparse
+import argparse  # Import argparse module
 
 def run_motor_controller(motor_controller, stop_event, direction):
     motor_controller.control_loop(stop_event, direction)
@@ -20,6 +20,7 @@ def main():
         parser.add_argument('direction', choices=['forward', 'reverse'], help='Direction to move the motor')
         parser.add_argument('gait_type', nargs='?', default='default', help='Type of gait to use')
         args = parser.parse_args()
+
 
         # Extract the direction
         direction = args.direction
@@ -82,6 +83,7 @@ def main():
             },
         ]
 
+
         # Create a list to hold motor controllers
         motor_controllers = []
         stop_event = threading.Event()
@@ -121,7 +123,7 @@ def main():
             sawtooth_generator = SawtoothWaveGenerator(
                 period=1000,
                 amplitude=360,
-                initial_angle=initial_angle,  # This is used for initialization
+                initial_angle=initial_angle,
                 direction=direction  # Pass the direction here
             )
 
@@ -140,6 +142,7 @@ def main():
             # Add to the list of motor controllers
             motor_controllers.append(motor_controller)
 
+
         # Create and start threads for each motor controller
         threads = []
         for mc in motor_controllers:
@@ -147,14 +150,7 @@ def main():
             t.start()
             threads.append(t)
 
-        # Wait for all motors to initialize
-        print("Waiting for all motors to reach their initial positions...")
-        for mc in motor_controllers:
-            mc.initialized_event.wait()  # Wait until the motor signals it has initialized
-        print("All motors have reached their initial positions. Starting gait.")
-
-        # Gait is already running in each MotorController's control_loop after initialization
-        # The main thread can perform other tasks or simply wait
+        # Wait for KeyboardInterrupt to stop
         while True:
             time.sleep(0.1)
 
