@@ -5,7 +5,9 @@ import argparse
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 
+# ==========================
 # ADCReader Class
+# ==========================
 class ADCReader:
     def __init__(self, spi_port=0, spi_device=0):
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(spi_port, spi_device))
@@ -15,7 +17,9 @@ class ADCReader:
         with self.lock:
             return self.mcp.read_adc(channel)
 
+# ==========================
 # Motor Class
+# ==========================
 class Motor:
     def __init__(self, in1_pin, in2_pin, spd_pin, pwm_frequency=1000):
         self.in1_pin = in1_pin
@@ -53,7 +57,9 @@ class Motor:
     def cleanup(self):
         self.pwm.stop()
 
+# ==========================
 # PIDController Class
+# ==========================
 class PIDController:
     def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000):
         self.Kp = Kp
@@ -75,10 +81,8 @@ class PIDController:
         # Calculate error considering wrap-around
         error = self.set_point - current_value
 
-        if error > 180:
-            error -= 360
-        elif error < -180:
-            error += 360
+        # Adjust error for minimal angle difference
+        error = ((error + 180) % 360) - 180
 
         # Integral term with anti-windup
         self.integral += error * delta_time
@@ -96,11 +100,13 @@ class PIDController:
 
         return control_signal
 
+# ==========================
 # SawtoothWaveGenerator Class
+# ==========================
 class SawtoothWaveGenerator:
     def __init__(self, period, amplitude, initial_angle, direction='forward'):
-        self.period = period
-        self.amplitude = amplitude
+        self.period = period  # in milliseconds
+        self.amplitude = amplitude  # in degrees
         self.initial_angle = initial_angle
         self.direction = direction  # 'forward' or 'reverse'
         self.start_time = self.current_millis()
@@ -126,7 +132,9 @@ class SawtoothWaveGenerator:
             raise ValueError("Direction must be 'forward' or 'reverse'.")
         self.direction = direction
 
+# ==========================
 # SpikeFilter Class
+# ==========================
 class SpikeFilter:
     def __init__(self):
         self.filter_active = False
@@ -140,17 +148,20 @@ class SpikeFilter:
             return None
         else:
             # Not currently filtering
-            if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
-                # Sudden drop into dead zone detected
-                print(f"Dead zone detected: last valid reading {self.last_valid_reading}, new reading {new_value}, starting filter")
-                self.filter_active = True
-                return None
-            else:
-                # Valid reading
-                self.last_valid_reading = new_value
-                return new_value
+            # Detect transition into dead zone
+            if self.last_valid_reading is not None:
+                # Example condition: if a sudden drop suggests crossing from high to low
+                if self.last_valid_reading > 300 and new_value < 30:
+                    print(f"Dead zone detected: last valid reading {self.last_valid_reading}, new reading {new_value}, starting filter")
+                    self.filter_active = True
+                    return None
+            # Valid reading
+            self.last_valid_reading = new_value
+            return new_value
 
+# ==========================
 # MotorController Class
+# ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, spike_filter, sawtooth_generator, config, name='Motor', initial_position=0):
         self.motor = motor
@@ -161,16 +172,6 @@ class MotorController:
         self.sawtooth_generator = sawtooth_generator
         self.config = config
         self.name = name  # For logging purposes
-
-        # Variables for state
-        self.in_dead_zone = False
-        self.last_valid_control_signal = 0
-        self.average_speed_before_dead_zone = 0
-        self.speed_samples = []
-        self.dead_zone_start_time = None
-        self.estimated_position = None
-        self.last_degrees_value = None
-        self.last_time = time.time()  # Initialize last_time
 
         # Initialization parameters
         self.initial_position = initial_position
@@ -208,38 +209,24 @@ class MotorController:
 
         return degrees % 360
 
-    def calculate_error(self, set_position, current_angle, direction='reverse'):
-        if direction == 'reverse':
-            # Reverse logic: calculate error for reverse motion
-            error = (current_angle - set_position + 360) % 360
-            if error > 180:
-                error = error - 360
-        else:
-            # Default forward error calculation
-            error = (set_position - current_angle + 360) % 360
-            if error > 180:
-                error = error - 360
-        # Do not clamp errors to zero for reverse; they should remain negative or positive
+    def calculate_error(self, set_position, current_angle):
+        # Calculate minimal angular difference
+        error = (set_position - current_angle + 180) % 360 - 180
         return error
 
     def pid_control_motor(self, degrees_value, set_position, direction='forward', initialization=False):
-        DEAD_ZONE_DEG_START = self.config['dead_zone_start']
         OFFSET = self.config['offset']
         slowdown_threshold = self.config['slowdown_threshold']
         max_control_change = self.config['max_control_change']
         MIN_CONTROL_SIGNAL = 10  # Minimum control signal to overcome static friction
-
-        current_time = time.time()
-        delta_time = current_time - self.last_time
-        self.last_time = current_time  # Update last_time here
 
         if degrees_value is None:
             print(f"{self.name}: degrees_value is None, cannot compute PID control.")
             self.motor.stop()
             return
 
-        # Calculate error based on direction (forward or reverse)
-        error = self.calculate_error(set_position, degrees_value, direction)
+        # Calculate error
+        error = self.calculate_error(set_position, degrees_value)
 
         # Update set point in PID controller
         self.pid_controller.set_point = set_position
@@ -248,20 +235,20 @@ class MotorController:
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Apply rate limiter to control signal
-        control_signal_change = control_signal - self.last_valid_control_signal
+        control_signal_change = control_signal - self.pid_controller.previous_error  # Alternatively, track last control_signal
         if abs(control_signal_change) > max_control_change:
-            control_signal = self.last_valid_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
+            control_signal = self.pid_controller.previous_error + max_control_change * (1 if control_signal_change > 0 else -1)
 
         # Clamp control signal to -100 to 100
         control_signal = max(-100, min(100, control_signal))
 
-        # During initialization, bypass offset and slowdown_threshold
+        # During initialization, allow both forward and reverse
         if initialization:
+            # Ensure a minimum control signal
             if abs(control_signal) < MIN_CONTROL_SIGNAL:
-                # Ensure a minimum control signal
                 control_signal = MIN_CONTROL_SIGNAL if control_signal > 0 else -MIN_CONTROL_SIGNAL
 
-            # Apply control signal based on direction
+            # Apply control signal based on its sign
             if control_signal > 0:
                 self.motor.set_speed(control_signal)
                 self.motor.forward()
@@ -271,19 +258,15 @@ class MotorController:
                 self.motor.reverse()
                 dir_text = 'reverse'
 
-            print(f"{self.name}: [Init] Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {abs(control_signal):.2f}%, Set Position: {set_position:.2f}°")
-
+            print(f"{self.name}: [Init] Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
         else:
-            # Apply control signal based on error
-            if abs(error) == 0:
-                self.motor.set_speed(0)
-                self.motor.stop()
-                print(f"{self.name}: At or ahead of set position. Holding position.")
-            elif abs(error) <= OFFSET:
+            # Normal operation
+            if abs(error) <= OFFSET:
                 self.motor.set_speed(0)
                 self.motor.stop()
                 print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
             elif abs(error) <= slowdown_threshold:
+                # Slowing down
                 slowdown_factor = abs(error) / slowdown_threshold
                 slow_control_signal = control_signal * slowdown_factor
                 speed = max(abs(slow_control_signal), MIN_CONTROL_SIGNAL)  # Ensure minimum speed
@@ -297,9 +280,11 @@ class MotorController:
                     self.motor.reverse()
                     dir_text = 'reverse'
 
-                print(f"{self.name}: Slowing down ({dir_text}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
+                print(f"{self.name}: Slowing down ({dir_text}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
             else:
+                # Moving normally
                 speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)  # Ensure minimum speed
+
                 if control_signal > 0:
                     self.motor.set_speed(speed)
                     self.motor.forward()
@@ -309,18 +294,9 @@ class MotorController:
                     self.motor.reverse()
                     dir_text = 'reverse'
 
-                print(f"{self.name}: Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
+                print(f"{self.name}: Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
 
-        # Update last valid control signal
-        self.last_valid_control_signal = control_signal
-
-        # Keep sliding window of speed samples
-        if not self.in_dead_zone:
-            if len(self.speed_samples) >= self.config['num_samples_for_average']:
-                self.speed_samples.pop(0)
-            self.speed_samples.append(abs(control_signal))
-
-    def control_loop(self, stop_event, direction='reverse'):
+    def control_loop(self, stop_event, direction='forward'):
         try:
             # Initial positioning phase
             if not self.initialized:
@@ -333,16 +309,18 @@ class MotorController:
                     print(f"{self.name}: Mapped Degrees Value: {degrees_value}")  # Debugging
 
                     if degrees_value is not None:
-                        error = self.calculate_error(self.initial_position, degrees_value, direction)
+                        error = self.calculate_error(self.initial_position, degrees_value)
                         if abs(error) <= self.config['offset']:
                             self.motor.stop()
                             print(f"{self.name}: Reached initial position {self.initial_position}°")
-                            time.sleep(3)  # Pause for 3 seconds
+                            time.sleep(1)  # Brief pause
                             self.initialized = True
                             self.sawtooth_generator.start_time = self.sawtooth_generator.current_millis()  # Reset start time for sawtooth wave
                             break
                         else:
-                            self.pid_control_motor(degrees_value, self.initial_position, direction, initialization=True)
+                            # Determine direction based on error
+                            init_direction = 'forward' if error > 0 else 'reverse'
+                            self.pid_control_motor(degrees_value, self.initial_position, direction=init_direction, initialization=True)
                     else:
                         print(f"{self.name}: degrees_value is None during initialization.")
 
@@ -355,10 +333,16 @@ class MotorController:
                 filtered_pot_value = self.spike_filter.filter(pot_value)
                 degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
                 print(f"{self.name}: Mapped Degrees Value: {degrees_value}")  # Debugging
-                self.sawtooth_generator.direction = direction  # Set the wave direction
-                set_position = self.sawtooth_generator.get_set_position()
-                print(f"{self.name}: Set Position: {set_position}")  # Debugging
-                self.pid_control_motor(degrees_value, set_position, direction)
+
+                if self.initialized:
+                    set_position = self.sawtooth_generator.get_set_position()
+                    print(f"{self.name}: Set Position: {set_position:.2f}°")  # Debugging
+                    # During normal operation, restrict direction to forward
+                    self.pid_control_motor(degrees_value, set_position, direction='forward', initialization=False)
+                else:
+                    # Should not reach here, but just in case
+                    print(f"{self.name}: Not initialized yet.")
+
                 time.sleep(0.1)
 
         except Exception as e:
@@ -367,7 +351,9 @@ class MotorController:
             self.motor.cleanup()
             print(f"{self.name}: Motor GPIO cleaned up")
 
+# ==========================
 # Main Function
+# ==========================
 def run_motor_controller(motor_controller, stop_event, direction):
     motor_controller.control_loop(stop_event, direction)
 
@@ -389,20 +375,15 @@ def main():
 
         # Shared configuration
         config = {
-            'dead_zone_start': 330,  # Original value; adjust if needed
-            'dead_zone_min': 150,    # Minimum ADC value for dead zone (Motor 1)
-            'dead_zone_max': 200,    # Maximum ADC value for dead zone (Motor 1)
-            'offset': 5,
-            'num_samples_for_average': 5,
-            'slowdown_threshold': 20,
-            'max_control_change': 5,
-            'max_degrees_per_second': 60
+            'offset': 5,  # Degrees within which to stop the motor
+            'slowdown_threshold': 20,  # Degrees within which to start slowing down
+            'max_control_change': 5,  # Max change in control signal per loop
         }
 
-        # PID constants (increased)
-        Kp = 0.5  # Increased from 0.1
-        Ki = 0.05  # Increased from 0.01
-        Kd = 0.2  # Increased from 0.1
+        # PID constants (tune as necessary)
+        Kp = 1.0   # Increased for more responsive control
+        Ki = 0.1   # Increased for accumulated error
+        Kd = 0.3   # Increased for better derivative response
 
         # Define motors and their configurations
         motors_info = [
@@ -441,16 +422,11 @@ def main():
             # Create SpikeFilter instance
             spike_filter = SpikeFilter()
 
-            # Read initial potentiometer value for initial angle
-            initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
-            print(f"{motor_info['name']}: Initial ADC Value: {initial_pot_value}")  # Debugging
-            initial_angle = 0  # Start from 0 for sawtooth generator
-
-            # Create SawtoothWaveGenerator instance with direction
+            # Initialize SawtoothWaveGenerator
             sawtooth_generator = SawtoothWaveGenerator(
-                period=4000,
+                period=4000,  # 4 seconds for a full cycle
                 amplitude=360,
-                initial_angle=initial_angle,
+                initial_angle=0,
                 direction=direction  # Pass the direction here
             )
 
@@ -482,7 +458,7 @@ def main():
             time.sleep(0.1)
 
     except KeyboardInterrupt:
-        print("Program stopped by user")
+        print("\nProgram stopped by user")
         stop_event.set()  # Signal all threads to stop
         for t in threads:
             t.join()  # Wait for all threads to finish
