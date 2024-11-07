@@ -219,74 +219,86 @@ class MotorController:
 # ==========================
 # Main Function
 # ==========================
-def run_motor_controller(motor_controller, stop_event):
-    motor_controller.control_loop(stop_event)
-
 def main():
     try:
-        parser = argparse.ArgumentParser(description='Single Motor Control Program')
-        parser.add_argument('--direction', choices=['forward', 'reverse'], default='forward', help='Direction to move the motor during initialization')
-        parser.add_argument('--target', type=float, default=90.0, help='Target position in degrees (0-360)')
-        args = parser.parse_args()
-
-        direction = args.direction
-        target_position = args.target
-
-        if not (0 <= target_position <= 360):
-            raise ValueError("Target position must be between 0 and 360 degrees.")
-
         GPIO.setmode(GPIO.BOARD)
 
+        # Create ADCReader instance for reading from ADC channels
         adc_reader = ADCReader(spi_port=0, spi_device=0)
 
+        # Shared PID configuration and settings
         config = {
-            'offset': 5,
-            'max_control_change': 5,
+            'offset': 5,  # Degrees within which to stop the motor
+            'max_control_change': 5,  # Max change in control signal per loop
         }
 
+        # PID constants (tune as necessary)
         Kp = 0.5
         Ki = 0.05
         Kd = 0.15
 
-        motor_info = {
-            'name': 'Motor 1',
-            'in1': 7,
-            'in2': 26,
-            'spd': 18,
-            'adc_channel': 0,
-            'initial_position': target_position
-        }
+        # Motor configurations
+        motors_info = [
+            {
+                'id': 1,
+                'name': 'Motor 1',
+                'in1': 7,
+                'in2': 26,
+                'spd': 18,
+                'adc_channel': 0,
+                'target_position': 90  # Target for Motor 1
+            },
+            {
+                'id': 3,
+                'name': 'Motor 3',
+                'in1': 11,
+                'in2': 32,
+                'spd': 33,
+                'adc_channel': 2,
+                'target_position': 270  # Target for Motor 3
+            }
+        ]
 
-        motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
-        pid_controller = PIDController(Kp, Ki, Kd)
-        spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
-
-        motor_controller = MotorController(
-            motor=motor,
-            pid_controller=pid_controller,
-            adc_reader=adc_reader,
-            channel=motor_info['adc_channel'],
-            spike_filter=spike_filter,
-            config=config,
-            name=motor_info['name'],
-            initial_position=motor_info['initial_position'],
-            target_position=target_position
-        )
-
+        # Create and start threads for each motor controller
         stop_event = threading.Event()
-        t = threading.Thread(target=run_motor_controller, args=(motor_controller, stop_event))
-        t.start()
+        threads = []
 
-        print(f"[Main] Motor Controller started. Target Position: {target_position}°")
+        for motor_info in motors_info:
+            # Create individual components for each motor
+            motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
+            pid_controller = PIDController(Kp, Ki, Kd)
+            spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
+
+            # Create MotorController instance for each motor
+            motor_controller = MotorController(
+                motor=motor,
+                pid_controller=pid_controller,
+                adc_reader=adc_reader,
+                channel=motor_info['adc_channel'],
+                spike_filter=spike_filter,
+                config=config,
+                name=motor_info['name'],
+                target_position=motor_info['target_position']
+            )
+
+            # Start a thread for the motor controller
+            thread = threading.Thread(target=run_motor_controller, args=(motor_controller, stop_event))
+            thread.start()
+            threads.append(thread)
+
+            print(f"[Main] {motor_info['name']} Controller started. Target Position: {motor_info['target_position']}°")
+
         print("[Main] Press Ctrl+C to stop.")
 
+        # Wait for KeyboardInterrupt to stop
         while True:
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\n[Main] Program stopped by user")
-        stop_event.set()
-        t.join()
+        stop_event.set()  # Signal threads to stop
+        for thread in threads:
+            thread.join()  # Wait for all threads to finish
     except Exception as e:
         print(f"[Main] Exception occurred: {e}")
     finally:
