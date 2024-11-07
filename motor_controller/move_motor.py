@@ -219,6 +219,11 @@ class MotorController:
 # ==========================
 # Main Function
 # ==========================
+
+def run_motor_controller(motor_controller, stop_event):
+    motor_controller.control_loop(stop_event)
+
+
 def main():
     try:
         GPIO.setmode(GPIO.BOARD)
