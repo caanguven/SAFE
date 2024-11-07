@@ -15,7 +15,9 @@ class ADCReader:
 
     def read_channel(self, channel):
         with self.lock:
-            return self.mcp.read_adc(channel)
+            adc_value = self.mcp.read_adc(channel)
+            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}")
+            return adc_value
 
 # ==========================
 # Motor Class
@@ -37,25 +39,29 @@ class Motor:
         self.pwm.start(0)  # Start with 0% duty cycle (motor off)
 
     def set_speed(self, duty_cycle):
-        # Clamp duty_cycle to 0-100%
         duty_cycle = max(0, min(100, abs(duty_cycle)))
         self.pwm.ChangeDutyCycle(duty_cycle)
+        print(f"[Motor] Set speed to {duty_cycle}% duty cycle")
 
     def forward(self):
         GPIO.output(self.in1_pin, GPIO.LOW)
         GPIO.output(self.in2_pin, GPIO.HIGH)
+        print("[Motor] Moving forward")
 
     def reverse(self):
         GPIO.output(self.in1_pin, GPIO.HIGH)
         GPIO.output(self.in2_pin, GPIO.LOW)
+        print("[Motor] Moving in reverse")
 
     def stop(self):
         GPIO.output(self.in1_pin, GPIO.LOW)
         GPIO.output(self.in2_pin, GPIO.LOW)
         self.set_speed(0)
+        print("[Motor] Stopped")
 
     def cleanup(self):
         self.pwm.stop()
+        print("[Motor] Cleaned up PWM")
 
 # ==========================
 # PIDController Class
@@ -66,7 +72,6 @@ class PIDController:
         self.Ki = Ki
         self.Kd = Kd
         self.set_point = set_point
-
         self.previous_error = 0
         self.integral = 0
         self.last_time = time.time()
@@ -87,6 +92,8 @@ class PIDController:
         derivative = (error - self.previous_error) / delta_time
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
+        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
+
         self.previous_error = error
         self.last_time = current_time
 
@@ -105,14 +112,17 @@ class SpikeFilter:
     def filter(self, new_value):
         if self.filter_active:
             if new_value > self.high_threshold or new_value < self.low_threshold:
+                print(f"[SpikeFilter] Exiting dead zone with value: {new_value}")
                 self.filter_active = False
                 self.last_valid_reading = new_value
                 return new_value
             else:
+                print(f"[SpikeFilter] Discarding invalid reading in dead zone: {new_value}")
                 return None
         else:
             if self.last_valid_reading is not None:
                 if self.last_valid_reading > self.high_threshold and new_value < self.low_threshold:
+                    print(f"[SpikeFilter] Entering dead zone. Last valid: {self.last_valid_reading}, New: {new_value}")
                     self.filter_active = True
                     return None
             self.last_valid_reading = new_value
@@ -130,17 +140,18 @@ class MotorController:
         self.spike_filter = spike_filter
         self.config = config
         self.name = name
-
         self.initial_position = initial_position
         self.target_position = target_position
         self.initialized = False
 
     def map_potentiometer_value_to_degrees(self, value):
         degrees = (value / 1023) * 360
+        print(f"[{self.name}] Mapped ADC Value {value} to {degrees:.2f} degrees")
         return degrees % 360
 
     def calculate_error(self, set_position, current_angle):
         error = (set_position - current_angle + 180) % 360 - 180
+        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle}°)")
         return error
 
     def pid_control_motor(self, degrees_value, set_position, initialization=False):
@@ -149,6 +160,7 @@ class MotorController:
         MIN_CONTROL_SIGNAL = 10
 
         if degrees_value is None:
+            print(f"[{self.name}] degrees_value is None, cannot compute PID control.")
             self.motor.stop()
             return
 
@@ -178,6 +190,8 @@ class MotorController:
                 self.motor.set_speed(speed)
                 self.motor.reverse()
 
+            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+
         self.last_control_signal = control_signal
 
     def control_loop(self, stop_event):
@@ -191,6 +205,7 @@ class MotorController:
                     set_position = self.target_position
                     self.pid_control_motor(degrees_value, set_position, initialization=False)
                 else:
+                    print(f"[{self.name}] degrees_value is None, holding position.")
                     self.motor.stop()
 
                 time.sleep(0.1)
