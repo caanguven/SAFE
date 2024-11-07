@@ -1,3 +1,62 @@
+import RPi.GPIO as GPIO
+import threading
+import time
+import argparse
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
+
+# ==========================
+# ADCReader Class
+# ==========================
+class ADCReader:
+    def __init__(self, spi_port=0, spi_device=0):
+        self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(spi_port, spi_device))
+        self.lock = threading.Lock()
+
+    def read_channel(self, channel):
+        with self.lock:
+            return self.mcp.read_adc(channel)
+
+# ==========================
+# Motor Class
+# ==========================
+class Motor:
+    def __init__(self, in1_pin, in2_pin, spd_pin, pwm_frequency=1000):
+        self.in1_pin = in1_pin
+        self.in2_pin = in2_pin
+        self.spd_pin = spd_pin
+        self.pwm_frequency = pwm_frequency
+
+        # Setup GPIO pins
+        GPIO.setup(self.in1_pin, GPIO.OUT)
+        GPIO.setup(self.in2_pin, GPIO.OUT)
+        GPIO.setup(self.spd_pin, GPIO.OUT)
+
+        # Setup PWM
+        self.pwm = GPIO.PWM(self.spd_pin, self.pwm_frequency)
+        self.pwm.start(0)  # Start with 0% duty cycle (motor off)
+
+    def set_speed(self, duty_cycle):
+        # Clamp duty_cycle to 0-100%
+        duty_cycle = max(0, min(100, abs(duty_cycle)))
+        self.pwm.ChangeDutyCycle(duty_cycle)
+
+    def forward(self):
+        GPIO.output(self.in1_pin, GPIO.LOW)
+        GPIO.output(self.in2_pin, GPIO.HIGH)
+
+    def reverse(self):
+        GPIO.output(self.in1_pin, GPIO.HIGH)
+        GPIO.output(self.in2_pin, GPIO.LOW)
+
+    def stop(self):
+        GPIO.output(self.in1_pin, GPIO.LOW)
+        GPIO.output(self.in2_pin, GPIO.LOW)
+        self.set_speed(0)
+
+    def cleanup(self):
+        self.pwm.stop()
+
 # ==========================
 # PIDController Class - Improved
 # ==========================
@@ -58,6 +117,15 @@ class MotorController:
         self.initial_position = initial_position
         self.target_position = target_position
         self.initialized = False
+
+    def map_potentiometer_value_to_degrees(self, value):
+        degrees = (value / 1023) * 360
+        return degrees % 360
+
+    def calculate_error(self, set_position, current_angle):
+        # Calculate minimal angular difference
+        error = (set_position - current_angle + 180) % 360 - 180
+        return error
 
     def pid_control_motor(self, degrees_value, set_position, initialization=False):
         OFFSET = self.config['offset']
@@ -143,13 +211,86 @@ Kp = 0.7   # Increased Proportional gain for faster response
 Ki = 0.1   # Slightly increased Integral gain to minimize steady-state error
 Kd = 0.2   # Increased Derivative gain to reduce overshoot
 
-# Rest of the setup remains the same, using Motor, PIDController, ADCReader, SpikeFilter, etc.
+# ==========================
+# Main Function
+# ==========================
+def run_motor_controller(motor_controller, stop_event):
+    motor_controller.control_loop(stop_event)
 
-# ==========================
-# Main Changes Summary
-# ==========================
-# 1. Improved PID tuning (Kp, Ki, Kd) to reduce overshoot and steady-state error.
-# 2. Reduced 'offset' to ensure the motor stops closer to the exact target position.
-# 3. Removed 'slowdown_threshold' to allow the motor to try and reach the target directly without slowing down.
-# 4. Reduced 'max_control_change' to prevent abrupt changes and ensure finer adjustments.
-# 5. Decreased 'MIN_CONTROL_SIGNAL' to allow the motor to move at a finer rate when needed.
+def main():
+    try:
+        # Set up argument parser
+        parser = argparse.ArgumentParser(description='Single Motor Control Program')
+        parser.add_argument('--target', type=float, default=90.0, help='Target position in degrees (0-360)')
+        args = parser.parse_args()
+
+        # Extract the target position
+        target_position = args.target
+
+        # Validate target position
+        if not (0 <= target_position <= 360):
+            raise ValueError("Target position must be between 0 and 360 degrees.")
+
+        # Set up GPIO
+        GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering
+
+        # Create ADCReader instance
+        adc_reader = ADCReader(spi_port=0, spi_device=0)
+
+        # Define Motor configuration
+        motor_info = {
+            'name': 'Motor 1',
+            'in1': 7,
+            'in2': 26,
+            'spd': 18,
+            'adc_channel': 0,
+            'initial_position': target_position  # Using target_position for simplicity
+        }
+
+        # Create Motor instance
+        motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
+
+        # Create PIDController instance
+        pid_controller = PIDController(Kp, Ki, Kd)
+
+        # Create SpikeFilter instance with appropriate thresholds
+        spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
+
+        # Create MotorController instance
+        motor_controller = MotorController(
+            motor=motor,
+            pid_controller=pid_controller,
+            adc_reader=adc_reader,
+            channel=motor_info['adc_channel'],
+            spike_filter=spike_filter,
+            config=config,
+            name=motor_info['name'],
+            initial_position=motor_info['initial_position'],
+            target_position=target_position
+        )
+
+        # Create and start thread for MotorController
+        stop_event = threading.Event()
+        t = threading.Thread(target=run_motor_controller, args=(motor_controller, stop_event))
+        t.start()
+
+        print(f"[Main] Motor Controller started. Target Position: {target_position}°")
+        print("[Main] Press Ctrl+C to stop.")
+
+        # Wait for KeyboardInterrupt to stop
+        while True:
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n[Main] Program stopped by user")
+        stop_event.set()  # Signal thread to stop
+        t.join()  # Wait for thread to finish
+    except Exception as e:
+        print(f"[Main] Exception occurred: {e}")
+    finally:
+        GPIO.cleanup()
+        print("[Main] GPIO cleaned up")
+
+if __name__ == "__main__":
+    main()
+
