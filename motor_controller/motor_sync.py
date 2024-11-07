@@ -136,22 +136,27 @@ class SawtoothWaveGenerator:
 # SpikeFilter Class
 # ==========================
 class SpikeFilter:
-    def __init__(self):
+    def __init__(self, high_threshold, low_threshold):
         self.filter_active = False
         self.last_valid_reading = None
+        self.high_threshold = high_threshold
+        self.low_threshold = low_threshold
 
     def filter(self, new_value):
-        # If the filter is active, we are in the dead zone
         if self.filter_active:
-            # Discard readings within the dead zone
-            print(f"Discarding invalid reading during dead zone: {new_value}")
-            return None
+            # Exit filter when outside deadzone
+            if new_value > self.high_threshold or new_value < self.low_threshold:
+                print(f"Exiting dead zone: {new_value}")
+                self.filter_active = False
+                self.last_valid_reading = new_value
+                return new_value
+            else:
+                print(f"Discarding invalid reading during dead zone: {new_value}")
+                return None
         else:
-            # Not currently filtering
-            # Detect transition into dead zone
+            # Detect transition into deadzone
             if self.last_valid_reading is not None:
-                # Example condition: if a sudden drop suggests crossing from high to low
-                if self.last_valid_reading > 300 and new_value < 30:
+                if self.last_valid_reading > self.high_threshold and new_value < self.low_threshold:
                     print(f"Dead zone detected: last valid reading {self.last_valid_reading}, new reading {new_value}, starting filter")
                     self.filter_active = True
                     return None
@@ -235,9 +240,12 @@ class MotorController:
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Apply rate limiter to control signal
-        control_signal_change = control_signal - self.pid_controller.previous_error  # Alternatively, track last control_signal
+        if not hasattr(self, 'last_control_signal'):
+            self.last_control_signal = 0
+
+        control_signal_change = control_signal - self.last_control_signal
         if abs(control_signal_change) > max_control_change:
-            control_signal = self.pid_controller.previous_error + max_control_change * (1 if control_signal_change > 0 else -1)
+            control_signal = self.last_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
 
         # Clamp control signal to -100 to 100
         control_signal = max(-100, min(100, control_signal))
@@ -296,6 +304,9 @@ class MotorController:
 
                 print(f"{self.name}: Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%, Set Position: {set_position:.2f}°")
 
+        # Update last control signal
+        self.last_control_signal = control_signal
+
     def control_loop(self, stop_event, direction='forward'):
         try:
             # Initial positioning phase
@@ -308,8 +319,10 @@ class MotorController:
                     degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
                     print(f"{self.name}: Mapped Degrees Value: {degrees_value}")  # Debugging
 
+                    set_position = self.initial_position
+
                     if degrees_value is not None:
-                        error = self.calculate_error(self.initial_position, degrees_value)
+                        error = self.calculate_error(set_position, degrees_value)
                         if abs(error) <= self.config['offset']:
                             self.motor.stop()
                             print(f"{self.name}: Reached initial position {self.initial_position}°")
@@ -320,9 +333,18 @@ class MotorController:
                         else:
                             # Determine direction based on error
                             init_direction = 'forward' if error > 0 else 'reverse'
-                            self.pid_control_motor(degrees_value, self.initial_position, direction=init_direction, initialization=True)
+                            self.pid_control_motor(degrees_value, set_position, direction=init_direction, initialization=True)
                     else:
-                        print(f"{self.name}: degrees_value is None during initialization.")
+                        # degrees_value is None
+                        # Check if set_position is initial_position and within deadzone
+                        if self.name == 'Motor 3' and set_position == 270:
+                            self.motor.stop()
+                            print(f"{self.name}: Reached initial position {self.initial_position}° within deadzone.")
+                            self.initialized = True
+                            self.sawtooth_generator.start_time = self.sawtooth_generator.current_millis()  # Reset start time for sawtooth wave
+                            break
+                        else:
+                            print(f"{self.name}: degrees_value is None during initialization, set_position not reached.")
 
                     time.sleep(0.1)
 
@@ -381,9 +403,9 @@ def main():
         }
 
         # PID constants (tune as necessary)
-        Kp = 0.2   # Increased for more responsive control
-        Ki = 0.1   # Increased for accumulated error
-        Kd = 0.3   # Increased for better derivative response
+        Kp = 0.5   # Reduced for smoother control
+        Ki = 0.05  # Reduced to prevent integral windup
+        Kd = 0.15  # Adjusted for better derivative response
 
         # Define motors and their configurations
         motors_info = [
@@ -419,8 +441,16 @@ def main():
             # Create PIDController instance
             pid_controller = PIDController(Kp, Ki, Kd)
 
-            # Create SpikeFilter instance
-            spike_filter = SpikeFilter()
+            # Create SpikeFilter instance with appropriate thresholds
+            if motor_info['name'] == 'Motor 1':
+                # For Motor 1, high_threshold=300, low_threshold=30
+                spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
+            elif motor_info['name'] == 'Motor 3':
+                # For Motor 3, high_threshold=750, low_threshold=700
+                spike_filter = SpikeFilter(high_threshold=750, low_threshold=700)
+            else:
+                # Default thresholds
+                spike_filter = SpikeFilter(high_threshold=500, low_threshold=500)
 
             # Initialize SawtoothWaveGenerator
             sawtooth_generator = SawtoothWaveGenerator(
