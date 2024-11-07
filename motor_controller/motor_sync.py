@@ -381,7 +381,7 @@ def main():
         }
 
         # PID constants (tune as necessary)
-        Kp = 1.0   # Increased for more responsive control
+        Kp = 0.2   # Increased for more responsive control
         Ki = 0.1   # Increased for accumulated error
         Kd = 0.3   # Increased for better derivative response
 
