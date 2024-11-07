@@ -181,6 +181,16 @@ class MotorController:
         self.sawtooth_wave = sawtooth_wave
         self.reached_initial_position = False
 
+    def map_potentiometer_value_to_degrees(self, value):
+        degrees = (value / 1023) * 360
+        print(f"[{self.name}] Mapped ADC Value {value} to {degrees:.2f} degrees")
+        return degrees % 360
+
+    def calculate_error(self, set_position, current_angle):
+        error = (set_position - current_angle + 180) % 360 - 180
+        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle}°)")
+        return error
+
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
         MIN_CONTROL_SIGNAL = 5
@@ -235,7 +245,6 @@ class MotorController:
         finally:
             self.motor.cleanup()
 
-
 # ==========================
 # Main Function
 # ==========================
@@ -250,9 +259,10 @@ def main():
             'max_control_change': 5,
         }
 
-        Kp = 0.5
-        Ki = 0.05
-        Kd = 0.15
+        # Adjust PID values for smoother control
+        Kp = 0.3
+        Ki = 0.01
+        Kd = 0.1
 
         motors_info = [
             {
