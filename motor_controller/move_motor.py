@@ -292,32 +292,12 @@ class MotorController:
                         # degrees_value is None, assume within deadzone
                         print(f"[{self.name}] degrees_value is None during initialization, issuing forward command to exit dead zone.")
                         # Issue a forward control signal to move out of deadzone
-                        # Set a temporary set_position beyond deadzone to encourage movement forward
-                        temp_set_position = 210  # Arbitrary value outside deadzone
-                        self.pid_controller.set_point = temp_set_position
-                        control_signal = self.pid_controller.compute(current_value=degrees_value if degrees_value else 0)
-                        # Apply rate limiting and clamp
-                        if not hasattr(self, 'last_control_signal'):
-                            self.last_control_signal = 0
-                        control_signal_change = control_signal - self.last_control_signal
-                        if abs(control_signal_change) > self.config['max_control_change']:
-                            control_signal = self.last_control_signal + self.config['max_control_change'] * (1 if control_signal_change > 0 else -1)
-                        control_signal = max(-100, min(100, control_signal))
-                        # Ensure minimum control signal
-                        if abs(control_signal) < 10:
-                            control_signal = 10 if control_signal > 0 else -10
-                        # Apply forward control
-                        if control_signal > 0:
-                            self.motor.set_speed(control_signal)
-                            self.motor.forward()
-                            dir_text = 'forward'
-                        else:
-                            self.motor.set_speed(abs(control_signal))
-                            self.motor.reverse()
-                            dir_text = 'reverse'
-                        print(f"[{self.name}] Issued {dir_text} control signal: {control_signal}% to exit dead zone.")
-                        # Update last_control_signal
-                        self.last_control_signal = control_signal
+                        # Instead of setting a temporary set_position, directly command forward
+                        fixed_control_signal = 20  # Fixed forward control signal to exit deadzone
+                        self.motor.set_speed(fixed_control_signal)
+                        self.motor.forward()
+                        print(f"[{self.name}] Issued forward control signal: {fixed_control_signal}% to exit dead zone.")
+                        self.last_control_signal = fixed_control_signal
 
                     time.sleep(0.1)
 
