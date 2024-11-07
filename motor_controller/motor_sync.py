@@ -136,8 +136,6 @@ class SpikeFilter:
         # If the filter is active, we are in the dead zone
         if self.filter_active:
             # Discard readings within the dead zone
-            # Dead zone ranges should be handled in the mapping function
-            # Here, assume dead zone is already handled, so return the value
             print(f"Discarding invalid reading during dead zone: {new_value}")
             return None
         else:
@@ -224,11 +222,12 @@ class MotorController:
         # Do not clamp errors to zero for reverse; they should remain negative or positive
         return error
 
-    def pid_control_motor(self, degrees_value, set_position, direction='forward'):
+    def pid_control_motor(self, degrees_value, set_position, direction='forward', initialization=False):
         DEAD_ZONE_DEG_START = self.config['dead_zone_start']
         OFFSET = self.config['offset']
         slowdown_threshold = self.config['slowdown_threshold']
         max_control_change = self.config['max_control_change']
+        MIN_CONTROL_SIGNAL = 10  # Minimum control signal to overcome static friction
 
         current_time = time.time()
         delta_time = current_time - self.last_time
@@ -256,42 +255,61 @@ class MotorController:
         # Clamp control signal to -100 to 100
         control_signal = max(-100, min(100, control_signal))
 
-        # Apply control signal based on error
-        if abs(error) == 0:
-            self.motor.set_speed(0)
-            self.motor.stop()
-            print(f"{self.name}: At or ahead of set position. Holding position.")
-        elif abs(error) <= OFFSET:
-            self.motor.set_speed(0)
-            self.motor.stop()
-            print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
-        elif abs(error) <= slowdown_threshold:
-            slowdown_factor = abs(error) / slowdown_threshold
-            slow_control_signal = control_signal * slowdown_factor
-            speed = abs(slow_control_signal)
+        # During initialization, bypass offset and slowdown_threshold
+        if initialization:
+            if abs(control_signal) < MIN_CONTROL_SIGNAL:
+                # Ensure a minimum control signal
+                control_signal = MIN_CONTROL_SIGNAL if control_signal > 0 else -MIN_CONTROL_SIGNAL
 
-            if slow_control_signal > 0:
-                self.motor.set_speed(speed)
-                self.motor.forward()
-                dir_text = 'forward'
-            else:
-                self.motor.set_speed(speed)
-                self.motor.reverse()
-                dir_text = 'reverse'
-
-            print(f"{self.name}: Slowing down ({dir_text}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
-        else:
-            speed = abs(control_signal)
+            # Apply control signal based on direction
             if control_signal > 0:
-                self.motor.set_speed(speed)
+                self.motor.set_speed(control_signal)
                 self.motor.forward()
                 dir_text = 'forward'
             else:
-                self.motor.set_speed(speed)
+                self.motor.set_speed(abs(control_signal))
                 self.motor.reverse()
                 dir_text = 'reverse'
 
-            print(f"{self.name}: Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
+            print(f"{self.name}: [Init] Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {abs(control_signal):.2f}%, Set Position: {set_position:.2f}°")
+
+        else:
+            # Apply control signal based on error
+            if abs(error) == 0:
+                self.motor.set_speed(0)
+                self.motor.stop()
+                print(f"{self.name}: At or ahead of set position. Holding position.")
+            elif abs(error) <= OFFSET:
+                self.motor.set_speed(0)
+                self.motor.stop()
+                print(f"{self.name}: Motor stopped at target: {degrees_value:.2f} degrees")
+            elif abs(error) <= slowdown_threshold:
+                slowdown_factor = abs(error) / slowdown_threshold
+                slow_control_signal = control_signal * slowdown_factor
+                speed = max(abs(slow_control_signal), MIN_CONTROL_SIGNAL)  # Ensure minimum speed
+
+                if slow_control_signal > 0:
+                    self.motor.set_speed(speed)
+                    self.motor.forward()
+                    dir_text = 'forward'
+                else:
+                    self.motor.set_speed(speed)
+                    self.motor.reverse()
+                    dir_text = 'reverse'
+
+                print(f"{self.name}: Slowing down ({dir_text}): Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
+            else:
+                speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)  # Ensure minimum speed
+                if control_signal > 0:
+                    self.motor.set_speed(speed)
+                    self.motor.forward()
+                    dir_text = 'forward'
+                else:
+                    self.motor.set_speed(speed)
+                    self.motor.reverse()
+                    dir_text = 'reverse'
+
+                print(f"{self.name}: Moving {dir_text}: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {speed:.2f}%, Set Position: {set_position:.2f}°")
 
         # Update last valid control signal
         self.last_valid_control_signal = control_signal
@@ -324,7 +342,7 @@ class MotorController:
                             self.sawtooth_generator.start_time = self.sawtooth_generator.current_millis()  # Reset start time for sawtooth wave
                             break
                         else:
-                            self.pid_control_motor(degrees_value, self.initial_position, direction)
+                            self.pid_control_motor(degrees_value, self.initial_position, direction, initialization=True)
                     else:
                         print(f"{self.name}: degrees_value is None during initialization.")
 
@@ -374,17 +392,17 @@ def main():
             'dead_zone_start': 330,  # Original value; adjust if needed
             'dead_zone_min': 150,    # Minimum ADC value for dead zone (Motor 1)
             'dead_zone_max': 200,    # Maximum ADC value for dead zone (Motor 1)
-            'offset': 10,
+            'offset': 5,
             'num_samples_for_average': 5,
             'slowdown_threshold': 20,
             'max_control_change': 5,
             'max_degrees_per_second': 60
         }
 
-        # PID constants (tune as necessary)
-        Kp = 0.15
-        Ki = 0.001
-        Kd = 0.1
+        # PID constants (increased)
+        Kp = 0.5  # Increased from 0.1
+        Ki = 0.05  # Increased from 0.01
+        Kd = 0.2  # Increased from 0.1
 
         # Define motors and their configurations
         motors_info = [
