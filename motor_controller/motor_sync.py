@@ -374,7 +374,7 @@ def main():
             'dead_zone_start': 330,  # Original value; adjust if needed
             'dead_zone_min': 150,    # Minimum ADC value for dead zone (Motor 1)
             'dead_zone_max': 200,    # Maximum ADC value for dead zone (Motor 1)
-            'offset': 5,
+            'offset': 10,
             'num_samples_for_average': 5,
             'slowdown_threshold': 20,
             'max_control_change': 5,
