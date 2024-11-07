@@ -34,8 +34,8 @@ class Motor:
 
     def set_speed(self, duty_cycle):
         # Clamp duty_cycle to 0-100%
-        duty_cycle = max(-100, min(100, duty_cycle))
-        self.pwm.ChangeDutyCycle(abs(duty_cycle))
+        duty_cycle = max(0, min(100, abs(duty_cycle)))
+        self.pwm.ChangeDutyCycle(duty_cycle)
 
     def forward(self):
         GPIO.output(self.in1_pin, GPIO.LOW)
@@ -185,12 +185,15 @@ class MotorController:
 
     def map_potentiometer_value_to_degrees(self, value):
         # Adjust mapping to account for dead zone
-        if 0 <= value <= 150:
-            # Map ADC 0-150 to degrees 0-114
-            degrees = value * (114 / 150)
-        elif 700 <= value <= 1023:
-            # Map ADC 700-1023 to degrees 114-360
-            degrees = (114 + (value - 700) * ((360 - 114) / (1023 - 700)))
+        DEAD_ZONE_MIN = self.config.get('dead_zone_min', 150)
+        DEAD_ZONE_MAX = self.config.get('dead_zone_max', 700)
+
+        if 0 <= value < DEAD_ZONE_MIN:
+            # Map ADC 0-DEAD_ZONE_MIN to degrees 0-114
+            degrees = value * (114 / DEAD_ZONE_MIN)
+        elif value > DEAD_ZONE_MAX and value <= 1023:
+            # Map ADC DEAD_ZONE_MAX-1023 to degrees 114-360
+            degrees = 114 + (value - DEAD_ZONE_MAX) * ((360 - 114) / (1023 - DEAD_ZONE_MAX))
         else:
             # Value is in dead zone
             return None
@@ -295,8 +298,10 @@ class MotorController:
                 print(f"{self.name}: Moving to initial position {self.initial_position}°")
                 while not stop_event.is_set():
                     pot_value = self.adc_reader.read_channel(self.channel)
+                    print(f"{self.name}: Raw ADC Value: {pot_value}")  # Debugging
                     filtered_pot_value = self.spike_filter.filter(pot_value)
                     degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                    print(f"{self.name}: Mapped Degrees Value: {degrees_value}")  # Debugging
 
                     if degrees_value is not None:
                         error = self.calculate_error(self.initial_position, degrees_value, direction)
@@ -317,10 +322,13 @@ class MotorController:
             # Normal control loop
             while not stop_event.is_set():
                 pot_value = self.adc_reader.read_channel(self.channel)
+                print(f"{self.name}: Raw ADC Value: {pot_value}")  # Debugging
                 filtered_pot_value = self.spike_filter.filter(pot_value)
                 degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                print(f"{self.name}: Mapped Degrees Value: {degrees_value}")  # Debugging
                 self.sawtooth_generator.direction = direction  # Set the wave direction
                 set_position = self.sawtooth_generator.get_set_position()
+                print(f"{self.name}: Set Position: {set_position}")  # Debugging
                 self.pid_control_motor(degrees_value, set_position, direction)
                 time.sleep(0.1)
 
@@ -352,7 +360,9 @@ def main():
 
         # Shared configuration
         config = {
-            'dead_zone_start': 330,
+            'dead_zone_start': 330,  # Original value; adjust if needed
+            'dead_zone_min': 150,    # Minimum ADC value for dead zone
+            'dead_zone_max': 700,    # Maximum ADC value for dead zone
             'offset': 5,
             'num_samples_for_average': 5,
             'slowdown_threshold': 20,
@@ -374,6 +384,7 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
+                'initial_position': 90
             },
             {
                 'id': 3,
@@ -382,6 +393,7 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
+                'initial_position': 270
             },
         ]
 
@@ -402,15 +414,8 @@ def main():
 
             # Read initial potentiometer value for initial angle
             initial_pot_value = adc_reader.read_channel(motor_info['adc_channel'])
+            print(f"{motor_info['name']}: Initial ADC Value: {initial_pot_value}")  # Debugging
             initial_angle = 0  # Start from 0 for sawtooth generator
-
-            # Determine initial position based on motor id
-            if motor_info['id'] == 1:
-                initial_position = 90
-            elif motor_info['id'] == 3:
-                initial_position = 270
-            else:
-                initial_position = 0  # default or adjust as needed
 
             # Create SawtoothWaveGenerator instance with direction
             sawtooth_generator = SawtoothWaveGenerator(
@@ -430,7 +435,7 @@ def main():
                 sawtooth_generator=sawtooth_generator,
                 config=config,
                 name=motor_info['name'],  # Pass the name for logging
-                initial_position=initial_position  # Pass initial position
+                initial_position=motor_info['initial_position']  # Pass initial position
             )
 
             # Add to the list of motor controllers
