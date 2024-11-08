@@ -313,7 +313,7 @@ def main():
         config = {
             'offset': 5.0,  # Degrees within which to stop the motor
             'max_control_change': 10.0,  # Max change in control signal per loop
-            'min_control_signal': 10.0  # Minimum control signal to move the motor
+            'min_control_signal': 15.0  # Minimum control signal to move the motor
         }
 
         # PID constants (further reduced Ki and adjusted Kp, Kd for stability)
