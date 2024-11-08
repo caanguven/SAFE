@@ -80,7 +80,7 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001  # prevent division by zero
+            delta_time = 0.0001  # Prevent division by zero
 
         # Compute error and wrap to avoid large jumps
         error = self.set_point - current_value
@@ -100,12 +100,10 @@ class PIDController:
         self.previous_error = error
         self.last_time = current_time
 
-        # Smoothly clamp control signal to avoid aggressive reactions
-        max_signal_change = 20  # change per iteration
-        if abs(control_signal) > 100:
-            control_signal = max(-100, min(100, control_signal))
-        elif abs(control_signal - self.previous_error) > max_signal_change:
-            control_signal = self.previous_error + max_signal_change * (1 if control_signal > 0 else -1)
+        # Clamp control signal to within allowable range
+        control_signal = max(-100, min(100, control_signal))
+
+        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
 
         return control_signal
 
@@ -165,6 +163,11 @@ class SawtoothWaveGenerator:
 
         return set_position
 
+    def set_direction(self, direction):
+        if direction not in ['forward', 'reverse']:
+            raise ValueError("Direction must be 'forward' or 'reverse'.")
+        self.direction = direction
+
 # ==========================
 # MotorController Class
 # ==========================
@@ -193,15 +196,12 @@ class MotorController:
 
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
-        MIN_CONTROL_SIGNAL = 5
+        MIN_CONTROL_SIGNAL = self.config.get('min_control_signal', 5)
 
         # Calculate error and apply PID
         error = self.calculate_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
         control_signal = self.pid_controller.compute(degrees_value)
-
-        # Clamp control signal to avoid oscillation
-        control_signal = max(-100, min(100, control_signal))
 
         # Determine motor direction and speed based on control signal
         if abs(error) <= OFFSET:
@@ -210,6 +210,7 @@ class MotorController:
             print(f"[{self.name}] Motor stopped at target: {degrees_value:.2f} degrees")
         else:
             speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
+            speed = min(speed, 100)  # Ensure speed does not exceed 100%
             if control_signal > 0:
                 self.motor.set_speed(speed)
                 self.motor.forward()
@@ -230,20 +231,22 @@ class MotorController:
                         self.pid_control_motor(degrees_value, self.target_position)
                         error = self.calculate_error(self.target_position, degrees_value)
                         if abs(error) <= self.config['offset']:
-                            print(f"[{self.name}] Reached initial position at {degrees_value:.2f} degrees. Waiting 3 seconds.")
-                            time.sleep(3)
+                            print(f"[{self.name}] Reached initial position at {degrees_value:.2f} degrees. Waiting 3 minutes.")
+                            time.sleep(180)  # Wait for 3 minutes
                             self.reached_initial_position = True
                     else:
                         set_position = self.sawtooth_wave.get_set_position()
                         self.pid_control_motor(degrees_value, set_position)
                 else:
                     self.motor.stop()
+                    print(f"[{self.name}] degrees_value is None, holding position.")
 
                 time.sleep(0.1)
         except Exception as e:
             print(f"[{self.name}] Exception occurred: {e}")
         finally:
             self.motor.cleanup()
+            print(f"[{self.name}] Motor GPIO cleaned up")
 
 # ==========================
 # Main Function
@@ -252,18 +255,22 @@ def main():
     try:
         GPIO.setmode(GPIO.BOARD)
 
+        # Create ADCReader instance for reading from ADC channels
         adc_reader = ADCReader(spi_port=0, spi_device=0)
 
+        # Shared PID configuration and settings
         config = {
-            'offset': 10,
-            'max_control_change': 5,
+            'offset': 5,  # Degrees within which to stop the motor
+            'max_control_change': 5,  # Not used in this implementation but kept for potential future use
+            'min_control_signal': 10  # Minimum control signal to prevent stalling
         }
 
-        # Adjust PID values for smoother control
+        # PID constants (adjusted for smoother control)
         Kp = 0.3
         Ki = 0.01
         Kd = 0.1
 
+        # Motor configurations
         motors_info = [
             {
                 'name': 'Motor 1',
@@ -271,9 +278,9 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
-                'target_position': 90,
-                'sawtooth_period': 2000,
-                'sawtooth_amplitude': 180
+                'target_position': 90,  # Target for Motor 1
+                'sawtooth_period': 2000,  # Period in ms
+                'sawtooth_amplitude': 180  # Amplitude in degrees
             },
             {
                 'name': 'Motor 3',
@@ -281,20 +288,26 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
-                'target_position': 270,
-                'sawtooth_period': 2000,
-                'sawtooth_amplitude': 180
+                'target_position': 270,  # Target for Motor 3
+                'sawtooth_period': 2000,  # Period in ms
+                'sawtooth_amplitude': 180  # Amplitude in degrees
             }
         ]
 
+        # Create and start threads for each motor controller
         stop_event = threading.Event()
         threads = []
 
+        # Initialize a single SawtoothWaveGenerator for synchronization
+        global_start_time = time.time()
+
         for motor_info in motors_info:
+            # Create individual components for each motor
             motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
             pid_controller = PIDController(Kp, Ki, Kd)
             spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
 
+            # Create SawtoothWaveGenerator instance for each motor
             sawtooth_wave = SawtoothWaveGenerator(
                 period=motor_info['sawtooth_period'],
                 amplitude=motor_info['sawtooth_amplitude'],
@@ -302,6 +315,7 @@ def main():
                 direction='forward'
             )
 
+            # Create MotorController instance for each motor
             motor_controller = MotorController(
                 motor=motor,
                 pid_controller=pid_controller,
@@ -314,6 +328,7 @@ def main():
                 sawtooth_wave=sawtooth_wave
             )
 
+            # Start a thread for the motor controller
             thread = threading.Thread(target=motor_controller.control_loop, args=(stop_event,))
             thread.start()
             threads.append(thread)
@@ -322,14 +337,15 @@ def main():
 
         print("[Main] Press Ctrl+C to stop.")
 
+        # Wait for KeyboardInterrupt to stop
         while True:
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\n[Main] Program stopped by user")
-        stop_event.set()
+        stop_event.set()  # Signal threads to stop
         for thread in threads:
-            thread.join()
+            thread.join()  # Wait for all threads to finish
     except Exception as e:
         print(f"[Main] Exception occurred: {e}")
     finally:
