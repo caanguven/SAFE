@@ -8,15 +8,21 @@ import Adafruit_MCP3008
 # ADCReader Class
 # ==========================
 class ADCReader:
-    def __init__(self, spi_port=0, spi_device=0):
+    def __init__(self, spi_port=0, spi_device=0, num_samples=5):
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(spi_port, spi_device))
         self.lock = threading.Lock()
+        self.num_samples = num_samples
+        self.readings = {channel: [] for channel in range(8)}  # assuming 8 channels
 
     def read_channel(self, channel):
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
-            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}")
-            return adc_value
+            self.readings[channel].append(adc_value)
+            if len(self.readings[channel]) > self.num_samples:
+                self.readings[channel].pop(0)
+            average = sum(self.readings[channel]) / len(self.readings[channel])
+            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Average: {average}")
+            return average
 
 # ==========================
 # Motor Class
@@ -83,7 +89,7 @@ class PIDController:
             delta_time = 0.0001
 
         error = self.set_point - current_value
-        error = ((error + 165) % 330) - 165  # Keep error within -165 to 165 degrees
+        error = self.wrap_error(error)
 
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
@@ -101,27 +107,13 @@ class PIDController:
 
         return control_signal
 
-# ==========================
-# SpikeFilter Class
-# ==========================
-class SpikeFilter:
-    def __init__(self, high_threshold, low_threshold, max_delta=30):
-        self.last_valid_reading = None
-        self.high_threshold = high_threshold
-        self.low_threshold = low_threshold
-        self.max_delta = max_delta  # Maximum allowed change per reading
-
-    def filter(self, new_value):
-        if self.last_valid_reading is not None:
-            delta = abs(new_value - self.last_valid_reading)
-            # Handle wrap-around
-            if delta > (330 / 2):
-                delta = 330 - delta
-            if delta > self.max_delta:
-                print(f"[SpikeFilter] Detected spike. Delta: {delta}, Value: {new_value} is ignored.")
-                return None
-        self.last_valid_reading = new_value
-        return new_value
+    @staticmethod
+    def wrap_error(error, max_range=330):
+        if error > max_range / 2:
+            error -= max_range
+        elif error < -max_range / 2:
+            error += max_range
+        return error
 
 # ==========================
 # SawtoothWaveGenerator Class
@@ -160,14 +152,13 @@ class SawtoothWaveGenerator:
 # MotorController Class
 # ==========================
 class MotorController:
-    def __init__(self, motor, pid_controller, adc_reader, channel, spike_filter, config,
+    def __init__(self, motor, pid_controller, adc_reader, channel, config,
                  name='Motor', target_position=0,
                  wave_generator=None, event_reached_position=None, event_start_synchronized_movement=None):
         self.motor = motor
         self.pid_controller = pid_controller
         self.adc_reader = adc_reader
         self.channel = channel
-        self.spike_filter = spike_filter
         self.config = config
         self.name = name
         self.target_position = target_position
@@ -185,7 +176,7 @@ class MotorController:
 
     def calculate_error(self, set_position, current_angle):
         error = set_position - current_angle
-        error = ((error + 165) % 330) - 165  # Keep error within -165 to 165 degrees
+        error = self.pid_controller.wrap_error(error)
         print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle:.2f}°)")
         return error
 
@@ -211,7 +202,8 @@ class MotorController:
             self.motor.stop()
             if not self.at_target_position:
                 self.at_target_position = True
-                self.event_reached_position.set()
+                if self.event_reached_position:
+                    self.event_reached_position.set()
                 print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
         else:
             speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
@@ -231,14 +223,9 @@ class MotorController:
             while not stop_event.is_set():
                 if self.state == 'initializing':
                     pot_value = self.adc_reader.read_channel(self.channel)
-                    filtered_pot_value = self.spike_filter.filter(pot_value)
-                    degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                    degrees_value = self.map_potentiometer_value_to_degrees(pot_value)
 
-                    if degrees_value is not None:
-                        self.pid_control_motor(degrees_value, self.target_position)
-                    else:
-                        print(f"[{self.name}] Invalid reading during initialization. Holding position.")
-                        self.motor.stop()
+                    self.pid_control_motor(degrees_value, self.target_position)
 
                     if self.at_target_position:
                         self.state = 'waiting'
@@ -258,14 +245,13 @@ class MotorController:
 
                 elif self.state == 'synchronized_movement':
                     pot_value = self.adc_reader.read_channel(self.channel)
-                    filtered_pot_value = self.spike_filter.filter(pot_value)
-                    degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
+                    degrees_value = self.map_potentiometer_value_to_degrees(pot_value)
 
-                    if degrees_value is not None and self.wave_generator:
+                    if self.wave_generator:
                         set_position = self.wave_generator.get_set_position()
                         self.pid_control_motor(degrees_value, set_position)
                     else:
-                        print(f"[{self.name}] Invalid reading during synchronized movement. Holding position.")
+                        print(f"[{self.name}] No wave generator. Holding position.")
                         self.motor.stop()
 
                 else:
@@ -352,7 +338,7 @@ def main():
             # Create individual components for each motor
             motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
             pid_controller = PIDController(Kp, Ki, Kd)
-            spike_filter = SpikeFilter(high_threshold=300, low_threshold=30, max_delta=30)
+            # SpikeFilter removed
 
             # Assign the correct event based on motor ID
             if motor_info['id'] == 1:
@@ -368,7 +354,6 @@ def main():
                 pid_controller=pid_controller,
                 adc_reader=adc_reader,
                 channel=motor_info['adc_channel'],
-                spike_filter=spike_filter,
                 config=config,
                 name=motor_info['name'],
                 target_position=motor_info['target_position'],
