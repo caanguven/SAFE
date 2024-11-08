@@ -80,16 +80,16 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class
+# PIDController Class with Anti-Windup
 # ==========================
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000):
+    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=100.0):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
         self.set_point = set_point
-        self.previous_error = 0
-        self.integral = 0
+        self.previous_error = 0.0
+        self.integral = 0.0
         self.last_time = time.time()
         self.integral_limit = integral_limit
 
@@ -97,22 +97,38 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001
+            delta_time = 0.0001  # Prevent division by zero
 
+        # Calculate error
         error = self.set_point - current_value
         error = self.wrap_error(error)
 
-        self.integral += error * delta_time
-        self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
-
+        # Calculate integral with anti-windup
+        provisional_integral = self.integral + error * delta_time
+        # Compute provisional control signal
         derivative = (error - self.previous_error) / delta_time
+        provisional_control_signal = (self.Kp * error) + (self.Ki * provisional_integral) + (self.Kd * derivative)
+
+        # Anti-windup: Only integrate if control signal is not saturated
+        if not (provisional_control_signal > 100 or provisional_control_signal < -100):
+            self.integral = provisional_integral
+            # Clamp integral to prevent excessive accumulation
+            self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
+        else:
+            print("[PIDController] Control signal saturated. Integral term not updated to prevent windup.")
+
+        # Calculate derivative
+        derivative = (error - self.previous_error) / delta_time
+
+        # Compute control signal
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
-        # Limit control signal to prevent windup
+        # Clamp control signal
         control_signal = max(-100, min(100, control_signal))
 
         print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
 
+        # Update for next iteration
         self.previous_error = error
         self.last_time = current_time
 
@@ -179,7 +195,7 @@ class MotorController:
         self.event_start_synchronized_movement = event_start_synchronized_movement
         self.state = 'initializing'
         self.at_target_position = False
-        self.last_control_signal = 0
+        self.last_control_signal = 0.0
 
     def map_potentiometer_value_to_degrees(self, value):
         degrees = value  # already mapped in ADCReader
@@ -189,7 +205,7 @@ class MotorController:
     def calculate_error(self, set_position, current_angle):
         error = set_position - current_angle
         error = self.pid_controller.wrap_error(error)
-        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle:.2f}°)")
+        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position:.2f}°, Current Angle: {current_angle:.2f}°)")
         return error
 
     def pid_control_motor(self, degrees_value, set_position):
@@ -205,6 +221,7 @@ class MotorController:
         control_signal_change = control_signal - self.last_control_signal
         if abs(control_signal_change) > max_control_change:
             control_signal = self.last_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
+            print(f"[{self.name}] Control signal change limited to {max_control_change}%. New Control Signal: {control_signal:.2f}%")
 
         # Clamp control signal
         control_signal = max(-100, min(100, control_signal))
@@ -299,9 +316,9 @@ def main():
             'min_control_signal': 10  # Minimum control signal to move the motor
         }
 
-        # PID constants (tune as necessary)
-        Kp = 1.0
-        Ki = 0.1
+        # PID constants (reduced Ki to prevent windup)
+        Kp = 0.1
+        Ki = 0.02
         Kd = 0.05
 
         # Motor configurations
@@ -313,7 +330,7 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
-                'target_position': 165  # Midpoint of 330 degrees
+                'target_position': 165.0  # Midpoint of 330 degrees
             },
             {
                 'id': 3,
@@ -322,7 +339,7 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
-                'target_position': 165  # Midpoint of 330 degrees
+                'target_position': 165.0  # Midpoint of 330 degrees
             }
         ]
 
@@ -338,8 +355,8 @@ def main():
         # Create SawtoothWaveGenerator instance
         wave_generator = SawtoothWaveGenerator(
             period=5000,  # 5 seconds for a full cycle
-            amplitude=330,  # Full rotation within 330 degrees
-            initial_angle=0,
+            amplitude=330.0,  # Full rotation within 330 degrees
+            initial_angle=0.0,
             direction='forward',
             max_degrees=330.0
         )
@@ -387,11 +404,13 @@ def main():
         print("[Main] Both motors have reached initial positions. Waiting for 5 seconds.")
         time.sleep(5)
 
-        print("[Main] Starting synchronized movement.")
-        wave_generator.start_time = wave_generator.current_millis()
-        event_start_synchronized_movement.set()
+        # For calibration, keep synchronized movement disabled
+        # Once calibration is complete, you can enable synchronized movement by uncommenting the following lines:
+        # print("[Main] Starting synchronized movement.")
+        # wave_generator.start_time = wave_generator.current_millis()
+        # event_start_synchronized_movement.set()
 
-        print("[Main] Press Ctrl+C to stop.")
+        print("[Main] Calibration complete. Synchronized movement remains disabled. Press Ctrl+C to stop.")
 
         # Keep the main thread alive
         while True:
