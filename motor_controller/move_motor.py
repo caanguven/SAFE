@@ -80,10 +80,10 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class with Anti-Windup
+# PIDController Class with Enhanced Anti-Windup
 # ==========================
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=100.0):
+    def __init__(self, Kp, Ki, Kd, set_point=0.0, integral_limit=50.0):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
@@ -91,7 +91,7 @@ class PIDController:
         self.previous_error = 0.0
         self.integral = 0.0
         self.last_time = time.time()
-        self.integral_limit = integral_limit
+        self.integral_limit = integral_limit  # Reduced to prevent windup
 
     def compute(self, current_value):
         current_time = time.time()
@@ -103,30 +103,30 @@ class PIDController:
         error = self.set_point - current_value
         error = self.wrap_error(error)
 
-        # Calculate integral with anti-windup
-        provisional_integral = self.integral + error * delta_time
-        # Compute provisional control signal
+        # Calculate derivative
         derivative = (error - self.previous_error) / delta_time
+
+        # Compute provisional integral
+        provisional_integral = self.integral + error * delta_time
+
+        # Compute provisional control signal
         provisional_control_signal = (self.Kp * error) + (self.Ki * provisional_integral) + (self.Kd * derivative)
 
-        # Anti-windup: Only integrate if control signal is not saturated
-        if not (provisional_control_signal > 100 or provisional_control_signal < -100):
+        # Anti-Windup: Only integrate if control signal is not saturated
+        if -100.0 < provisional_control_signal < 100.0:
             self.integral = provisional_integral
             # Clamp integral to prevent excessive accumulation
             self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
         else:
             print("[PIDController] Control signal saturated. Integral term not updated to prevent windup.")
 
-        # Calculate derivative
-        derivative = (error - self.previous_error) / delta_time
-
-        # Compute control signal
+        # Recompute control signal with updated integral
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
         # Clamp control signal
-        control_signal = max(-100, min(100, control_signal))
+        control_signal = max(-100.0, min(100.0, control_signal))
 
-        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
+        print(f"[PIDController] Error: {error:.2f}°, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}%")
 
         # Update for next iteration
         self.previous_error = error
@@ -181,7 +181,7 @@ class SawtoothWaveGenerator:
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, config,
-                 name='Motor', target_position=0,
+                 name='Motor', target_position=0.0,
                  wave_generator=None, event_reached_position=None, event_start_synchronized_movement=None):
         self.motor = motor
         self.pid_controller = pid_controller
@@ -224,10 +224,10 @@ class MotorController:
             print(f"[{self.name}] Control signal change limited to {max_control_change}%. New Control Signal: {control_signal:.2f}%")
 
         # Clamp control signal
-        control_signal = max(-100, min(100, control_signal))
+        control_signal = max(-100.0, min(100.0, control_signal))
 
         if abs(error) <= OFFSET:
-            self.motor.set_speed(0)
+            self.motor.set_speed(0.0)
             self.motor.stop()
             if not self.at_target_position:
                 self.at_target_position = True
@@ -311,15 +311,15 @@ def main():
 
         # Shared PID configuration and settings
         config = {
-            'offset': 5,  # Degrees within which to stop the motor
-            'max_control_change': 10,  # Max change in control signal per loop
-            'min_control_signal': 10  # Minimum control signal to move the motor
+            'offset': 5.0,  # Degrees within which to stop the motor
+            'max_control_change': 10.0,  # Max change in control signal per loop
+            'min_control_signal': 10.0  # Minimum control signal to move the motor
         }
 
-        # PID constants (reduced Ki to prevent windup)
-        Kp = 0.1
-        Ki = 0.02
-        Kd = 0.05
+        # PID constants (further reduced Ki and adjusted Kp, Kd for stability)
+        Kp = 0.05
+        Ki = 0.01
+        Kd = 0.07
 
         # Motor configurations
         motors_info = [
