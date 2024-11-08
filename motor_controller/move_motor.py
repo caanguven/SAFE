@@ -306,15 +306,15 @@ def main():
 
         # Motor configurations
         motors_info = [
-            {
-                'id': 1,
-                'name': 'Motor 1',
-                'in1': 7,
-                'in2': 26,
-                'spd': 18,
-                'adc_channel': 0,
-                'target_position': 165  # Midpoint of 330 degrees
-            },
+            # {
+            #     'id': 1,
+            #     'name': 'Motor 1',
+            #     'in1': 7,
+            #     'in2': 26,
+            #     'spd': 18,
+            #     'adc_channel': 0,
+            #     'target_position': 165  # Midpoint of 330 degrees
+            # },
             {
                 'id': 3,
                 'name': 'Motor 3',
