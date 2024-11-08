@@ -80,55 +80,39 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class with Enhanced Anti-Windup
+# PIDController Class
 # ==========================
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, set_point=0.0, integral_limit=50.0):
+    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
         self.set_point = set_point
-        self.previous_error = 0.0
-        self.integral = 0.0
+        self.previous_error = 0
+        self.integral = 0
         self.last_time = time.time()
-        self.integral_limit = integral_limit  # Reduced to prevent windup
+        self.integral_limit = integral_limit
 
     def compute(self, current_value):
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001  # Prevent division by zero
+            delta_time = 0.0001
 
-        # Calculate error
         error = self.set_point - current_value
         error = self.wrap_error(error)
 
-        # Calculate derivative
+        self.integral += error * delta_time
+        self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
+
         derivative = (error - self.previous_error) / delta_time
-
-        # Compute provisional integral
-        provisional_integral = self.integral + error * delta_time
-
-        # Compute provisional control signal
-        provisional_control_signal = (self.Kp * error) + (self.Ki * provisional_integral) + (self.Kd * derivative)
-
-        # Anti-Windup: Only integrate if control signal is not saturated
-        if -100.0 < provisional_control_signal < 100.0:
-            self.integral = provisional_integral
-            # Clamp integral to prevent excessive accumulation
-            self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
-        else:
-            print("[PIDController] Control signal saturated. Integral term not updated to prevent windup.")
-
-        # Recompute control signal with updated integral
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
-        # Clamp control signal
-        control_signal = max(-100.0, min(100.0, control_signal))
+        # Limit control signal to prevent windup
+        control_signal = max(-100, min(100, control_signal))
 
-        print(f"[PIDController] Error: {error:.2f}°, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}%")
+        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
 
-        # Update for next iteration
         self.previous_error = error
         self.last_time = current_time
 
@@ -181,7 +165,7 @@ class SawtoothWaveGenerator:
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, config,
-                 name='Motor', target_position=0.0,
+                 name='Motor', target_position=0,
                  wave_generator=None, event_reached_position=None, event_start_synchronized_movement=None):
         self.motor = motor
         self.pid_controller = pid_controller
@@ -195,7 +179,7 @@ class MotorController:
         self.event_start_synchronized_movement = event_start_synchronized_movement
         self.state = 'initializing'
         self.at_target_position = False
-        self.last_control_signal = 0.0
+        self.last_control_signal = 0
 
     def map_potentiometer_value_to_degrees(self, value):
         degrees = value  # already mapped in ADCReader
@@ -205,13 +189,13 @@ class MotorController:
     def calculate_error(self, set_position, current_angle):
         error = set_position - current_angle
         error = self.pid_controller.wrap_error(error)
-        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position:.2f}°, Current Angle: {current_angle:.2f}°)")
+        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle:.2f}°)")
         return error
 
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
         max_control_change = self.config['max_control_change']
-        # MIN_CONTROL_SIGNAL removed to handle dead zone
+        MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
         error = self.calculate_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
@@ -221,13 +205,12 @@ class MotorController:
         control_signal_change = control_signal - self.last_control_signal
         if abs(control_signal_change) > max_control_change:
             control_signal = self.last_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
-            print(f"[{self.name}] Control signal change limited to {max_control_change}%. New Control Signal: {control_signal:.2f}%")
 
         # Clamp control signal
-        control_signal = max(-100.0, min(100.0, control_signal))
+        control_signal = max(-100, min(100, control_signal))
 
         if abs(error) <= OFFSET:
-            self.motor.set_speed(0.0)
+            self.motor.set_speed(0)
             self.motor.stop()
             if not self.at_target_position:
                 self.at_target_position = True
@@ -235,23 +218,15 @@ class MotorController:
                     self.event_reached_position.set()
                 print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
         else:
-            # Implement dead zone handling
-            DEAD_ZONE = 2.0  # Degrees
-            if abs(error) > DEAD_ZONE:
-                speed = abs(control_signal)
-                if speed < 5.0:
-                    speed = 5.0  # Minimum speed to overcome dead zone
-                if control_signal > 0:
-                    self.motor.set_speed(speed)
-                    self.motor.forward()
-                else:
-                    self.motor.set_speed(speed)
-                    self.motor.reverse()
-                print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+            speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
+            if control_signal > 0:
+                self.motor.set_speed(speed)
+                self.motor.forward()
             else:
-                self.motor.set_speed(0.0)
-                self.motor.stop()
-                print(f"[{self.name}] Within dead zone. Stopping motor.")
+                self.motor.set_speed(speed)
+                self.motor.reverse()
+
+            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
 
         self.last_control_signal = control_signal
 
@@ -319,15 +294,15 @@ def main():
 
         # Shared PID configuration and settings
         config = {
-            'offset': 5.0,  # Degrees within which to stop the motor
-            'max_control_change': 10.0,  # Max change in control signal per loop
-            # 'min_control_signal' removed to handle dead zone
+            'offset': 5,  # Degrees within which to stop the motor
+            'max_control_change': 10,  # Max change in control signal per loop
+            'min_control_signal': 10  # Minimum control signal to move the motor
         }
 
-        # PID constants (further reduced Ki and adjusted Kp, Kd for stability)
-        Kp = 0.05
-        Ki = 0.01
-        Kd = 0.07
+        # PID constants (tune as necessary)
+        Kp = 1.0
+        Ki = 0.1
+        Kd = 0.05
 
         # Motor configurations
         motors_info = [
@@ -338,7 +313,7 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
-                'target_position': 180.0  # Updated target position
+                'target_position': 165  # Midpoint of 330 degrees
             },
             {
                 'id': 3,
@@ -347,7 +322,7 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
-                'target_position': 180.0  # Updated target position
+                'target_position': 165  # Midpoint of 330 degrees
             }
         ]
 
@@ -363,8 +338,8 @@ def main():
         # Create SawtoothWaveGenerator instance
         wave_generator = SawtoothWaveGenerator(
             period=5000,  # 5 seconds for a full cycle
-            amplitude=330.0,  # Full rotation within 330 degrees
-            initial_angle=0.0,
+            amplitude=330,  # Full rotation within 330 degrees
+            initial_angle=0,
             direction='forward',
             max_degrees=330.0
         )
@@ -412,13 +387,11 @@ def main():
         print("[Main] Both motors have reached initial positions. Waiting for 5 seconds.")
         time.sleep(5)
 
-        # For calibration, keep synchronized movement disabled
-        # Once calibration is complete, you can enable synchronized movement by uncommenting the following lines:
-        # print("[Main] Starting synchronized movement.")
-        # wave_generator.start_time = wave_generator.current_millis()
-        # event_start_synchronized_movement.set()
+        print("[Main] Starting synchronized movement.")
+        wave_generator.start_time = wave_generator.current_millis()
+        event_start_synchronized_movement.set()
 
-        print("[Main] Calibration complete. Synchronized movement remains disabled. Press Ctrl+C to stop.")
+        print("[Main] Press Ctrl+C to stop.")
 
         # Keep the main thread alive
         while True:
