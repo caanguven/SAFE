@@ -211,7 +211,7 @@ class MotorController:
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
         max_control_change = self.config['max_control_change']
-        MIN_CONTROL_SIGNAL = self.config['min_control_signal']
+        # MIN_CONTROL_SIGNAL removed to handle dead zone
 
         error = self.calculate_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
@@ -235,15 +235,23 @@ class MotorController:
                     self.event_reached_position.set()
                 print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
         else:
-            speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
-            if control_signal > 0:
-                self.motor.set_speed(speed)
-                self.motor.forward()
+            # Implement dead zone handling
+            DEAD_ZONE = 2.0  # Degrees
+            if abs(error) > DEAD_ZONE:
+                speed = abs(control_signal)
+                if speed < 5.0:
+                    speed = 5.0  # Minimum speed to overcome dead zone
+                if control_signal > 0:
+                    self.motor.set_speed(speed)
+                    self.motor.forward()
+                else:
+                    self.motor.set_speed(speed)
+                    self.motor.reverse()
+                print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
             else:
-                self.motor.set_speed(speed)
-                self.motor.reverse()
-
-            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+                self.motor.set_speed(0.0)
+                self.motor.stop()
+                print(f"[{self.name}] Within dead zone. Stopping motor.")
 
         self.last_control_signal = control_signal
 
@@ -313,7 +321,7 @@ def main():
         config = {
             'offset': 5.0,  # Degrees within which to stop the motor
             'max_control_change': 10.0,  # Max change in control signal per loop
-            'min_control_signal': 15.0  # Minimum control signal to move the motor
+            # 'min_control_signal' removed to handle dead zone
         }
 
         # PID constants (further reduced Ki and adjusted Kp, Kd for stability)
@@ -330,7 +338,7 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
-                'target_position': 165.0  # Midpoint of 330 degrees
+                'target_position': 180.0  # Updated target position
             },
             {
                 'id': 3,
@@ -339,7 +347,7 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
-                'target_position': 165.0  # Midpoint of 330 degrees
+                'target_position': 180.0  # Updated target position
             }
         ]
 
