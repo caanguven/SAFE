@@ -83,13 +83,16 @@ class PIDController:
             delta_time = 0.0001
 
         error = self.set_point - current_value
-        error = ((error + 180) % 360) - 180
+        error = ((error + 165) % 330) - 165  # Keep error within -165 to 165 degrees
 
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
 
         derivative = (error - self.previous_error) / delta_time
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
+
+        # Limit control signal to prevent windup
+        control_signal = max(-100, min(100, control_signal))
 
         print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
 
@@ -102,40 +105,34 @@ class PIDController:
 # SpikeFilter Class
 # ==========================
 class SpikeFilter:
-    def __init__(self, high_threshold, low_threshold):
-        self.filter_active = False
+    def __init__(self, high_threshold, low_threshold, max_delta=30):
         self.last_valid_reading = None
         self.high_threshold = high_threshold
         self.low_threshold = low_threshold
+        self.max_delta = max_delta  # Maximum allowed change per reading
 
     def filter(self, new_value):
-        if self.filter_active:
-            if new_value > self.high_threshold or new_value < self.low_threshold:
-                print(f"[SpikeFilter] Exiting dead zone with value: {new_value}")
-                self.filter_active = False
-                self.last_valid_reading = new_value
-                return new_value
-            else:
-                print(f"[SpikeFilter] Discarding invalid reading in dead zone: {new_value}")
+        if self.last_valid_reading is not None:
+            delta = abs(new_value - self.last_valid_reading)
+            # Handle wrap-around
+            if delta > (330 / 2):
+                delta = 330 - delta
+            if delta > self.max_delta:
+                print(f"[SpikeFilter] Detected spike. Delta: {delta}, Value: {new_value} is ignored.")
                 return None
-        else:
-            if self.last_valid_reading is not None:
-                if self.last_valid_reading > self.high_threshold and new_value < self.low_threshold:
-                    print(f"[SpikeFilter] Entering dead zone. Last valid: {self.last_valid_reading}, New: {new_value}")
-                    self.filter_active = True
-                    return None
-            self.last_valid_reading = new_value
-            return new_value
+        self.last_valid_reading = new_value
+        return new_value
 
 # ==========================
 # SawtoothWaveGenerator Class
 # ==========================
 class SawtoothWaveGenerator:
-    def __init__(self, period, amplitude, initial_angle, direction='forward'):
+    def __init__(self, period, amplitude, initial_angle, direction='forward', max_degrees=330):
         self.period = period  # in milliseconds
         self.amplitude = amplitude  # in degrees
         self.initial_angle = initial_angle
         self.direction = direction  # 'forward' or 'reverse'
+        self.max_degrees = max_degrees
         self.start_time = self.current_millis()
 
     def current_millis(self):
@@ -146,9 +143,9 @@ class SawtoothWaveGenerator:
         normalized_wave = (t % self.period) * (self.amplitude / self.period)
 
         if self.direction == 'forward':
-            set_position = (normalized_wave + self.initial_angle) % 360
+            set_position = (normalized_wave + self.initial_angle) % self.max_degrees
         elif self.direction == 'reverse':
-            set_position = (360 - (normalized_wave + self.initial_angle)) % 360
+            set_position = (self.max_degrees - (normalized_wave + self.initial_angle)) % self.max_degrees
         else:
             raise ValueError("Invalid direction. Must be 'forward' or 'reverse'.")
 
@@ -164,7 +161,7 @@ class SawtoothWaveGenerator:
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, spike_filter, config,
-                 name='Motor', initial_position=0, target_position=90,
+                 name='Motor', target_position=0,
                  wave_generator=None, event_reached_position=None, event_start_synchronized_movement=None):
         self.motor = motor
         self.pid_controller = pid_controller
@@ -173,54 +170,49 @@ class MotorController:
         self.spike_filter = spike_filter
         self.config = config
         self.name = name
-        self.initial_position = initial_position
         self.target_position = target_position
         self.wave_generator = wave_generator
         self.event_reached_position = event_reached_position
         self.event_start_synchronized_movement = event_start_synchronized_movement
         self.state = 'initializing'
         self.at_target_position = False
-        self.offset_angle = self.target_position % 360
+        self.last_control_signal = 0
 
     def map_potentiometer_value_to_degrees(self, value):
-        degrees = (value / 1023) * 360
+        degrees = (value / 1023) * 330  # Adjusted to 330 degrees
         print(f"[{self.name}] Mapped ADC Value {value} to {degrees:.2f} degrees")
-        return degrees % 360
+        return degrees  # Keep within 0-330 degrees
 
     def calculate_error(self, set_position, current_angle):
-        error = (set_position - current_angle + 180) % 360 - 180
-        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle}°)")
+        error = set_position - current_angle
+        error = ((error + 165) % 330) - 165  # Keep error within -165 to 165 degrees
+        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle:.2f}°)")
         return error
 
-    def pid_control_motor(self, degrees_value, set_position, initialization=False):
+    def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
         max_control_change = self.config['max_control_change']
-        MIN_CONTROL_SIGNAL = 10
-
-        if degrees_value is None:
-            print(f"[{self.name}] degrees_value is None, cannot compute PID control.")
-            self.motor.stop()
-            return
+        MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
         error = self.calculate_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
         control_signal = self.pid_controller.compute(degrees_value)
 
-        if not hasattr(self, 'last_control_signal'):
-            self.last_control_signal = 0
-
+        # Limit control signal change
         control_signal_change = control_signal - self.last_control_signal
         if abs(control_signal_change) > max_control_change:
             control_signal = self.last_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
 
+        # Clamp control signal
         control_signal = max(-100, min(100, control_signal))
 
         if abs(error) <= OFFSET:
             self.motor.set_speed(0)
             self.motor.stop()
-            print(f"[{self.name}] Motor stopped at target: {degrees_value:.2f} degrees")
             if not self.at_target_position:
-                self.at_target_position = True  # Set flag when target is reached
+                self.at_target_position = True
+                self.event_reached_position.set()
+                print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
         else:
             speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
             if control_signal > 0:
@@ -243,47 +235,46 @@ class MotorController:
                     degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
 
                     if degrees_value is not None:
-                        set_position = self.target_position
-                        self.pid_control_motor(degrees_value, set_position, initialization=True)
+                        self.pid_control_motor(degrees_value, self.target_position)
                     else:
-                        print(f"[{self.name}] degrees_value is None, holding position.")
+                        print(f"[{self.name}] Invalid reading during initialization. Holding position.")
                         self.motor.stop()
 
                     if self.at_target_position:
-                        # Motor has reached target position
-                        self.event_reached_position.set()
                         self.state = 'waiting'
                         print(f"[{self.name}] Reached initial position. Waiting to start synchronized movement.")
 
                 elif self.state == 'waiting':
-                    # Wait for event to start synchronized movement
                     if self.event_start_synchronized_movement.is_set():
                         self.state = 'synchronized_movement'
                         print(f"[{self.name}] Starting synchronized movement.")
+                        # Reset wave generator to synchronize start
+                        if self.wave_generator:
+                            self.wave_generator.start_time = self.wave_generator.current_millis()
                     else:
                         # Hold position
                         self.motor.stop()
                         time.sleep(0.1)
 
                 elif self.state == 'synchronized_movement':
-                    # Perform synchronized movement
                     pot_value = self.adc_reader.read_channel(self.channel)
                     filtered_pot_value = self.spike_filter.filter(pot_value)
                     degrees_value = None if filtered_pot_value is None else self.map_potentiometer_value_to_degrees(filtered_pot_value)
 
-                    if degrees_value is not None:
-                        set_position = (self.wave_generator.get_set_position() + self.offset_angle) % 360
+                    if degrees_value is not None and self.wave_generator:
+                        set_position = self.wave_generator.get_set_position()
                         self.pid_control_motor(degrees_value, set_position)
                     else:
-                        print(f"[{self.name}] degrees_value is None, holding position.")
+                        print(f"[{self.name}] Invalid reading during synchronized movement. Holding position.")
                         self.motor.stop()
+
                 else:
                     # Unknown state
-                    print(f"[{self.name}] Unknown state: {self.state}")
+                    print(f"[{self.name}] Unknown state: {self.state}. Stopping motor.")
                     self.motor.stop()
-                    time.sleep(0.1)
+                    self.state = 'stopped'
 
-                time.sleep(0.1)
+                time.sleep(0.05)  # Increased frequency for better control
 
         except Exception as e:
             print(f"[{self.name}] Exception occurred: {e}")
@@ -298,7 +289,6 @@ class MotorController:
 def run_motor_controller(motor_controller, stop_event):
     motor_controller.control_loop(stop_event)
 
-
 def main():
     try:
         GPIO.setmode(GPIO.BOARD)
@@ -309,13 +299,14 @@ def main():
         # Shared PID configuration and settings
         config = {
             'offset': 5,  # Degrees within which to stop the motor
-            'max_control_change': 5,  # Max change in control signal per loop
+            'max_control_change': 10,  # Max change in control signal per loop
+            'min_control_signal': 10  # Minimum control signal to move the motor
         }
 
         # PID constants (tune as necessary)
-        Kp = 0.5
-        Ki = 0.05
-        Kd = 0.15
+        Kp = 1.0
+        Ki = 0.1
+        Kd = 0.05
 
         # Motor configurations
         motors_info = [
@@ -326,7 +317,7 @@ def main():
                 'in2': 26,
                 'spd': 18,
                 'adc_channel': 0,
-                'target_position': 90  # Target for Motor 1
+                'target_position': 165  # Midpoint of 330 degrees
             },
             {
                 'id': 3,
@@ -335,7 +326,7 @@ def main():
                 'in2': 32,
                 'spd': 33,
                 'adc_channel': 2,
-                'target_position': 270  # Target for Motor 3
+                'target_position': 165  # Midpoint of 330 degrees
             }
         ]
 
@@ -350,23 +341,26 @@ def main():
 
         # Create SawtoothWaveGenerator instance
         wave_generator = SawtoothWaveGenerator(
-            period=5000,  # e.g., 5 seconds
-            amplitude=360,  # full rotation
+            period=5000,  # 5 seconds for a full cycle
+            amplitude=330,  # Full rotation within 330 degrees
             initial_angle=0,
-            direction='forward'
+            direction='forward',
+            max_degrees=330
         )
 
         for motor_info in motors_info:
             # Create individual components for each motor
             motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
             pid_controller = PIDController(Kp, Ki, Kd)
-            spike_filter = SpikeFilter(high_threshold=300, low_threshold=30)
+            spike_filter = SpikeFilter(high_threshold=300, low_threshold=30, max_delta=30)
 
             # Assign the correct event based on motor ID
             if motor_info['id'] == 1:
                 event_reached_position = event_motor1_reached_position
             elif motor_info['id'] == 3:
                 event_reached_position = event_motor3_reached_position
+            else:
+                event_reached_position = None
 
             # Create MotorController instance for each motor
             motor_controller = MotorController(
@@ -391,6 +385,7 @@ def main():
             print(f"[Main] {motor_info['name']} Controller started. Target Position: {motor_info['target_position']}°")
 
         print("[Main] Waiting for motors to reach initial positions...")
+        # Wait for both motors to reach their initial positions
         event_motor1_reached_position.wait()
         event_motor3_reached_position.wait()
 
@@ -403,7 +398,7 @@ def main():
 
         print("[Main] Press Ctrl+C to stop.")
 
-        # Wait for KeyboardInterrupt to stop
+        # Keep the main thread alive
         while True:
             time.sleep(0.1)
 
