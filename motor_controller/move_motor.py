@@ -255,7 +255,7 @@ def main():
         adc_reader = ADCReader(spi_port=0, spi_device=0)
 
         config = {
-            'offset': 5,
+            'offset': 10,
             'max_control_change': 5,
         }
 
