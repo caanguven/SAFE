@@ -3,9 +3,10 @@ import threading
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
+import math
 
 # ==========================
-# ADCReader Class
+# ADCReader Class with Vector-Based Moving Average
 # ==========================
 class ADCReader:
     def __init__(self, spi_port=0, spi_device=0, num_samples=5):
@@ -17,12 +18,22 @@ class ADCReader:
     def read_channel(self, channel):
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
-            self.readings[channel].append(adc_value)
+            degrees = (adc_value / 1023.0) * 330.0  # Adjusted to 330 degrees
+            # Convert degrees to radians for vector averaging
+            radians = math.radians(degrees)
+            self.readings[channel].append(radians)
             if len(self.readings[channel]) > self.num_samples:
                 self.readings[channel].pop(0)
-            average = sum(self.readings[channel]) / len(self.readings[channel])
-            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Average: {average}")
-            return average
+            # Compute average sine and cosine
+            avg_sin = sum(math.sin(r) for r in self.readings[channel]) / len(self.readings[channel])
+            avg_cos = sum(math.cos(r) for r in self.readings[channel]) / len(self.readings[channel])
+            # Compute the averaged angle
+            avg_radians = math.atan2(avg_sin, avg_cos)
+            if avg_radians < 0:
+                avg_radians += 2 * math.pi
+            avg_degrees = math.degrees(avg_radians) % 330.0  # Keep within 0-330 degrees
+            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Average: {avg_degrees:.2f} degrees")
+            return avg_degrees
 
 # ==========================
 # Motor Class
@@ -108,7 +119,8 @@ class PIDController:
         return control_signal
 
     @staticmethod
-    def wrap_error(error, max_range=330):
+    def wrap_error(error, max_range=330.0):
+        # Wrap error to -max_range/2 to +max_range/2
         if error > max_range / 2:
             error -= max_range
         elif error < -max_range / 2:
@@ -119,7 +131,7 @@ class PIDController:
 # SawtoothWaveGenerator Class
 # ==========================
 class SawtoothWaveGenerator:
-    def __init__(self, period, amplitude, initial_angle, direction='forward', max_degrees=330):
+    def __init__(self, period, amplitude, initial_angle, direction='forward', max_degrees=330.0):
         self.period = period  # in milliseconds
         self.amplitude = amplitude  # in degrees
         self.initial_angle = initial_angle
@@ -170,8 +182,8 @@ class MotorController:
         self.last_control_signal = 0
 
     def map_potentiometer_value_to_degrees(self, value):
-        degrees = (value / 1023) * 330  # Adjusted to 330 degrees
-        print(f"[{self.name}] Mapped ADC Value {value} to {degrees:.2f} degrees")
+        degrees = value  # already mapped in ADCReader
+        print(f"[{self.name}] Mapped ADC Average to {degrees:.2f} degrees")
         return degrees  # Keep within 0-330 degrees
 
     def calculate_error(self, set_position, current_angle):
@@ -239,8 +251,7 @@ class MotorController:
                         if self.wave_generator:
                             self.wave_generator.start_time = self.wave_generator.current_millis()
                     else:
-                        # Hold position
-                        self.motor.stop()
+                        # Continue trying to reach target
                         time.sleep(0.1)
 
                 elif self.state == 'synchronized_movement':
@@ -260,7 +271,7 @@ class MotorController:
                     self.motor.stop()
                     self.state = 'stopped'
 
-                time.sleep(0.05)  # Increased frequency for better control
+                time.sleep(0.05)  # Control loop frequency
 
         except Exception as e:
             print(f"[{self.name}] Exception occurred: {e}")
@@ -271,7 +282,6 @@ class MotorController:
 # ==========================
 # Main Function
 # ==========================
-
 def run_motor_controller(motor_controller, stop_event):
     motor_controller.control_loop(stop_event)
 
@@ -280,7 +290,7 @@ def main():
         GPIO.setmode(GPIO.BOARD)
 
         # Create ADCReader instance for reading from ADC channels
-        adc_reader = ADCReader(spi_port=0, spi_device=0)
+        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=5)
 
         # Shared PID configuration and settings
         config = {
@@ -331,7 +341,7 @@ def main():
             amplitude=330,  # Full rotation within 330 degrees
             initial_angle=0,
             direction='forward',
-            max_degrees=330
+            max_degrees=330.0
         )
 
         for motor_info in motors_info:
