@@ -230,7 +230,7 @@ def main():
         }
 
         # PID constants (tune as necessary)
-        Kp = 0.06
+        Kp = 0.1
         Ki = 0.1
         Kd = 0.05
 
