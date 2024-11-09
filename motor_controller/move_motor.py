@@ -43,15 +43,14 @@ motor3_pwm.start(0)
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, initial_position, offset):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position):
         self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
         self.adc_channel = adc_channel
-        self.position = initial_position
-        self.offset = offset
-        self.target_position = initial_position + offset
+        self.target_position = target_position
+        self.position = 0  # Initial position
         self.in_dead_zone = False
 
     def read_adc_position(self):
@@ -99,17 +98,16 @@ class MotorController:
             self.pwm.ChangeDutyCycle(min(100, max(30, abs(error))))
             return False
 
-def synchronize_motors(motor1, motor3, duration):
+def synchronized_sawtooth(motor1, motor3, duration):
     start_time = time.time()
     while True:
         elapsed_time = time.time() - start_time
-        wave_step = (elapsed_time % duration) * (330.0 / duration)
-        
-        # Set targets based on sawtooth wave pattern with respective offsets
-        motor1.target_position = (motor1.position + wave_step) % 330
-        motor3.target_position = (motor3.position + wave_step + motor3.offset) % 330
+        wave_position = (elapsed_time % duration) * (330.0 / duration)
 
-        # Update positions
+        # Set incremental targets based on sawtooth wave pattern, with initial target positions maintained
+        motor1.target_position = (motor1.target_position + wave_position) % 330
+        motor3.target_position = (motor3.target_position + wave_position) % 330
+
         motor1_reached = motor1.move_toward_target()
         motor3_reached = motor3.move_toward_target()
 
@@ -121,8 +119,7 @@ def synchronize_motors(motor1, motor3, duration):
         if motor1_reached and motor3_reached:
             break
 
-        # Small delay for loop control
-        time.sleep(0.1)
+        time.sleep(0.1)  # Small delay for loop control
 
 # Parse command-line arguments for target positions
 parser = argparse.ArgumentParser(description="Move motors to target positions.")
@@ -130,23 +127,24 @@ parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Targ
 parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 3 (default: 270)")
 args = parser.parse_args()
 
-motor1_target = args.motor1_target
-motor3_target = args.motor3_target
-
 try:
     motor1_controller = MotorController(
         name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
-        adc_channel=MOTOR1_ADC_CHANNEL, initial_position=motor1_target, offset=0
+        adc_channel=MOTOR1_ADC_CHANNEL, target_position=args.motor1_target
     )
     motor3_controller = MotorController(
         name="Motor 3", in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
-        adc_channel=MOTOR3_ADC_CHANNEL, initial_position=motor3_target, offset=180  # Adjust offset as needed
+        adc_channel=MOTOR3_ADC_CHANNEL, target_position=args.motor3_target
     )
 
-    # Start sawtooth wave pattern
+    # Move both motors to initial positions
+    print(f"Moving to initial positions: Motor 1 to {args.motor1_target}°, Motor 3 to {args.motor3_target}°")
+    motor1_controller.move_toward_target()
+    motor3_controller.move_toward_target()
+
     print("Starting synchronized sawtooth wave pattern for both motors")
     while True:
-        synchronize_motors(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
+        synchronized_sawtooth(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
