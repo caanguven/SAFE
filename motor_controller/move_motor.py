@@ -3,12 +3,14 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
+import math
 
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
 DEAD_ZONE_THRESHOLD = 50  # Value to detect entry/exit from dead zone
+SAWTOOTH_PERIOD = 5  # Seconds for a full sawtooth cycle
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -75,7 +77,7 @@ class PIDController:
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, target_position, tolerance=5):
-        self.name = name  # Name to identify motor (e.g., "Motor 1" or "Motor 3")
+        self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
@@ -105,20 +107,16 @@ class MotorController:
         print(f"[{self.name}] Motor set to rotate {direction}...")
 
     def update_position(self):
-        # Read ADC position
         degrees, adc_value = self.read_adc_position()
 
-        # Detect if we're in the dead zone
         if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
             print(f"[{self.name}] In dead zone, estimating position...")
             self.in_dead_zone = True
-            # Estimate the position based on direction and previous valid position
             if self.direction == 'forward':
-                self.position = (self.position + 10) % 330  # Increment by an estimated step size
+                self.position = (self.position + 10) % 330
             else:
                 self.position = (self.position - 10) % 330
         else:
-            # We are not in the dead zone, update the actual position
             self.position = degrees
             self.in_dead_zone = False
             self.last_valid_position = self.position
@@ -131,7 +129,6 @@ class MotorController:
             current_position = self.update_position()
             error = self.target_position - current_position
 
-            # Normalize error for circular movement (-165 to 165 range)
             if error > 165:
                 error -= 330
             elif error < -165:
@@ -139,27 +136,21 @@ class MotorController:
 
             print(f"[{self.name}] Target: {self.target_position}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
 
-            # If within tolerance, stop the motor
             if abs(error) <= self.tolerance:
                 self.stop_motor()
                 print(f"[{self.name}] Reached target position: {self.target_position}°")
                 break
 
-            # Use PID to compute control signal
             control_signal = self.pid.compute(error)
-
-            # Determine motor direction based on control signal
             if control_signal > 0:
                 self.set_motor_direction('forward')
             else:
                 self.set_motor_direction('backward')
 
-            # Adjust speed proportional to the control signal with a minimum threshold
             speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
             print(f"[{self.name}] Setting speed: {speed}%")
 
-            # Short delay for control loop frequency
             time.sleep(0.1)
 
     def stop_motor(self):
@@ -168,18 +159,27 @@ class MotorController:
         self.pwm.ChangeDutyCycle(0)
         print(f"[{self.name}] Motor stopped.")
 
+    def follow_sawtooth_wave(self, initial_position):
+        print(f"[{self.name}] Following sawtooth wave pattern starting at {initial_position}°")
+        start_time = time.time()
+        while True:
+            elapsed_time = time.time() - start_time
+            wave_position = (elapsed_time % SAWTOOTH_PERIOD) * (330.0 / SAWTOOTH_PERIOD)
+            target_position = (initial_position + wave_position) % 330
+            self.target_position = target_position
+            self.move_to_target()
+            time.sleep(0.1)
+
 # Parse command-line arguments for target positions
 parser = argparse.ArgumentParser(description="Move motors to target positions.")
 parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 (default: 90)")
 parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 3 (default: 270)")
 args = parser.parse_args()
 
-# Get target positions from CLI or default to 90 and 270
 motor1_target = args.motor1_target
 motor3_target = args.motor3_target
 
 try:
-    # Initialize MotorController for Motor 1 and Motor 3 with CLI-specified or default targets
     motor1_controller = MotorController(
         name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
         adc_channel=MOTOR1_ADC_CHANNEL, target_position=motor1_target, tolerance=5
@@ -189,16 +189,29 @@ try:
         adc_channel=MOTOR3_ADC_CHANNEL, target_position=motor3_target, tolerance=5
     )
 
-    # Start moving both motors toward their target positions
     print(f"Starting movement: Motor 1 to {motor1_target}° and Motor 3 to {motor3_target}°")
     motor1_controller.move_to_target()
     motor3_controller.move_to_target()
+
+    # Pause and countdown after reaching target positions
+    print("Orientation complete. Pausing for 5 seconds.")
+    for i in range(5, 0, -1):
+        print(f"Countdown: {i} seconds")
+        time.sleep(1)
+
+    # Start sawtooth wave pattern with initial positions for each motor
+    motor1_initial_position = motor1_target
+    motor3_initial_position = motor3_target
+    print("Starting sawtooth wave pattern")
+
+    # Each motor follows the sawtooth wave while maintaining their offset
+    motor1_controller.follow_sawtooth_wave(motor1_initial_position)
+    motor3_controller.follow_sawtooth_wave(motor3_initial_position)
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
 
 finally:
-    # Stop both motors and cleanup GPIO
     motor1_controller.stop_motor()
     motor3_controller.stop_motor()
     motor1_pwm.stop()
