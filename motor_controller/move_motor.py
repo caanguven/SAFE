@@ -19,7 +19,6 @@ class ADCReader:
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
             degrees_330 = (adc_value / 1023.0) * 330.0  # Map ADC values to 0-330 degrees
-            # Enhanced Logging
             print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Degrees_330: {degrees_330:.2f}")
             return degrees_330
 
@@ -170,10 +169,9 @@ class MotorController:
         # Move forward with the computed control signal
         self.motor.forward(control_signal)
         print(f"[{self.name}] Moving forward: Potentiometer Value: {degrees_value:.2f}°, "
-            f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+              f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
 
         self.last_control_signal = control_signal
-
 
     def control_loop(self, stop_event):
         try:
@@ -226,11 +224,11 @@ def main():
         config = {
             'offset': 5,                # Degrees within which to stop the motor
             'max_control_change': 10,   # Max change in control signal per loop
-            'min_control_signal': 10    # Minimum control signal to move the motor (unused in forward-only)
+            'min_control_signal': 10    # Minimum control signal to move the motor
         }
 
         # PID constants (tune as necessary)
-        Kp = 0.1
+        Kp = 0.06
         Ki = 0.1
         Kd = 0.05
 
