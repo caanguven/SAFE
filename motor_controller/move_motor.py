@@ -18,9 +18,11 @@ class ADCReader:
     def read_channel(self, channel):
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
-            degrees = (adc_value / 1023.0) * 330.0  # Adjusted to 330 degrees
+            degrees_330 = (adc_value / 1023.0) * 330.0  # Map ADC values to 0-330 degrees
+            # Map degrees to full circle (0-360 degrees) for proper averaging
+            degrees_full_circle = (degrees_330 / 330.0) * 360.0
             # Convert degrees to radians for vector averaging
-            radians = math.radians(degrees)
+            radians = math.radians(degrees_full_circle)
             self.readings[channel].append(radians)
             if len(self.readings[channel]) > self.num_samples:
                 self.readings[channel].pop(0)
@@ -31,7 +33,9 @@ class ADCReader:
             avg_radians = math.atan2(avg_sin, avg_cos)
             if avg_radians < 0:
                 avg_radians += 2 * math.pi
-            avg_degrees = math.degrees(avg_radians) % 330.0  # Keep within 0-330 degrees
+            avg_degrees_full_circle = math.degrees(avg_radians) % 360.0
+            # Map averaged degrees back to 0-330 degrees
+            avg_degrees = (avg_degrees_full_circle / 360.0) * 330.0
             print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Average: {avg_degrees:.2f} degrees")
             return avg_degrees
 
@@ -99,9 +103,7 @@ class PIDController:
         if delta_time <= 0.0:
             delta_time = 0.0001
 
-        error = self.set_point - current_value
-        error = self.wrap_error(error)
-
+        error = self.calculate_wrapped_error(self.set_point, current_value)
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
 
@@ -119,12 +121,13 @@ class PIDController:
         return control_signal
 
     @staticmethod
-    def wrap_error(error, max_range=330.0):
-        # Wrap error to -max_range/2 to +max_range/2
-        if error > max_range / 2:
-            error -= max_range
-        elif error < -max_range / 2:
-            error += max_range
+    def calculate_wrapped_error(set_point, current_value, max_angle=330.0):
+        # Calculate minimal difference considering wraparound
+        error = set_point - current_value
+        if error > max_angle / 2:
+            error -= max_angle
+        elif error < -max_angle / 2:
+            error += max_angle
         return error
 
 # ==========================
@@ -186,18 +189,12 @@ class MotorController:
         print(f"[{self.name}] Mapped ADC Average to {degrees:.2f} degrees")
         return degrees  # Keep within 0-330 degrees
 
-    def calculate_error(self, set_position, current_angle):
-        error = set_position - current_angle
-        error = self.pid_controller.wrap_error(error)
-        print(f"[{self.name}] Calculated Error: {error:.2f}° (Set Position: {set_position}°, Current Angle: {current_angle:.2f}°)")
-        return error
-
     def pid_control_motor(self, degrees_value, set_position):
         OFFSET = self.config['offset']
         max_control_change = self.config['max_control_change']
         MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
-        error = self.calculate_error(set_position, degrees_value)
+        error = self.pid_controller.calculate_wrapped_error(set_position, degrees_value)
         self.pid_controller.set_point = set_position
         control_signal = self.pid_controller.compute(degrees_value)
 
@@ -348,7 +345,6 @@ def main():
             # Create individual components for each motor
             motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
             pid_controller = PIDController(Kp, Ki, Kd)
-            # SpikeFilter removed
 
             # Assign the correct event based on motor ID
             if motor_info['id'] == 1:
