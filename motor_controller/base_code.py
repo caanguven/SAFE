@@ -4,7 +4,7 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
 
-#Constants for SPI and ADC
+# Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
@@ -44,37 +44,6 @@ motor3_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-class SpikeFilter:
-    def __init__(self, name):
-        self.filter_active = False
-        self.last_valid_reading = None
-        self.name = name  # For debugging purposes
-
-    def filter(self, new_value):
-        # If the filter is active, we are in the dead zone
-        if self.filter_active:
-            # Discard readings between 150 and 700
-            if 150 <= new_value <= 700:
-                print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                return None
-            else:
-                # Valid reading after dead zone
-                print(f"[{self.name}] Valid reading after dead zone: {new_value}")
-                self.filter_active = False
-                self.last_valid_reading = new_value
-                return new_value
-        else:
-            # Not currently filtering
-            if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
-                # Sudden drop into dead zone detected
-                print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
-                self.filter_active = True
-                return None
-            else:
-                # Valid reading
-                self.last_valid_reading = new_value
-                return new_value
-
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
         self.Kp = Kp
@@ -113,23 +82,15 @@ class MotorController:
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
+        self.pid = PIDController(Kp=0.7, Ki=0.1, Kd=0.05)
         self.start_time = None
-        self.spike_filter = SpikeFilter(name)
         
     def read_position(self):
-        # Read raw ADC value
-        raw_value = mcp.read_adc(self.adc_channel)
-        
-        # Apply spike filter
-        filtered_value = self.spike_filter.filter(raw_value)
-        
-        if filtered_value is None:
-            # Use last valid position if in dead zone
+        adc_value = mcp.read_adc(self.adc_channel)
+        if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
             return self.last_valid_position if self.last_valid_position is not None else 0
         
-        # Convert filtered ADC value to degrees
-        degrees = (filtered_value / ADC_MAX) * 330.0
+        degrees = (adc_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
         return degrees
 
@@ -200,28 +161,15 @@ def main():
 
         # Initial calibration
         print("Starting initial calibration...")
-        calibration_start = time.time()
         while True:
             m1_done = motor1.move_to_position(args.motor1_target)
             m3_done = motor3.move_to_position(args.motor3_target)
             
-            # Print calibration progress
-            m1_pos = motor1.read_position()
-            m3_pos = motor3.read_position()
-            print(f"\rCalibrating - M1: {m1_pos:.1f}° / {args.motor1_target}°, "
-                  f"M3: {m3_pos:.1f}° / {args.motor3_target}°", end='')
-            
             if m1_done and m3_done:
                 break
-                
-            # Timeout after 30 seconds
-            if time.time() - calibration_start > 30:
-                print("\nCalibration timeout! Check motor connections.")
-                raise TimeoutError("Calibration timeout")
-                
             time.sleep(0.05)
 
-        print("\nCalibration complete. Stopping for 5 seconds...")
+        print("Calibration complete. Stopping for 5 seconds...")
         motor1.stop_motor()
         motor3.stop_motor()
         time.sleep(5)
@@ -247,8 +195,6 @@ def main():
 
     except KeyboardInterrupt:
         print("\nProgram interrupted by user")
-    except Exception as e:
-        print(f"\nError: {e}")
     finally:
         motor1.stop_motor()
         motor3.stop_motor()
