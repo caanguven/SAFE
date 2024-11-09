@@ -3,27 +3,39 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 
-# Constants
+# Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
-MOTOR_IN1 = 7
-MOTOR_IN2 = 26
-MOTOR_SPD = 18
-POTENTIOMETER_CHANNEL = 0
-
-# ADC range and dead zone threshold
 ADC_MAX = 1023
 DEAD_ZONE_THRESHOLD = 50  # Value to detect entry/exit from dead zone
 
-# GPIO and PWM setup for motor control
+# GPIO Pins for Motor 1
+MOTOR1_IN1 = 7
+MOTOR1_IN2 = 26
+MOTOR1_SPD = 18
+MOTOR1_ADC_CHANNEL = 0
+
+# GPIO Pins for Motor 3
+MOTOR3_IN1 = 11
+MOTOR3_IN2 = 32
+MOTOR3_SPD = 33
+MOTOR3_ADC_CHANNEL = 2
+
+# GPIO setup
 GPIO.setmode(GPIO.BOARD)
-GPIO.setup(MOTOR_IN1, GPIO.OUT)
-GPIO.setup(MOTOR_IN2, GPIO.OUT)
-GPIO.setup(MOTOR_SPD, GPIO.OUT)
+GPIO.setup(MOTOR1_IN1, GPIO.OUT)
+GPIO.setup(MOTOR1_IN2, GPIO.OUT)
+GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+GPIO.setup(MOTOR3_SPD, GPIO.OUT)
 
 # Set up PWM for motor speed control
-motor_pwm = GPIO.PWM(MOTOR_SPD, 1000)  # 1000 Hz frequency
-motor_pwm.start(0)  # Start with 0% speed initially
+motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)  # 1000 Hz frequency
+motor1_pwm.start(0)  # Start with 0% speed initially
+
+motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+motor3_pwm.start(0)
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -61,11 +73,14 @@ class PIDController:
         return control_signal
 
 class MotorController:
-    def __init__(self, adc_channel, target_position, tolerance=5):
+    def __init__(self, in1, in2, pwm, adc_channel, target_position, tolerance=5):
+        self.in1 = in1
+        self.in2 = in2
+        self.pwm = pwm
         self.adc_channel = adc_channel
         self.target_position = target_position
-        self.tolerance = tolerance  # Degrees of error allowed at the target
-        self.position = 0  # Initial position
+        self.tolerance = tolerance
+        self.position = 0
         self.direction = 'forward'
         self.in_dead_zone = False
         self.last_valid_position = None
@@ -80,11 +95,11 @@ class MotorController:
     def set_motor_direction(self, direction):
         self.direction = direction
         if direction == 'forward':
-            GPIO.output(MOTOR_IN1, GPIO.HIGH)
-            GPIO.output(MOTOR_IN2, GPIO.LOW)
+            GPIO.output(self.in1, GPIO.HIGH)
+            GPIO.output(self.in2, GPIO.LOW)
         elif direction == 'backward':
-            GPIO.output(MOTOR_IN1, GPIO.LOW)
-            GPIO.output(MOTOR_IN2, GPIO.HIGH)
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.HIGH)
         print(f"Motor set to rotate {direction}...")
 
     def update_position(self):
@@ -139,31 +154,42 @@ class MotorController:
 
             # Adjust speed proportional to the control signal with a minimum threshold
             speed = min(100, max(30, abs(control_signal)))
-            motor_pwm.ChangeDutyCycle(speed)
+            self.pwm.ChangeDutyCycle(speed)
             print(f"[MotorController] Setting speed: {speed}%")
 
             # Short delay for control loop frequency
             time.sleep(0.1)
 
     def stop_motor(self):
-        GPIO.output(MOTOR_IN1, GPIO.LOW)
-        GPIO.output(MOTOR_IN2, GPIO.LOW)
-        motor_pwm.ChangeDutyCycle(0)
+        GPIO.output(self.in1, GPIO.LOW)
+        GPIO.output(self.in2, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(0)
         print("[MotorController] Motor stopped.")
 
 try:
-    # Initialize MotorController with target position and tolerance
-    controller = MotorController(adc_channel=POTENTIOMETER_CHANNEL, target_position=90, tolerance=5)
+    # Initialize MotorController for Motor 1 and Motor 3
+    motor1_controller = MotorController(
+        in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
+        adc_channel=MOTOR1_ADC_CHANNEL, target_position=90, tolerance=5
+    )
+    motor3_controller = MotorController(
+        in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
+        adc_channel=MOTOR3_ADC_CHANNEL, target_position=270, tolerance=5
+    )
 
-    # Start moving towards the target position
-    controller.move_to_target()
+    # Start moving both motors toward their target positions
+    print("Moving Motor 1 to 90° and Motor 3 to 270°")
+    motor1_controller.move_to_target()
+    motor3_controller.move_to_target()
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
 
 finally:
-    # Stop motor and cleanup GPIO
-    controller.stop_motor()
-    motor_pwm.stop()
+    # Stop both motors and cleanup GPIO
+    motor1_controller.stop_motor()
+    motor3_controller.stop_motor()
+    motor1_pwm.stop()
+    motor3_pwm.stop()
     GPIO.cleanup()
     print("GPIO cleaned up")
