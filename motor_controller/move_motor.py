@@ -6,19 +6,19 @@ import Adafruit_MCP3008
 import math
 
 # ==========================
-# ADCReader Class with Enhanced Logging
+# ADCReader Class
 # ==========================
 class ADCReader:
     def __init__(self, spi_port=0, spi_device=0, num_samples=1):
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(spi_port, spi_device))
         self.lock = threading.Lock()
         self.num_samples = num_samples
-        self.readings = {channel: [] for channel in range(8)}  # Assuming 8 channels
+        self.readings = {channel: [] for channel in range(8)}
 
     def read_channel(self, channel):
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
-            degrees_330 = (adc_value / 1023.0) * 330.0  # Map ADC values to 0-330 degrees
+            degrees_330 = (adc_value / 1023.0) * 330.0
             print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Degrees_330: {degrees_330:.2f}")
             return degrees_330
 
@@ -32,17 +32,15 @@ class Motor:
         self.spd_pin = spd_pin
         self.pwm_frequency = pwm_frequency
 
-        # Setup GPIO pins
         GPIO.setup(self.in1_pin, GPIO.OUT)
         GPIO.setup(self.in2_pin, GPIO.OUT)
         GPIO.setup(self.spd_pin, GPIO.OUT)
 
-        # Setup PWM
         self.pwm = GPIO.PWM(self.spd_pin, self.pwm_frequency)
-        self.pwm.start(0)  # Start with 0% duty cycle (motor off)
+        self.pwm.start(0)
 
     def set_speed(self, duty_cycle):
-        duty_cycle = max(0, min(100, duty_cycle))  # Clamp duty cycle to [0, 100]
+        duty_cycle = max(0, min(100, duty_cycle))
         self.pwm.ChangeDutyCycle(duty_cycle)
         print(f"[Motor] Set speed to {duty_cycle:.2f}% duty cycle")
 
@@ -63,7 +61,7 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class with Forward-Only Control
+# PIDController Class
 # ==========================
 class PIDController:
     def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000, max_angle=330.0):
@@ -81,8 +79,9 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001  # Prevent division by zero
+            delta_time = 0.0001
 
+        # Proper error wrapping calculation
         error = self.calculate_wrapped_error(self.set_point, current_value)
         self.integral += error * delta_time
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
@@ -90,11 +89,11 @@ class PIDController:
         derivative = (error - self.previous_error) / delta_time
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
-        # Limit control signal to prevent windup
-        control_signal = max(0, min(100, control_signal))  # Only positive control signals
+        # Clamp control signal to be within the motor's operable range
+        control_signal = max(10, min(100, control_signal))  # Ensure a minimum to overcome stiction
 
-        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, "
-              f"Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
+        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, "
+              f"Control Signal: {control_signal:.2f}")
 
         self.previous_error = error
         self.last_time = current_time
@@ -107,13 +106,10 @@ class PIDController:
             error -= self.max_angle
         elif error < -self.max_angle / 2:
             error += self.max_angle
-        # For forward-only control, consider only positive errors
-        if error < 0:
-            error = 0
         return error
 
 # ==========================
-# MotorController Class (Forward-Only)
+# MotorController Class
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, config,
@@ -126,7 +122,7 @@ class MotorController:
         self.config = config
         self.name = name
         self.target_position = target_position
-        self.max_angle = max_angle  # Added max_angle attribute here
+        self.max_angle = max_angle
         self.event_reached_position = event_reached_position
         self.state = 'moving_to_target'
         self.at_target_position = False
@@ -137,12 +133,8 @@ class MotorController:
         max_control_change = self.config['max_control_change']
         MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
-        # Calculate the error directly as the shortest path to the target within 0-330 degrees range
-        error = self.target_position - degrees_value
-        if error < 0:
-            error += self.max_angle  # Ensure the motor understands to move forward if needed
-
-        # Check if within the dead zone (target ± offset)
+        error = self.pid_controller.calculate_wrapped_error(self.target_position, degrees_value)
+        
         if abs(error) <= OFFSET:
             self.motor.stop()
             if not self.at_target_position:
@@ -150,23 +142,19 @@ class MotorController:
                 if self.event_reached_position:
                     self.event_reached_position.set()
                 print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
-            return  # Exit early since we’re in the dead zone
+            return
 
-        # Update the set point for the PID controller and compute control signal
         self.pid_controller.set_point = self.target_position
         control_signal = self.pid_controller.compute(degrees_value)
 
-        # Limit control signal change
         control_signal_change = control_signal - self.last_control_signal
         if control_signal_change > max_control_change:
             control_signal = self.last_control_signal + max_control_change
         elif control_signal_change < -max_control_change:
             control_signal = self.last_control_signal - max_control_change
 
-        # Clamp control signal to [MIN_CONTROL_SIGNAL, 100] to ensure minimum speed
         control_signal = max(MIN_CONTROL_SIGNAL, min(100, control_signal))
 
-        # Move forward with the computed control signal
         self.motor.forward(control_signal)
         print(f"[{self.name}] Moving forward: Potentiometer Value: {degrees_value:.2f}°, "
               f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
@@ -186,15 +174,12 @@ class MotorController:
                         self.state = 'stopped'
                         print(f"[{self.name}] Motor has stopped at target position.")
                 elif self.state == 'stopped':
-                    # Remain stopped
                     time.sleep(0.1)
                 else:
-                    # Unknown state
-                    print(f"[{self.name}] Unknown state: {self.state}. Stopping motor.")
                     self.motor.stop()
                     self.state = 'stopped'
 
-                time.sleep(0.05)  # Control loop frequency
+                time.sleep(0.05)
 
         except Exception as e:
             print(f"[{self.name}] Exception occurred: {e}")
@@ -203,9 +188,9 @@ class MotorController:
             print(f"[{self.name}] Motor GPIO cleaned up")
 
     def map_potentiometer_value_to_degrees(self, value):
-        degrees = value  # Already mapped in ADCReader
+        degrees = value
         print(f"[{self.name}] Current Position: {degrees:.2f} degrees")
-        return degrees  # Keep within 0-330 degrees
+        return degrees
 
 # ==========================
 # Main Function
@@ -217,22 +202,18 @@ def main():
     try:
         GPIO.setmode(GPIO.BOARD)
 
-        # Create ADCReader instance for reading from ADC channel 0
-        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=1)  # No averaging for simplicity
+        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=1)
 
-        # Configuration for Motor 1
         config = {
-            'offset': 5,                # Degrees within which to stop the motor
-            'max_control_change': 10,   # Max change in control signal per loop
-            'min_control_signal': 10    # Minimum control signal to move the motor
+            'offset': 5,
+            'max_control_change': 10,
+            'min_control_signal': 10
         }
 
-        # PID constants (tune as necessary)
         Kp = 0.06
         Ki = 0.1
         Kd = 0.05
 
-        # Motor 1 configuration
         motor_info = {
             'id': 1,
             'name': 'Motor 1',
@@ -240,10 +221,9 @@ def main():
             'in2': 26,
             'spd': 18,
             'adc_channel': 0,
-            'target_position': 165  # Midpoint of 330 degrees
+            'target_position': 165
         }
 
-        # Create Motor 1 components
         motor1 = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
         pid_controller1 = PIDController(Kp, Ki, Kd, set_point=motor_info['target_position'], max_angle=330.0)
         motor_controller1 = MotorController(
@@ -254,10 +234,9 @@ def main():
             config=config,
             name=motor_info['name'],
             target_position=motor_info['target_position'],
-            max_angle=330.0  # Added max_angle here
+            max_angle=330.0
         )
 
-        # Create and start thread for Motor 1 controller
         stop_event = threading.Event()
         thread_motor1 = threading.Thread(target=run_motor_controller, args=(motor_controller1, stop_event))
         thread_motor1.start()
@@ -265,14 +244,13 @@ def main():
 
         print("[Main] Press Ctrl+C to stop.")
 
-        # Keep the main thread alive
         while True:
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\n[Main] Program stopped by user")
-        stop_event.set()  # Signal thread to stop
-        thread_motor1.join()  # Wait for thread to finish
+        stop_event.set()
+        thread_motor1.join()
     except Exception as e:
         print(f"[Main] Exception occurred: {e}")
     finally:
