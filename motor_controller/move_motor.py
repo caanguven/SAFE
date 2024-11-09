@@ -2,6 +2,7 @@ import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
+import argparse
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -167,19 +168,29 @@ class MotorController:
         self.pwm.ChangeDutyCycle(0)
         print(f"[{self.name}] Motor stopped.")
 
+# Parse command-line arguments for target positions
+parser = argparse.ArgumentParser(description="Move motors to target positions.")
+parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 (default: 90)")
+parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 3 (default: 270)")
+args = parser.parse_args()
+
+# Get target positions from CLI or default to 90 and 270
+motor1_target = args.motor1_target
+motor3_target = args.motor3_target
+
 try:
-    # Initialize MotorController for Motor 1 and Motor 3 with unique identifiers
+    # Initialize MotorController for Motor 1 and Motor 3 with CLI-specified or default targets
     motor1_controller = MotorController(
         name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
-        adc_channel=MOTOR1_ADC_CHANNEL, target_position=90, tolerance=5
+        adc_channel=MOTOR1_ADC_CHANNEL, target_position=motor1_target, tolerance=5
     )
     motor3_controller = MotorController(
         name="Motor 3", in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
-        adc_channel=MOTOR3_ADC_CHANNEL, target_position=270, tolerance=5
+        adc_channel=MOTOR3_ADC_CHANNEL, target_position=motor3_target, tolerance=5
     )
 
     # Start moving both motors toward their target positions
-    print("Starting movement: Motor 1 to 90° and Motor 3 to 270°")
+    print(f"Starting movement: Motor 1 to {motor1_target}° and Motor 3 to {motor3_target}°")
     motor1_controller.move_to_target()
     motor3_controller.move_to_target()
 
