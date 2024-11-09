@@ -118,7 +118,7 @@ class PIDController:
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, config,
-                 name='Motor', target_position=0,
+                 name='Motor', target_position=0, max_angle=330.0,
                  event_reached_position=None):
         self.motor = motor
         self.pid_controller = pid_controller
@@ -127,6 +127,7 @@ class MotorController:
         self.config = config
         self.name = name
         self.target_position = target_position
+        self.max_angle = max_angle  # Added max_angle attribute here
         self.event_reached_position = event_reached_position
         self.state = 'moving_to_target'
         self.at_target_position = False
@@ -259,7 +260,8 @@ def main():
             channel=motor_info['adc_channel'],
             config=config,
             name=motor_info['name'],
-            target_position=motor_info['target_position']
+            target_position=motor_info['target_position'],
+            max_angle=330.0  # Added max_angle here
         )
 
         # Create and start thread for Motor 1 controller
