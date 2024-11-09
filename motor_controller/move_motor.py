@@ -9,8 +9,8 @@ import math
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
-DEAD_ZONE_THRESHOLD = 50  # Value to detect entry/exit from dead zone
-SAWTOOTH_PERIOD = 5  # Seconds for a full sawtooth cycle
+DEAD_ZONE_THRESHOLD = 50
+SAWTOOTH_PERIOD = 5
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -34,9 +34,8 @@ GPIO.setup(MOTOR3_IN2, GPIO.OUT)
 GPIO.setup(MOTOR3_SPD, GPIO.OUT)
 
 # Set up PWM for motor speed control
-motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)  # 1000 Hz frequency
-motor1_pwm.start(0)  # Start with 0% speed initially
-
+motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
+motor1_pwm.start(0)
 motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
 motor3_pwm.start(0)
 
@@ -58,17 +57,10 @@ class PIDController:
         if delta_time <= 0.0:
             delta_time = 0.0001
 
-        # Proportional term
         proportional = self.Kp * error
-
-        # Integral term
         self.integral += error * delta_time
         integral = self.Ki * self.integral
-
-        # Derivative term
         derivative = self.Kd * (error - self.previous_error) / delta_time
-
-        # Control signal
         control_signal = proportional + integral + derivative
         self.previous_error = error
         self.last_time = current_time
@@ -88,10 +80,10 @@ class MotorController:
         self.direction = 'forward'
         self.in_dead_zone = False
         self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)  # PID coefficients
+        self.dead_zone_counter = 0  # Counter to slow position updates in dead zone
+        self.pid = PIDController(Kp=0.6, Ki=0.1, Kd=0.02)  # Adjusted PID coefficients
 
     def read_adc_position(self):
-        # Read ADC and convert to position within 330 degrees
         adc_value = mcp.read_adc(self.adc_channel)
         degrees = (adc_value / ADC_MAX) * 330.0
         return degrees, adc_value
@@ -109,14 +101,23 @@ class MotorController:
     def update_position(self):
         degrees, adc_value = self.read_adc_position()
 
+        # Check for dead zone
         if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
             print(f"[{self.name}] In dead zone, estimating position...")
-            self.in_dead_zone = True
-            if self.direction == 'forward':
-                self.position = (self.position + 10) % 330
+
+            # Use a delay counter to slow down dead zone updates
+            if self.dead_zone_counter >= 2:
+                if self.direction == 'forward':
+                    self.position = (self.position + 5) % 330
+                else:
+                    self.position = (self.position - 5) % 330
+                self.dead_zone_counter = 0
             else:
-                self.position = (self.position - 10) % 330
+                self.dead_zone_counter += 1
+
+            self.in_dead_zone = True
         else:
+            # Valid position reading
             self.position = degrees
             self.in_dead_zone = False
             self.last_valid_position = self.position
@@ -129,6 +130,7 @@ class MotorController:
             current_position = self.update_position()
             error = self.target_position - current_position
 
+            # Normalize error for circular movement (-165 to 165 range)
             if error > 165:
                 error -= 330
             elif error < -165:
@@ -136,21 +138,19 @@ class MotorController:
 
             print(f"[{self.name}] Target: {self.target_position}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
 
+            # Stop if within tolerance
             if abs(error) <= self.tolerance:
                 self.stop_motor()
                 print(f"[{self.name}] Reached target position: {self.target_position}°")
                 break
 
             control_signal = self.pid.compute(error)
-            if control_signal > 0:
-                self.set_motor_direction('forward')
-            else:
-                self.set_motor_direction('backward')
+            self.set_motor_direction('forward' if control_signal > 0 else 'backward')
 
+            # Adjust speed proportional to the control signal with a minimum threshold
             speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
             print(f"[{self.name}] Setting speed: {speed}%")
-
             time.sleep(0.1)
 
     def stop_motor(self):
@@ -199,12 +199,11 @@ try:
         print(f"Countdown: {i} seconds")
         time.sleep(1)
 
-    # Start sawtooth wave pattern with initial positions for each motor
+    # Start sawtooth wave pattern
     motor1_initial_position = motor1_target
     motor3_initial_position = motor3_target
     print("Starting sawtooth wave pattern")
 
-    # Each motor follows the sawtooth wave while maintaining their offset
     motor1_controller.follow_sawtooth_wave(motor1_initial_position)
     motor3_controller.follow_sawtooth_wave(motor3_initial_position)
 
