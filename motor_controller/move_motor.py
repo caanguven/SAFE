@@ -12,8 +12,9 @@ MOTOR_IN2 = 26
 MOTOR_SPD = 18
 POTENTIOMETER_CHANNEL = 0
 
-# Threshold for detecting erroneous jumps
-JUMP_THRESHOLD = 150
+# Parameters for wraparound detection
+WRAPAROUND_THRESHOLD = 900  # Close to the full ADC range (1023)
+NUM_SAMPLES = 5  # Number of samples to use for moving average
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -29,7 +30,7 @@ motor_pwm = GPIO.PWM(MOTOR_SPD, 1000)  # 1000 Hz frequency
 motor_pwm.start(50)  # Start motor at 50% speed (can adjust)
 
 class ADCReader:
-    def __init__(self, channel, num_samples=5):
+    def __init__(self, channel, num_samples=NUM_SAMPLES):
         self.channel = channel
         self.num_samples = num_samples
         self.readings = []
@@ -39,36 +40,40 @@ class ADCReader:
         # Read the raw ADC value
         adc_value = mcp.read_adc(self.channel)
 
-        # Initialize previous value for first run
+        # Initialize previous value for the first run
         if self.previous_value is None:
             self.previous_value = adc_value
 
-        # Check for sudden jump
-        if abs(adc_value - self.previous_value) > JUMP_THRESHOLD:
-            print(f"[Warning] Sudden jump detected in ADC value: {adc_value}, ignoring.")
-            return None  # Discard this reading
+        # Detect wraparound by checking if the change between values exceeds threshold
+        if abs(adc_value - self.previous_value) > WRAPAROUND_THRESHOLD:
+            print(f"[Wraparound Detected] Large change in ADC value: {adc_value}")
+            # Adjust the current value to account for wraparound
+            if adc_value < self.previous_value:
+                adc_value += 1024
+            else:
+                adc_value -= 1024
 
-        # Store reading if it's within reasonable range
+        # Store reading for moving average calculation
         self.readings.append(adc_value)
         if len(self.readings) > self.num_samples:
             self.readings.pop(0)
 
-        # Update previous value for next comparison
-        self.previous_value = adc_value
+        # Update previous value for the next iteration
+        self.previous_value = adc_value % 1024  # Modulo to keep within ADC range
 
-        # Calculate moving average
-        avg_value = int(statistics.mean(self.readings))
-        print(f"[ADCReader] ADC Value: {adc_value}, Filtered Average: {avg_value}")
+        # Calculate and return the moving average
+        avg_value = int(statistics.mean(self.readings)) % 1024
+        print(f"[ADCReader] ADC Value: {adc_value % 1024}, Filtered Average: {avg_value}")
         return avg_value
 
 # Motor functions
 def rotate_motor_continuous(direction="forward"):
     if direction == "forward":
-        GPIO.output(MOTOR_IN1, GPIO.HIGH)
-        GPIO.output(MOTOR_IN2, GPIO.LOW)
-    elif direction == "backward":
         GPIO.output(MOTOR_IN1, GPIO.LOW)
         GPIO.output(MOTOR_IN2, GPIO.HIGH)
+    elif direction == "backward":
+        GPIO.output(MOTOR_IN1, GPIO.HIGH)
+        GPIO.output(MOTOR_IN2, GPIO.LOW)
     print(f"Motor rotating {direction}...")
 
 def stop_motor():
@@ -77,7 +82,7 @@ def stop_motor():
     motor_pwm.ChangeDutyCycle(0)
     print("Motor stopped.")
 
-# Main loop for testing ADC reading with filtering
+# Main loop for testing ADC reading with rotationally aware filtering
 try:
     adc_reader = ADCReader(channel=POTENTIOMETER_CHANNEL)
     
