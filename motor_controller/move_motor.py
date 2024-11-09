@@ -69,11 +69,11 @@ class ADCReader:
 # Motor functions
 def rotate_motor_continuous(direction="forward"):
     if direction == "forward":
-        GPIO.output(MOTOR_IN1, GPIO.LOW)
-        GPIO.output(MOTOR_IN2, GPIO.HIGH)
-    elif direction == "backward":
         GPIO.output(MOTOR_IN1, GPIO.HIGH)
         GPIO.output(MOTOR_IN2, GPIO.LOW)
+    elif direction == "backward":
+        GPIO.output(MOTOR_IN1, GPIO.LOW)
+        GPIO.output(MOTOR_IN2, GPIO.HIGH)
     print(f"Motor rotating {direction}...")
 
 def stop_motor():
