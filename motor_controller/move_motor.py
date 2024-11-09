@@ -12,6 +12,7 @@ DEAD_ZONE_THRESHOLD = 50
 SAWTOOTH_PERIOD = 5  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
+PHASE_SHIFT = 180  # Phase shift for Motor 3 in degrees
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -70,13 +71,14 @@ class PIDController:
         return control_signal
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, target_position):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0):
         self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
         self.adc_channel = adc_channel
         self.target_position = target_position
+        self.phase_shift = phase_shift
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
@@ -135,15 +137,14 @@ class MotorController:
         elapsed_time = time.time() - self.start_time
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
         
-        # Linear increase from 0 to MAX_ANGLE
-        target_position = position_in_cycle * MAX_ANGLE
+        # Apply phase shift
+        shifted_position = (position_in_cycle * MAX_ANGLE + self.phase_shift) % MAX_ANGLE
         
         # Reset to 0 when reaching MAX_ANGLE
-        if target_position >= MAX_ANGLE:
-            target_position = 0
-            self.start_time = time.time()  # Reset cycle
+        if shifted_position >= MAX_ANGLE:
+            shifted_position = 0
             
-        return target_position
+        return shifted_position
 
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
@@ -152,11 +153,11 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Initialize motors
+        # Initialize motors with phase shift for Motor 3
         motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, 
-                               MOTOR1_ADC_CHANNEL, args.motor1_target)
+                               MOTOR1_ADC_CHANNEL, args.motor1_target, phase_shift=0)
         motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, 
-                               MOTOR3_ADC_CHANNEL, args.motor3_target)
+                               MOTOR3_ADC_CHANNEL, args.motor3_target, phase_shift=PHASE_SHIFT)
 
         # Initial calibration
         print("Starting initial calibration...")
@@ -173,7 +174,7 @@ def main():
         motor3.stop_motor()
         time.sleep(5)
 
-        print("Starting sawtooth pattern...")
+        print("Starting sawtooth pattern with 180-degree phase shift for Motor 3...")
         while True:
             # Generate sawtooth positions
             m1_target = motor1.generate_sawtooth_position()
@@ -188,6 +189,7 @@ def main():
             m3_pos = motor3.read_position()
             print(f"Motor 1 - Target: {m1_target:.1f}°, Current: {m1_pos:.1f}°")
             print(f"Motor 3 - Target: {m3_target:.1f}°, Current: {m3_pos:.1f}°")
+            print(f"Phase Difference: {abs(m3_pos - m1_pos):.1f}°")
             
             time.sleep(0.05)
 
