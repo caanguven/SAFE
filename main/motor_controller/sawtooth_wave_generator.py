@@ -3,15 +3,15 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
+import threading
 
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
 DEAD_ZONE_THRESHOLD = 50
-SAWTOOTH_PERIOD = 5000  # Sawtooth period in milliseconds
+SAWTOOTH_PERIOD = 5000  # Period of sawtooth wave in milliseconds
 SAWTOOTH_AMPLITUDE = 330  # Max angle (full rotation)
-OFFSET_BETWEEN_MOTORS = 180  # Example offset in degrees
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -57,15 +57,7 @@ class SawtoothWaveGenerator:
     def get_set_position(self):
         t = self.current_millis() - self.start_time
         normalized_wave = (t % self.period) * (self.amplitude / self.period)
-
-        if self.direction == 'forward':
-            set_position = (normalized_wave + self.initial_angle) % 360
-        elif self.direction == 'reverse':
-            set_position = (360 - (normalized_wave + self.initial_angle)) % 360
-        else:
-            raise ValueError("Invalid direction. Must be 'forward' or 'reverse'.")
-
-        return set_position
+        return (normalized_wave + self.initial_angle) % 360
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, target_position, tolerance=5):
@@ -116,6 +108,13 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
+    def follow_sawtooth_wave(self, wave_generator):
+        while True:
+            set_position = wave_generator.get_set_position()
+            self.move_to_position(set_position)
+            print(f"[{self.name}] Set Position: {set_position:.2f}°, Actual Position: {self.position:.2f}°")
+            time.sleep(0.1)
+
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Move motors to target positions.")
 parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 (default: 90)")
@@ -141,20 +140,20 @@ try:
     time.sleep(5)
 
     print("Starting synchronized sawtooth wave pattern")
+
+    # Initialize sawtooth generators with each motor's calibrated starting position
     motor1_sawtooth = SawtoothWaveGenerator(SAWTOOTH_PERIOD, SAWTOOTH_AMPLITUDE, motor1_target, 'forward')
     motor3_sawtooth = SawtoothWaveGenerator(SAWTOOTH_PERIOD, SAWTOOTH_AMPLITUDE, motor3_target, 'forward')
 
-    while True:
-        motor1_position = motor1_sawtooth.get_set_position()
-        motor3_position = motor3_sawtooth.get_set_position()
+    # Start the sawtooth wave following in separate threads
+    motor1_thread = threading.Thread(target=motor1_controller.follow_sawtooth_wave, args=(motor1_sawtooth,))
+    motor3_thread = threading.Thread(target=motor3_controller.follow_sawtooth_wave, args=(motor3_sawtooth,))
 
-        motor1_controller.move_to_position(motor1_position)
-        motor3_controller.move_to_position(motor3_position)
+    motor1_thread.start()
+    motor3_thread.start()
 
-        print(f"[Motor 1] Set Position: {motor1_position:.2f}°, Actual Position: {motor1_controller.position:.2f}°")
-        print(f"[Motor 3] Set Position: {motor3_position:.2f}°, Actual Position: {motor3_controller.position:.2f}°")
-
-        time.sleep(0.1)
+    motor1_thread.join()
+    motor3_thread.join()
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
