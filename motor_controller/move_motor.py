@@ -27,8 +27,8 @@ motor_pwm = GPIO.PWM(MOTOR_SPD, 1000)  # 1000 Hz frequency
 motor_pwm.start(50)  # Start motor with 50% speed (adjust as needed)
 
 def rotate_motor_continuous():
-    GPIO.output(MOTOR_IN1, GPIO.LOW)
-    GPIO.output(MOTOR_IN2, GPIO.HIGH)
+    GPIO.output(MOTOR_IN1, GPIO.HIGH)
+    GPIO.output(MOTOR_IN2, GPIO.LOW)
     print("Motor rotating...")
 
 def stop_motor():
