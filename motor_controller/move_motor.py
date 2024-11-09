@@ -9,36 +9,19 @@ import math
 # ADCReader Class with Enhanced Logging
 # ==========================
 class ADCReader:
-    def __init__(self, spi_port=0, spi_device=0, num_samples=5):
+    def __init__(self, spi_port=0, spi_device=0, num_samples=1):
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(spi_port, spi_device))
         self.lock = threading.Lock()
         self.num_samples = num_samples
-        self.readings = {channel: [] for channel in range(8)}  # assuming 8 channels
+        self.readings = {channel: [] for channel in range(8)}  # Assuming 8 channels
 
     def read_channel(self, channel):
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
             degrees_330 = (adc_value / 1023.0) * 330.0  # Map ADC values to 0-330 degrees
-            degrees_full_circle = (degrees_330 / 330.0) * 360.0
-            radians = math.radians(degrees_full_circle)
-            self.readings[channel].append(radians)
-            if len(self.readings[channel]) > self.num_samples:
-                self.readings[channel].pop(0)
-            # Compute average sine and cosine
-            avg_sin = sum(math.sin(r) for r in self.readings[channel]) / len(self.readings[channel])
-            avg_cos = sum(math.cos(r) for r in self.readings[channel]) / len(self.readings[channel])
-            # Compute the averaged angle
-            avg_radians = math.atan2(avg_sin, avg_cos)
-            if avg_radians < 0:
-                avg_radians += 2 * math.pi
-            avg_degrees_full_circle = math.degrees(avg_radians) % 360.0
-            # Map averaged degrees back to 0-330 degrees
-            avg_degrees = (avg_degrees_full_circle / 360.0) * 330.0
             # Enhanced Logging
-            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, "
-                  f"Degrees_330: {degrees_330:.2f}, Degrees_full_circle: {degrees_full_circle:.2f}, "
-                  f"Average Degrees: {avg_degrees:.2f}")
-            return avg_degrees
+            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Degrees_330: {degrees_330:.2f}")
+            return degrees_330
 
 # ==========================
 # Motor Class
@@ -60,19 +43,15 @@ class Motor:
         self.pwm.start(0)  # Start with 0% duty cycle (motor off)
 
     def set_speed(self, duty_cycle):
-        duty_cycle = max(0, min(100, abs(duty_cycle)))
+        duty_cycle = max(0, min(100, duty_cycle))  # Clamp duty cycle to [0, 100]
         self.pwm.ChangeDutyCycle(duty_cycle)
         print(f"[Motor] Set speed to {duty_cycle:.2f}% duty cycle")
 
-    def forward(self):
+    def forward(self, duty_cycle):
         GPIO.output(self.in1_pin, GPIO.LOW)
         GPIO.output(self.in2_pin, GPIO.HIGH)
+        self.set_speed(duty_cycle)
         print("[Motor] Moving forward")
-
-    def reverse(self):
-        GPIO.output(self.in1_pin, GPIO.HIGH)
-        GPIO.output(self.in2_pin, GPIO.LOW)
-        print("[Motor] Moving in reverse")
 
     def stop(self):
         GPIO.output(self.in1_pin, GPIO.LOW)
@@ -85,7 +64,7 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class with Wrapped Error
+# PIDController Class with Forward-Only Control
 # ==========================
 class PIDController:
     def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000, max_angle=330.0):
@@ -103,7 +82,7 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001
+            delta_time = 0.0001  # Prevent division by zero
 
         error = self.calculate_wrapped_error(self.set_point, current_value)
         self.integral += error * delta_time
@@ -113,7 +92,7 @@ class PIDController:
         control_signal = (self.Kp * error) + (self.Ki * self.integral) + (self.Kd * derivative)
 
         # Limit control signal to prevent windup
-        control_signal = max(-100, min(100, control_signal))
+        control_signal = max(0, min(100, control_signal))  # Only positive control signals
 
         print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, "
               f"Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
@@ -129,48 +108,18 @@ class PIDController:
             error -= self.max_angle
         elif error < -self.max_angle / 2:
             error += self.max_angle
+        # For forward-only control, consider only positive errors
+        if error < 0:
+            error = 0
         return error
 
 # ==========================
-# SawtoothWaveGenerator Class
-# ==========================
-class SawtoothWaveGenerator:
-    def __init__(self, period, amplitude, initial_angle, direction='forward', max_degrees=330.0):
-        self.period = period  # in milliseconds
-        self.amplitude = amplitude  # in degrees
-        self.initial_angle = initial_angle
-        self.direction = direction  # 'forward' or 'reverse'
-        self.max_degrees = max_degrees
-        self.start_time = self.current_millis()
-
-    def current_millis(self):
-        return int(time.time() * 1000)
-
-    def get_set_position(self):
-        t = self.current_millis() - self.start_time
-        normalized_wave = (t % self.period) * (self.amplitude / self.period)
-
-        if self.direction == 'forward':
-            set_position = (normalized_wave + self.initial_angle) % self.max_degrees
-        elif self.direction == 'reverse':
-            set_position = (self.max_degrees - (normalized_wave + self.initial_angle)) % self.max_degrees
-        else:
-            raise ValueError("Invalid direction. Must be 'forward' or 'reverse'.")
-
-        return set_position
-
-    def set_direction(self, direction):
-        if direction not in ['forward', 'reverse']:
-            raise ValueError("Direction must be 'forward' or 'reverse'.")
-        self.direction = direction
-
-# ==========================
-# MotorController Class
+# MotorController Class (Forward-Only)
 # ==========================
 class MotorController:
     def __init__(self, motor, pid_controller, adc_reader, channel, config,
                  name='Motor', target_position=0,
-                 wave_generator=None, event_reached_position=None, event_start_synchronized_movement=None):
+                 event_reached_position=None):
         self.motor = motor
         self.pid_controller = pid_controller
         self.adc_reader = adc_reader
@@ -178,37 +127,44 @@ class MotorController:
         self.config = config
         self.name = name
         self.target_position = target_position
-        self.wave_generator = wave_generator
         self.event_reached_position = event_reached_position
-        self.event_start_synchronized_movement = event_start_synchronized_movement
-        self.state = 'initializing'
+        self.state = 'moving_to_target'
         self.at_target_position = False
         self.last_control_signal = 0
 
-    def map_potentiometer_value_to_degrees(self, value):
-        degrees = value  # already mapped in ADCReader
-        print(f"[{self.name}] Mapped ADC Average to {degrees:.2f} degrees")
-        return degrees  # Keep within 0-330 degrees
-
-    def pid_control_motor(self, degrees_value, set_position):
+    def pid_control_motor(self, degrees_value):
         OFFSET = self.config['offset']
         max_control_change = self.config['max_control_change']
         MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
-        error = self.pid_controller.calculate_wrapped_error(set_position, degrees_value)
-        self.pid_controller.set_point = set_position
+        # Update set_point in PID controller
+        self.pid_controller.set_point = self.target_position
+
+        # Compute control signal
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Limit control signal change
         control_signal_change = control_signal - self.last_control_signal
-        if abs(control_signal_change) > max_control_change:
-            control_signal = self.last_control_signal + max_control_change * (1 if control_signal_change > 0 else -1)
+        if control_signal_change > max_control_change:
+            control_signal = self.last_control_signal + max_control_change
+        elif control_signal_change < -max_control_change:
+            control_signal = self.last_control_signal - max_control_change
 
-        # Clamp control signal
-        control_signal = max(-100, min(100, control_signal))
+        # Clamp control signal to [0, 100]
+        control_signal = max(0, min(100, control_signal))
 
-        if abs(error) <= OFFSET:
-            self.motor.set_speed(0)
+        # Determine if within dead zone
+        error = self.target_position - degrees_value
+        if error > self.max_angle / 2:
+            error -= self.max_angle
+        elif error < -self.max_angle / 2:
+            error += self.max_angle
+
+        # For forward-only, consider only positive error
+        if error < 0:
+            error = 0
+
+        if error <= OFFSET:
             self.motor.stop()
             if not self.at_target_position:
                 self.at_target_position = True
@@ -216,15 +172,9 @@ class MotorController:
                     self.event_reached_position.set()
                 print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
         else:
-            speed = max(abs(control_signal), MIN_CONTROL_SIGNAL)
-            if control_signal > 0:
-                self.motor.set_speed(speed)
-                self.motor.forward()
-            else:
-                self.motor.set_speed(speed)
-                self.motor.reverse()
-
-            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, "
+            # Move forward with the computed control signal
+            self.motor.forward(control_signal)
+            print(f"[{self.name}] Moving forward: Potentiometer Value: {degrees_value:.2f}°, "
                   f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
 
         self.last_control_signal = control_signal
@@ -232,38 +182,18 @@ class MotorController:
     def control_loop(self, stop_event):
         try:
             while not stop_event.is_set():
-                if self.state == 'initializing':
+                if self.state == 'moving_to_target':
                     pot_value = self.adc_reader.read_channel(self.channel)
                     degrees_value = self.map_potentiometer_value_to_degrees(pot_value)
 
-                    self.pid_control_motor(degrees_value, self.target_position)
+                    self.pid_control_motor(degrees_value)
 
                     if self.at_target_position:
-                        self.state = 'waiting'
-                        print(f"[{self.name}] Reached initial position. Waiting to start synchronized movement.")
-
-                elif self.state == 'waiting':
-                    if self.event_start_synchronized_movement.is_set():
-                        self.state = 'synchronized_movement'
-                        print(f"[{self.name}] Starting synchronized movement.")
-                        # Reset wave generator to synchronize start
-                        if self.wave_generator:
-                            self.wave_generator.start_time = self.wave_generator.current_millis()
-                    else:
-                        # Continue trying to reach target
-                        time.sleep(0.1)
-
-                elif self.state == 'synchronized_movement':
-                    pot_value = self.adc_reader.read_channel(self.channel)
-                    degrees_value = self.map_potentiometer_value_to_degrees(pot_value)
-
-                    if self.wave_generator:
-                        set_position = self.wave_generator.get_set_position()
-                        self.pid_control_motor(degrees_value, set_position)
-                    else:
-                        print(f"[{self.name}] No wave generator. Holding position.")
-                        self.motor.stop()
-
+                        self.state = 'stopped'
+                        print(f"[{self.name}] Motor has stopped at target position.")
+                elif self.state == 'stopped':
+                    # Remain stopped
+                    time.sleep(0.1)
                 else:
                     # Unknown state
                     print(f"[{self.name}] Unknown state: {self.state}. Stopping motor.")
@@ -278,8 +208,13 @@ class MotorController:
             self.motor.cleanup()
             print(f"[{self.name}] Motor GPIO cleaned up")
 
+    def map_potentiometer_value_to_degrees(self, value):
+        degrees = value  # Already mapped in ADCReader
+        print(f"[{self.name}] Current Position: {degrees:.2f} degrees")
+        return degrees  # Keep within 0-330 degrees
+
 # ==========================
-# Main Function with Debugging Enhancements
+# Main Function
 # ==========================
 def run_motor_controller(motor_controller, stop_event):
     motor_controller.control_loop(stop_event)
@@ -288,14 +223,14 @@ def main():
     try:
         GPIO.setmode(GPIO.BOARD)
 
-        # Create ADCReader instance for reading from ADC channels
-        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=1)  # Set to 1 for initial debugging
+        # Create ADCReader instance for reading from ADC channel 0
+        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=1)  # No averaging for simplicity
 
-        # Shared PID configuration and settings
+        # Configuration for Motor 1
         config = {
-            'offset': 5,  # Degrees within which to stop the motor
-            'max_control_change': 10,  # Max change in control signal per loop
-            'min_control_signal': 10  # Minimum control signal to move the motor
+            'offset': 5,                # Degrees within which to stop the motor
+            'max_control_change': 10,   # Max change in control signal per loop
+            'min_control_signal': 10    # Minimum control signal to move the motor (unused in forward-only)
         }
 
         # PID constants (tune as necessary)
@@ -303,91 +238,35 @@ def main():
         Ki = 0.1
         Kd = 0.05
 
-        # Motor configurations
-        motors_info = [
-            {
-                'id': 1,
-                'name': 'Motor 1',
-                'in1': 7,
-                'in2': 26,
-                'spd': 18,
-                'adc_channel': 0,
-                'target_position': 165  # Midpoint of 330 degrees
-            },
-            {
-                'id': 3,
-                'name': 'Motor 3',
-                'in1': 11,
-                'in2': 32,
-                'spd': 33,
-                'adc_channel': 2,
-                'target_position': 165  # Midpoint of 330 degrees
-            }
-        ]
+        # Motor 1 configuration
+        motor_info = {
+            'id': 1,
+            'name': 'Motor 1',
+            'in1': 7,
+            'in2': 26,
+            'spd': 18,
+            'adc_channel': 0,
+            'target_position': 165  # Midpoint of 330 degrees
+        }
 
-        # Create and start threads for each motor controller
-        stop_event = threading.Event()
-        threads = []
-
-        # Create Events for synchronization
-        event_motor1_reached_position = threading.Event()
-        event_motor3_reached_position = threading.Event()
-        event_start_synchronized_movement = threading.Event()
-
-        # Create SawtoothWaveGenerator instance
-        wave_generator = SawtoothWaveGenerator(
-            period=5000,  # 5 seconds for a full cycle
-            amplitude=330,  # Full rotation within 330 degrees
-            initial_angle=0,
-            direction='forward',
-            max_degrees=330.0
+        # Create Motor 1 components
+        motor1 = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
+        pid_controller1 = PIDController(Kp, Ki, Kd, set_point=motor_info['target_position'], max_angle=330.0)
+        motor_controller1 = MotorController(
+            motor=motor1,
+            pid_controller=pid_controller1,
+            adc_reader=adc_reader,
+            channel=motor_info['adc_channel'],
+            config=config,
+            name=motor_info['name'],
+            target_position=motor_info['target_position']
         )
 
-        for motor_info in motors_info:
-            # Create individual components for each motor
-            motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
-            pid_controller = PIDController(Kp, Ki, Kd, max_angle=330.0)
-
-            # Assign the correct event based on motor ID
-            if motor_info['id'] == 1:
-                event_reached_position = event_motor1_reached_position
-            elif motor_info['id'] == 3:
-                event_reached_position = event_motor3_reached_position
-            else:
-                event_reached_position = None
-
-            # Create MotorController instance for each motor
-            motor_controller = MotorController(
-                motor=motor,
-                pid_controller=pid_controller,
-                adc_reader=adc_reader,
-                channel=motor_info['adc_channel'],
-                config=config,
-                name=motor_info['name'],
-                target_position=motor_info['target_position'],
-                wave_generator=wave_generator,
-                event_reached_position=event_reached_position,
-                event_start_synchronized_movement=event_start_synchronized_movement
-            )
-
-            # Start a thread for the motor controller
-            thread = threading.Thread(target=run_motor_controller, args=(motor_controller, stop_event))
-            thread.start()
-            threads.append(thread)
-
-            print(f"[Main] {motor_info['name']} Controller started. Target Position: {motor_info['target_position']}°")
-
-        print("[Main] Waiting for motors to reach initial positions...")
-        # Wait for both motors to reach their initial positions
-        event_motor1_reached_position.wait()
-        event_motor3_reached_position.wait()
-
-        print("[Main] Both motors have reached initial positions. Waiting for 5 seconds.")
-        time.sleep(5)
-
-        print("[Main] Starting synchronized movement.")
-        wave_generator.start_time = wave_generator.current_millis()
-        event_start_synchronized_movement.set()
+        # Create and start thread for Motor 1 controller
+        stop_event = threading.Event()
+        thread_motor1 = threading.Thread(target=run_motor_controller, args=(motor_controller1, stop_event))
+        thread_motor1.start()
+        print(f"[Main] {motor_info['name']} Controller started. Target Position: {motor_info['target_position']}°")
 
         print("[Main] Press Ctrl+C to stop.")
 
@@ -397,9 +276,8 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[Main] Program stopped by user")
-        stop_event.set()  # Signal threads to stop
-        for thread in threads:
-            thread.join()  # Wait for all threads to finish
+        stop_event.set()  # Signal thread to stop
+        thread_motor1.join()  # Wait for thread to finish
     except Exception as e:
         print(f"[Main] Exception occurred: {e}")
     finally:
