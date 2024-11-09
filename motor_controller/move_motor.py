@@ -80,7 +80,6 @@ class MotorController:
             return self.position
 
     def move_toward_target(self):
-        self.update_position()
         error = self.target_position - self.position
         if error > 165:
             error -= 330
@@ -113,6 +112,9 @@ def synchronized_sawtooth(motor1, motor3, duration):
         print(f"[{motor1.name}] Target: {motor1.target_position:.2f}°, Position: {motor1.position:.2f}°")
         print(f"[{motor3.name}] Target: {motor3.target_position:.2f}°, Position: {motor3.position:.2f}°")
 
+        if motor1_reached and motor3_reached:
+            break
+
         time.sleep(0.1)  # Small delay for loop control
 
 # Parse command-line arguments for target positions
@@ -131,8 +133,8 @@ try:
         adc_channel=MOTOR3_ADC_CHANNEL, target_position=args.motor3_target
     )
 
-    # Initial calibration: move both motors to initial target positions
-    print(f"Starting calibration: Motor 1 to {args.motor1_target}°, Motor 3 to {args.motor3_target}°")
+    # Move both motors to initial positions
+    print(f"Moving to initial positions: Motor 1 to {args.motor1_target}°, Motor 3 to {args.motor3_target}°")
     
     motor1_reached = motor1_controller.move_toward_target()
     motor3_reached = motor3_controller.move_toward_target()
@@ -142,10 +144,17 @@ try:
         time.sleep(0.1)
     
     print("Calibration complete. Both motors reached initial positions.")
+    
+    # Wait for 5 seconds
+    print("Pausing for 5 seconds...")
+    for i in range(5, 0, -1):
+        print(f"Countdown: {i} seconds")
+        time.sleep(1)
 
     # Begin synchronized sawtooth wave movement
     print("Starting synchronized sawtooth wave pattern for both motors")
-    synchronized_sawtooth(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
+    while True:
+        synchronized_sawtooth(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
