@@ -6,7 +6,7 @@ import Adafruit_MCP3008
 import math
 
 # ==========================
-# ADCReader Class with Vector-Based Moving Average
+# ADCReader Class with Enhanced Logging
 # ==========================
 class ADCReader:
     def __init__(self, spi_port=0, spi_device=0, num_samples=5):
@@ -19,9 +19,7 @@ class ADCReader:
         with self.lock:
             adc_value = self.mcp.read_adc(channel)
             degrees_330 = (adc_value / 1023.0) * 330.0  # Map ADC values to 0-330 degrees
-            # Map degrees to full circle (0-360 degrees) for proper averaging
             degrees_full_circle = (degrees_330 / 330.0) * 360.0
-            # Convert degrees to radians for vector averaging
             radians = math.radians(degrees_full_circle)
             self.readings[channel].append(radians)
             if len(self.readings[channel]) > self.num_samples:
@@ -36,7 +34,10 @@ class ADCReader:
             avg_degrees_full_circle = math.degrees(avg_radians) % 360.0
             # Map averaged degrees back to 0-330 degrees
             avg_degrees = (avg_degrees_full_circle / 360.0) * 330.0
-            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, Average: {avg_degrees:.2f} degrees")
+            # Enhanced Logging
+            print(f"[ADCReader] Channel {channel} ADC Value: {adc_value}, "
+                  f"Degrees_330: {degrees_330:.2f}, Degrees_full_circle: {degrees_full_circle:.2f}, "
+                  f"Average Degrees: {avg_degrees:.2f}")
             return avg_degrees
 
 # ==========================
@@ -61,7 +62,7 @@ class Motor:
     def set_speed(self, duty_cycle):
         duty_cycle = max(0, min(100, abs(duty_cycle)))
         self.pwm.ChangeDutyCycle(duty_cycle)
-        print(f"[Motor] Set speed to {duty_cycle}% duty cycle")
+        print(f"[Motor] Set speed to {duty_cycle:.2f}% duty cycle")
 
     def forward(self):
         GPIO.output(self.in1_pin, GPIO.LOW)
@@ -84,10 +85,10 @@ class Motor:
         print("[Motor] Cleaned up PWM")
 
 # ==========================
-# PIDController Class
+# PIDController Class with Wrapped Error
 # ==========================
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000):
+    def __init__(self, Kp, Ki, Kd, set_point=0, integral_limit=1000, max_angle=330.0):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
@@ -96,6 +97,7 @@ class PIDController:
         self.integral = 0
         self.last_time = time.time()
         self.integral_limit = integral_limit
+        self.max_angle = max_angle
 
     def compute(self, current_value):
         current_time = time.time()
@@ -113,21 +115,20 @@ class PIDController:
         # Limit control signal to prevent windup
         control_signal = max(-100, min(100, control_signal))
 
-        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
+        print(f"[PIDController] Error: {error:.2f}, Integral: {self.integral:.2f}, "
+              f"Derivative: {derivative:.2f}, Control Signal: {control_signal:.2f}")
 
         self.previous_error = error
         self.last_time = current_time
 
         return control_signal
 
-    @staticmethod
-    def calculate_wrapped_error(set_point, current_value, max_angle=330.0):
-        # Calculate minimal difference considering wraparound
+    def calculate_wrapped_error(self, set_point, current_value):
         error = set_point - current_value
-        if error > max_angle / 2:
-            error -= max_angle
-        elif error < -max_angle / 2:
-            error += max_angle
+        if error > self.max_angle / 2:
+            error -= self.max_angle
+        elif error < -self.max_angle / 2:
+            error += self.max_angle
         return error
 
 # ==========================
@@ -223,7 +224,8 @@ class MotorController:
                 self.motor.set_speed(speed)
                 self.motor.reverse()
 
-            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+            print(f"[{self.name}] Moving motor: Potentiometer Value: {degrees_value:.2f}°, "
+                  f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
 
         self.last_control_signal = control_signal
 
@@ -277,7 +279,7 @@ class MotorController:
             print(f"[{self.name}] Motor GPIO cleaned up")
 
 # ==========================
-# Main Function
+# Main Function with Debugging Enhancements
 # ==========================
 def run_motor_controller(motor_controller, stop_event):
     motor_controller.control_loop(stop_event)
@@ -287,7 +289,7 @@ def main():
         GPIO.setmode(GPIO.BOARD)
 
         # Create ADCReader instance for reading from ADC channels
-        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=5)
+        adc_reader = ADCReader(spi_port=0, spi_device=0, num_samples=1)  # Set to 1 for initial debugging
 
         # Shared PID configuration and settings
         config = {
@@ -344,7 +346,7 @@ def main():
         for motor_info in motors_info:
             # Create individual components for each motor
             motor = Motor(motor_info['in1'], motor_info['in2'], motor_info['spd'])
-            pid_controller = PIDController(Kp, Ki, Kd)
+            pid_controller = PIDController(Kp, Ki, Kd, max_angle=330.0)
 
             # Assign the correct event based on motor ID
             if motor_info['id'] == 1:
