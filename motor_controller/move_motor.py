@@ -138,10 +138,23 @@ class MotorController:
         max_control_change = self.config['max_control_change']
         MIN_CONTROL_SIGNAL = self.config['min_control_signal']
 
-        # Update set_point in PID controller
-        self.pid_controller.set_point = self.target_position
+        # Calculate the error directly as the shortest path to the target within 0-330 degrees range
+        error = self.target_position - degrees_value
+        if error < 0:
+            error += self.max_angle  # Ensure the motor understands to move forward if needed
 
-        # Compute control signal
+        # Check if within the dead zone (target ± offset)
+        if abs(error) <= OFFSET:
+            self.motor.stop()
+            if not self.at_target_position:
+                self.at_target_position = True
+                if self.event_reached_position:
+                    self.event_reached_position.set()
+                print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
+            return  # Exit early since we’re in the dead zone
+
+        # Update the set point for the PID controller and compute control signal
+        self.pid_controller.set_point = self.target_position
         control_signal = self.pid_controller.compute(degrees_value)
 
         # Limit control signal change
@@ -151,34 +164,16 @@ class MotorController:
         elif control_signal_change < -max_control_change:
             control_signal = self.last_control_signal - max_control_change
 
-        # Clamp control signal to [0, 100]
-        control_signal = max(0, min(100, control_signal))
+        # Clamp control signal to [MIN_CONTROL_SIGNAL, 100] to ensure minimum speed
+        control_signal = max(MIN_CONTROL_SIGNAL, min(100, control_signal))
 
-        # Determine if within dead zone
-        error = self.target_position - degrees_value
-        if error > self.max_angle / 2:
-            error -= self.max_angle
-        elif error < -self.max_angle / 2:
-            error += self.max_angle
-
-        # For forward-only, consider only positive error
-        if error < 0:
-            error = 0
-
-        if error <= OFFSET:
-            self.motor.stop()
-            if not self.at_target_position:
-                self.at_target_position = True
-                if self.event_reached_position:
-                    self.event_reached_position.set()
-                print(f"[{self.name}] Reached target position within offset: {degrees_value:.2f}°")
-        else:
-            # Move forward with the computed control signal
-            self.motor.forward(control_signal)
-            print(f"[{self.name}] Moving forward: Potentiometer Value: {degrees_value:.2f}°, "
-                  f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
+        # Move forward with the computed control signal
+        self.motor.forward(control_signal)
+        print(f"[{self.name}] Moving forward: Potentiometer Value: {degrees_value:.2f}°, "
+            f"Error: {error:.2f}°, Control Signal: {control_signal:.2f}%")
 
         self.last_control_signal = control_signal
+
 
     def control_loop(self, stop_event):
         try:
