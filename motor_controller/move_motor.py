@@ -73,7 +73,8 @@ class PIDController:
         return control_signal
 
 class MotorController:
-    def __init__(self, in1, in2, pwm, adc_channel, target_position, tolerance=5):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, tolerance=5):
+        self.name = name  # Name to identify motor (e.g., "Motor 1" or "Motor 3")
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
@@ -100,7 +101,7 @@ class MotorController:
         elif direction == 'backward':
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
-        print(f"Motor set to rotate {direction}...")
+        print(f"[{self.name}] Motor set to rotate {direction}...")
 
     def update_position(self):
         # Read ADC position
@@ -108,7 +109,7 @@ class MotorController:
 
         # Detect if we're in the dead zone
         if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
-            print("[MotorController] In dead zone, estimating position...")
+            print(f"[{self.name}] In dead zone, estimating position...")
             self.in_dead_zone = True
             # Estimate the position based on direction and previous valid position
             if self.direction == 'forward':
@@ -120,7 +121,7 @@ class MotorController:
             self.position = degrees
             self.in_dead_zone = False
             self.last_valid_position = self.position
-            print(f"[MotorController] Updated Position: {self.position:.2f}°")
+            print(f"[{self.name}] Updated Position: {self.position:.2f}°")
 
         return self.position
 
@@ -135,12 +136,12 @@ class MotorController:
             elif error < -165:
                 error += 330
 
-            print(f"[MotorController] Target: {self.target_position}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
+            print(f"[{self.name}] Target: {self.target_position}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
 
             # If within tolerance, stop the motor
             if abs(error) <= self.tolerance:
                 self.stop_motor()
-                print(f"[MotorController] Reached target position: {self.target_position}°")
+                print(f"[{self.name}] Reached target position: {self.target_position}°")
                 break
 
             # Use PID to compute control signal
@@ -155,7 +156,7 @@ class MotorController:
             # Adjust speed proportional to the control signal with a minimum threshold
             speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
-            print(f"[MotorController] Setting speed: {speed}%")
+            print(f"[{self.name}] Setting speed: {speed}%")
 
             # Short delay for control loop frequency
             time.sleep(0.1)
@@ -164,21 +165,21 @@ class MotorController:
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
-        print("[MotorController] Motor stopped.")
+        print(f"[{self.name}] Motor stopped.")
 
 try:
-    # Initialize MotorController for Motor 1 and Motor 3
+    # Initialize MotorController for Motor 1 and Motor 3 with unique identifiers
     motor1_controller = MotorController(
-        in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
+        name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
         adc_channel=MOTOR1_ADC_CHANNEL, target_position=90, tolerance=5
     )
     motor3_controller = MotorController(
-        in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
+        name="Motor 3", in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
         adc_channel=MOTOR3_ADC_CHANNEL, target_position=270, tolerance=5
     )
 
     # Start moving both motors toward their target positions
-    print("Moving Motor 1 to 90° and Motor 3 to 270°")
+    print("Starting movement: Motor 1 to 90° and Motor 3 to 270°")
     motor1_controller.move_to_target()
     motor3_controller.move_to_target()
 
