@@ -72,10 +72,8 @@ class MotorController:
         if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
             self.in_dead_zone = True
             print(f"[{self.name}] In dead zone, holding last position...")
-            # Hold the current position if in the dead zone
             return self.position
         else:
-            # Update position based on valid ADC reading
             self.position = degrees
             self.in_dead_zone = False
             print(f"[{self.name}] Updated Position: {self.position:.2f}°")
@@ -89,7 +87,6 @@ class MotorController:
             error += 330
 
         if abs(error) <= SAWTOOTH_STEP:
-            # Stop if within step tolerance
             self.pwm.ChangeDutyCycle(0)
             return True
         else:
@@ -99,23 +96,22 @@ class MotorController:
             return False
 
 def synchronized_sawtooth(motor1, motor3, duration):
+    initial_offset = motor3.target_position - motor1.target_position
     start_time = time.time()
+    
     while True:
         elapsed_time = time.time() - start_time
         wave_position = (elapsed_time % duration) * (330.0 / duration)
 
-        # Set incremental targets based on sawtooth wave pattern, with initial target positions maintained
-        motor1.target_position = (motor1.target_position + wave_position) % 330
-        motor3.target_position = (motor3.target_position + wave_position) % 330
+        motor1.target_position = wave_position % 330
+        motor3.target_position = (wave_position + initial_offset) % 330
 
         motor1_reached = motor1.move_toward_target()
         motor3_reached = motor3.move_toward_target()
 
-        # Print status
         print(f"[{motor1.name}] Target: {motor1.target_position:.2f}°, Position: {motor1.position:.2f}°")
         print(f"[{motor3.name}] Target: {motor3.target_position:.2f}°, Position: {motor3.position:.2f}°")
 
-        # If both reached, break the loop and update targets
         if motor1_reached and motor3_reached:
             break
 
@@ -139,9 +135,17 @@ try:
 
     # Move both motors to initial positions
     print(f"Moving to initial positions: Motor 1 to {args.motor1_target}°, Motor 3 to {args.motor3_target}°")
-    motor1_controller.move_toward_target()
-    motor3_controller.move_toward_target()
+    
+    motor1_reached = motor1_controller.move_toward_target()
+    motor3_reached = motor3_controller.move_toward_target()
+    while not (motor1_reached and motor3_reached):
+        motor1_reached = motor1_controller.move_toward_target()
+        motor3_reached = motor3_controller.move_toward_target()
+        time.sleep(0.1)
+    
+    print("Calibration complete. Both motors reached initial positions.")
 
+    # Begin synchronized sawtooth wave movement
     print("Starting synchronized sawtooth wave pattern for both motors")
     while True:
         synchronized_sawtooth(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
