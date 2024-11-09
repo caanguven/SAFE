@@ -23,10 +23,42 @@ GPIO.setup(MOTOR_SPD, GPIO.OUT)
 
 # Set up PWM for motor speed control
 motor_pwm = GPIO.PWM(MOTOR_SPD, 1000)  # 1000 Hz frequency
-motor_pwm.start(50)  # Start with 50% speed
+motor_pwm.start(0)  # Start with 0% speed initially
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+
+class PIDController:
+    def __init__(self, Kp, Ki, Kd):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.previous_error = 0
+        self.integral = 0
+        self.last_time = time.time()
+
+    def compute(self, error):
+        current_time = time.time()
+        delta_time = current_time - self.last_time
+        if delta_time <= 0.0:
+            delta_time = 0.0001
+
+        # Proportional term
+        proportional = self.Kp * error
+
+        # Integral term
+        self.integral += error * delta_time
+        integral = self.Ki * self.integral
+
+        # Derivative term
+        derivative = self.Kd * (error - self.previous_error) / delta_time
+
+        # Control signal
+        control_signal = proportional + integral + derivative
+        self.previous_error = error
+        self.last_time = current_time
+
+        return control_signal
 
 class MotorController:
     def __init__(self, adc_channel, target_position, tolerance=5):
@@ -37,6 +69,7 @@ class MotorController:
         self.direction = 'forward'
         self.in_dead_zone = False
         self.last_valid_position = None
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)  # PID coefficients
 
     def read_adc_position(self):
         # Read ADC and convert to position within 330 degrees
@@ -95,14 +128,17 @@ class MotorController:
                 print(f"[MotorController] Reached target position: {self.target_position}°")
                 break
 
-            # Adjust motor direction based on error
-            if error > 0:
+            # Use PID to compute control signal
+            control_signal = self.pid.compute(error)
+
+            # Determine motor direction based on control signal
+            if control_signal > 0:
                 self.set_motor_direction('forward')
             else:
                 self.set_motor_direction('backward')
 
-            # Set speed proportional to error, with a minimum speed threshold
-            speed = min(100, max(30, abs(error)))
+            # Adjust speed proportional to the control signal with a minimum threshold
+            speed = min(100, max(30, abs(control_signal)))
             motor_pwm.ChangeDutyCycle(speed)
             print(f"[MotorController] Setting speed: {speed}%")
 
