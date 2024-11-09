@@ -2,7 +2,7 @@ import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
-import statistics
+import math
 
 # Constants
 SPI_PORT = 0
@@ -12,9 +12,10 @@ MOTOR_IN2 = 26
 MOTOR_SPD = 18
 POTENTIOMETER_CHANNEL = 0
 
-# Parameters for wraparound detection
-WRAPAROUND_THRESHOLD = 900  # Close to the full ADC range (1023)
-NUM_SAMPLES = 5  # Number of samples to use for moving average
+# Motor and ADC configuration
+DEAD_ZONE_THRESHOLD = 900  # Threshold to detect dead zone based on ADC jump
+DEAD_ZONE_START = 990  # Approximate ADC value before entering dead zone
+DEAD_ZONE_END = 30    # Approximate ADC value after leaving dead zone
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -27,83 +28,124 @@ GPIO.setup(MOTOR_SPD, GPIO.OUT)
 
 # Set up PWM for motor control
 motor_pwm = GPIO.PWM(MOTOR_SPD, 1000)  # 1000 Hz frequency
-motor_pwm.start(50)  # Start motor at 50% speed (can adjust)
+motor_pwm.start(0)  # Start motor with 0% duty cycle (motor off)
 
-class ADCReader:
-    def __init__(self, channel, num_samples=NUM_SAMPLES):
-        self.channel = channel
-        self.num_samples = num_samples
-        self.readings = []
-        self.previous_value = None
 
-    def read_and_filter_adc(self):
-        # Read the raw ADC value
-        adc_value = mcp.read_adc(self.channel)
+class MotorController:
+    def __init__(self, in1_pin, in2_pin, pwm_pin, adc_channel, pwm_frequency=1000):
+        self.in1_pin = in1_pin
+        self.in2_pin = in2_pin
+        self.pwm_pin = pwm_pin
+        self.adc_channel = adc_channel
+        self.current_position = 0.0
+        self.last_adc_value = None
+        self.in_dead_zone = False
+        self.direction = "forward"
 
-        # Initialize previous value for the first run
-        if self.previous_value is None:
-            self.previous_value = adc_value
+        # Setup motor GPIO
+        GPIO.setup(self.in1_pin, GPIO.OUT)
+        GPIO.setup(self.in2_pin, GPIO.OUT)
+        GPIO.setup(self.pwm_pin, GPIO.OUT)
 
-        # Detect wraparound by checking if the change between values exceeds threshold
-        if abs(adc_value - self.previous_value) > WRAPAROUND_THRESHOLD:
-            print(f"[Wraparound Detected] Large change in ADC value: {adc_value}")
-            # Adjust the current value to account for wraparound
-            if adc_value < self.previous_value:
-                adc_value += 1024
+        # Setup PWM for motor speed control
+        self.pwm = GPIO.PWM(self.pwm_pin, pwm_frequency)
+        self.pwm.start(0)
+
+    def read_adc(self):
+        return mcp.read_adc(self.adc_channel)
+
+    def move_to_position(self, target_position, tolerance=5):
+        while True:
+            # Read current ADC value and convert it to degrees within the 0-330° range
+            adc_value = self.read_adc()
+            degrees = (adc_value / 1023.0) * 330.0
+
+            # Check if we are entering or exiting the dead zone
+            if self.is_in_dead_zone(adc_value):
+                # Start estimating position while in dead zone based on direction and timing
+                if self.direction == "forward":
+                    self.current_position += 330 / 1023 * DEAD_ZONE_THRESHOLD
+                elif self.direction == "backward":
+                    self.current_position -= 330 / 1023 * DEAD_ZONE_THRESHOLD
+                print(f"In Dead Zone - Estimated Position: {self.current_position:.2f}")
             else:
-                adc_value -= 1024
+                # Update position from ADC if not in dead zone
+                self.current_position = degrees
+                self.in_dead_zone = False  # Reset dead zone flag
 
-        # Store reading for moving average calculation
-        self.readings.append(adc_value)
-        if len(self.readings) > self.num_samples:
-            self.readings.pop(0)
+            # Calculate position error
+            error = target_position - self.current_position
 
-        # Update previous value for the next iteration
-        self.previous_value = adc_value % 1024  # Modulo to keep within ADC range
+            # Check if within tolerance
+            if abs(error) <= tolerance:
+                self.stop()
+                print(f"Reached target position: {self.current_position:.2f}° within tolerance.")
+                break
 
-        # Calculate and return the moving average
-        avg_value = int(statistics.mean(self.readings)) % 1024
-        print(f"[ADCReader] ADC Value: {adc_value % 1024}, Filtered Average: {avg_value}")
-        return avg_value
+            # Adjust motor speed and direction based on error
+            self.set_motor_direction_and_speed(error)
 
-# Motor functions
-def rotate_motor_continuous(direction="forward"):
-    if direction == "forward":
-        GPIO.output(MOTOR_IN1, GPIO.HIGH)
-        GPIO.output(MOTOR_IN2, GPIO.LOW)
-    elif direction == "backward":
-        GPIO.output(MOTOR_IN1, GPIO.LOW)
-        GPIO.output(MOTOR_IN2, GPIO.HIGH)
-    print(f"Motor rotating {direction}...")
+            print(f"Target: {target_position}°, Current: {self.current_position:.2f}°, Error: {error:.2f}")
+            time.sleep(0.1)  # Control loop delay
 
-def stop_motor():
-    GPIO.output(MOTOR_IN1, GPIO.LOW)
-    GPIO.output(MOTOR_IN2, GPIO.LOW)
-    motor_pwm.ChangeDutyCycle(0)
-    print("Motor stopped.")
+    def is_in_dead_zone(self, adc_value):
+        """Detect if the ADC value is in the dead zone range"""
+        if self.last_adc_value is not None:
+            if abs(adc_value - self.last_adc_value) > DEAD_ZONE_THRESHOLD:
+                self.in_dead_zone = True
+                self.last_adc_value = adc_value  # Update for wraparound detection
+                return True
+        self.last_adc_value = adc_value
+        return False
 
-# Main loop for testing ADC reading with rotationally aware filtering
+    def set_motor_direction_and_speed(self, error):
+        """Set the motor direction and speed based on error."""
+        speed = min(100, max(10, abs(error) * 0.5))  # Scale speed based on error
+
+        # Adjust motor direction based on error sign
+        if error > 0:
+            self.forward(speed)
+            self.direction = "forward"
+        else:
+            self.reverse(speed)
+            self.direction = "backward"
+
+    def forward(self, duty_cycle):
+        GPIO.output(self.in1_pin, GPIO.HIGH)
+        GPIO.output(self.in2_pin, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(duty_cycle)
+        print(f"Motor moving forward at {duty_cycle}% duty cycle")
+
+    def reverse(self, duty_cycle):
+        GPIO.output(self.in1_pin, GPIO.LOW)
+        GPIO.output(self.in2_pin, GPIO.HIGH)
+        self.pwm.ChangeDutyCycle(duty_cycle)
+        print(f"Motor moving in reverse at {duty_cycle}% duty cycle")
+
+    def stop(self):
+        GPIO.output(self.in1_pin, GPIO.LOW)
+        GPIO.output(self.in2_pin, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(0)
+        print("Motor stopped")
+
+
+# Main program
 try:
-    adc_reader = ADCReader(channel=POTENTIOMETER_CHANNEL)
-    
-    # Start motor rotation
-    rotate_motor_continuous(direction="forward")
-    
-    # Read and filter ADC values
-    while True:
-        filtered_value = adc_reader.read_and_filter_adc()
-        if filtered_value is not None:
-            print(f"Filtered ADC Value: {filtered_value}")
-        
-        # Sleep briefly to avoid flooding the output
-        time.sleep(0.1)
+    # Create motor controller instance
+    motor_controller = MotorController(MOTOR_IN1, MOTOR_IN2, MOTOR_SPD, POTENTIOMETER_CHANNEL)
+
+    # Target position to move to
+    target_position = 165  # Target midpoint of 330 degrees
+
+    # Move motor to the target position
+    motor_controller.move_to_position(target_position)
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
 
 finally:
     # Stop motor and clean up GPIO
-    stop_motor()
+    motor_controller.stop()
     motor_pwm.stop()
     GPIO.cleanup()
     print("GPIO cleaned up")
