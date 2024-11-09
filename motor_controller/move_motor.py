@@ -3,14 +3,15 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
+import threading
 
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
 DEAD_ZONE_THRESHOLD = 50
-SAWTOOTH_PERIOD = 5
-SAWTOOTH_STEP = 5  # Step size for sawtooth wave increments
+SAWTOOTH_PERIOD = 5000  # Period of sawtooth wave in milliseconds
+SAWTOOTH_AMPLITUDE = 330  # Max angle (full rotation)
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -42,135 +43,85 @@ motor3_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-class PIDController:
-    def __init__(self, Kp, Ki, Kd):
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
-        self.previous_error = 0
-        self.integral = 0
-        self.last_time = time.time()
+class SawtoothWaveGenerator:
+    def __init__(self, period, amplitude, initial_angle):
+        self.period = period
+        self.amplitude = amplitude
+        self.initial_angle = initial_angle
+        self.start_time = self.current_millis()
 
-    def compute(self, error):
-        current_time = time.time()
-        delta_time = current_time - self.last_time
-        if delta_time <= 0.0:
-            delta_time = 0.0001
+    def current_millis(self):
+        return int(time.time() * 1000)
 
-        # Proportional term
-        proportional = self.Kp * error
-
-        # Integral term
-        self.integral += error * delta_time
-        integral = self.Ki * self.integral
-
-        # Derivative term
-        derivative = self.Kd * (error - self.previous_error) / delta_time
-
-        # Control signal
-        control_signal = proportional + integral + derivative
-        self.previous_error = error
-        self.last_time = current_time
-
-        return control_signal
+    def get_set_position(self):
+        t = self.current_millis() - self.start_time
+        normalized_wave = (t % self.period) * (self.amplitude / self.period)
+        return (normalized_wave + self.initial_angle) % 360
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, tolerance=5):
+    def __init__(self, name, in1, in2, pwm, adc_channel):
         self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
         self.adc_channel = adc_channel
-        self.target_position = target_position
-        self.tolerance = tolerance
         self.position = 0
-        self.direction = 'forward'
-        self.in_dead_zone = False
-        self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
 
     def read_adc_position(self):
         adc_value = mcp.read_adc(self.adc_channel)
         degrees = (adc_value / ADC_MAX) * 330.0
-        return degrees, adc_value
+        self.position = degrees
+        return degrees
 
     def set_motor_direction(self, direction):
-        self.direction = direction
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
         elif direction == 'backward':
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
-        print(f"[{self.name}] Motor set to rotate {direction}...")
 
-    def update_position(self):
-        degrees, adc_value = self.read_adc_position()
-        if adc_value < DEAD_ZONE_THRESHOLD or adc_value > (ADC_MAX - DEAD_ZONE_THRESHOLD):
-            print(f"[{self.name}] In dead zone, estimating position...")
-            self.in_dead_zone = True
-            if self.direction == 'forward':
-                self.position = (self.position + 10) % 330
-            else:
-                self.position = (self.position - 10) % 330
+    def move_to_position(self, target_position):
+        current_position = self.read_adc_position()
+        error = target_position - current_position
+
+        if error > 0:
+            self.set_motor_direction('forward')
         else:
-            self.position = degrees
-            self.in_dead_zone = False
-            self.last_valid_position = self.position
-            print(f"[{self.name}] Updated Position: {self.position:.2f}°")
-        return self.position
+            self.set_motor_direction('backward')
 
-    def move_to_target(self):
-        while True:
-            current_position = self.update_position()
-            error = self.target_position - current_position
-            if error > 165:
-                error -= 330
-            elif error < -165:
-                error += 330
-
-            print(f"[{self.name}] Target: {self.target_position}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
-            if abs(error) <= self.tolerance:
-                self.stop_motor()
-                print(f"[{self.name}] Reached target position: {self.target_position}°")
-                break
-
-            control_signal = self.pid.compute(error)
-            if control_signal > 0:
-                self.set_motor_direction('forward')
-            else:
-                self.set_motor_direction('backward')
-
-            speed = min(100, max(30, abs(control_signal)))
-            self.pwm.ChangeDutyCycle(speed)
-            print(f"[{self.name}] Setting speed: {speed}%")
-            time.sleep(0.1)
+        speed = min(100, max(30, abs(error) * 0.3))  # Scale speed with error
+        self.pwm.ChangeDutyCycle(speed)
 
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
-        print(f"[{self.name}] Motor stopped.")
 
-def synchronized_sawtooth(motor1, motor3, duration):
-    initial_offset = motor3.target_position - motor1.target_position
-    start_time = time.time()
+    def follow_sawtooth_wave(self, wave_generator):
+        while True:
+            set_position = wave_generator.get_set_position()
+            self.move_to_position(set_position)
+            print(f"[{self.name}] Set Position: {set_position:.2f}°, Actual Position: {self.position:.2f}°")
+            time.sleep(0.05)  # Short delay for control frequency
+
+def control_motors(motor1_controller, motor3_controller, motor1_wave, motor3_wave):
     while True:
-        elapsed_time = time.time() - start_time
-        wave_position = (elapsed_time % duration) * (330.0 / duration)
+        # Retrieve sawtooth set positions for both motors
+        motor1_set_position = motor1_wave.get_set_position()
+        motor3_set_position = motor3_wave.get_set_position()
 
-        motor1.target_position = wave_position % 330
-        motor3.target_position = (wave_position + initial_offset) % 330
+        # Move both motors to their respective positions
+        motor1_controller.move_to_position(motor1_set_position)
+        motor3_controller.move_to_position(motor3_set_position)
 
-        motor1_reached = motor1.move_to_target()
-        motor3_reached = motor3.move_to_target()
+        # Print the set and actual positions for each motor
+        print(f"[Motor 1] Set Position: {motor1_set_position:.2f}°, Actual Position: {motor1_controller.position:.2f}°")
+        print(f"[Motor 3] Set Position: {motor3_set_position:.2f}°, Actual Position: {motor3_controller.position:.2f}°")
+        
+        time.sleep(0.05)  # Control frequency delay
 
-        print(f"[{motor1.name}] Target: {motor1.target_position:.2f}°, Position: {motor1.position:.2f}°")
-        print(f"[{motor3.name}] Target: {motor3.target_position:.2f}°, Position: {motor3.position:.2f}°")
-
-        time.sleep(0.1)
-
-# Parse command-line arguments
+# Parse command-line arguments for target positions
 parser = argparse.ArgumentParser(description="Move motors to target positions.")
 parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 (default: 90)")
 parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 3 (default: 270)")
@@ -181,23 +132,26 @@ motor3_target = args.motor3_target
 
 try:
     motor1_controller = MotorController(
-        name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm,
-        adc_channel=MOTOR1_ADC_CHANNEL, target_position=motor1_target, tolerance=5
+        name="Motor 1", in1=MOTOR1_IN1, in2=MOTOR1_IN2, pwm=motor1_pwm, adc_channel=MOTOR1_ADC_CHANNEL
     )
     motor3_controller = MotorController(
-        name="Motor 3", in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm,
-        adc_channel=MOTOR3_ADC_CHANNEL, target_position=motor3_target, tolerance=5
+        name="Motor 3", in1=MOTOR3_IN1, in2=MOTOR3_IN2, pwm=motor3_pwm, adc_channel=MOTOR3_ADC_CHANNEL
     )
 
-    print(f"Starting calibration: Motor 1 to {motor1_target}° and Motor 3 to {motor3_target}°")
-    motor1_controller.move_to_target()
-    motor3_controller.move_to_target()
-
-    print("Calibration complete. Pausing for 5 seconds...")
+    # Calibrate motors to initial positions
+    print(f"Calibrating: Motor 1 to {motor1_target}° and Motor 3 to {motor3_target}°")
+    motor1_controller.move_to_position(motor1_target)
+    motor3_controller.move_to_position(motor3_target)
     time.sleep(5)
 
     print("Starting synchronized sawtooth wave pattern")
-    synchronized_sawtooth(motor1_controller, motor3_controller, SAWTOOTH_PERIOD)
+
+    # Initialize sawtooth wave generators for each motor
+    motor1_wave = SawtoothWaveGenerator(SAWTOOTH_PERIOD, SAWTOOTH_AMPLITUDE, motor1_target)
+    motor3_wave = SawtoothWaveGenerator(SAWTOOTH_PERIOD, SAWTOOTH_AMPLITUDE, motor3_target)
+
+    # Run both motors in sawtooth wave pattern in a single loop
+    control_motors(motor1_controller, motor3_controller, motor1_wave, motor3_wave)
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
