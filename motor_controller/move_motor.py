@@ -4,7 +4,7 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
 
-#Constants for SPI and ADC
+# Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
@@ -160,7 +160,7 @@ class MotorController:
         # If the motor is flipped, invert the position reading
         if self.flip_direction:
             degrees = MAX_ANGLE - degrees
-            
+                
         self.last_valid_position = degrees
         return degrees
 
@@ -179,9 +179,9 @@ class MotorController:
     def move_to_position(self, target):
         current_position = self.read_position()
         
-        # If the motor is flipped, we need to adjust the target
-        if self.flip_direction:
-            target = MAX_ANGLE - target
+        # Remove the adjustment of target
+        # if self.flip_direction:
+        #     target = MAX_ANGLE - target
             
         error = target - current_position
 
@@ -215,14 +215,13 @@ class MotorController:
             
         elapsed_time = time.time() - self.start_time
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-        
+
+        # Generate sawtooth wave from 0 to MAX_ANGLE
+        position = position_in_cycle * MAX_ANGLE
+
         # Apply phase shift
-        shifted_position = (position_in_cycle * MAX_ANGLE + self.phase_shift) % MAX_ANGLE
-        
-        # Reset to 0 when reaching MAX_ANGLE
-        if shifted_position >= MAX_ANGLE:
-            shifted_position = 0
-            
+        shifted_position = (position + self.phase_shift) % MAX_ANGLE
+
         return shifted_position
     
 def main():
