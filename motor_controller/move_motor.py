@@ -4,7 +4,7 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
 
-# Constants for SPI and ADC
+#Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
@@ -70,50 +70,59 @@ motor4_pwm.start(0)
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 class SpikeFilter:
-    def __init__(self, name, flip_filter=False):
+    def __init__(self, name, flip_direction=False):
         self.filter_active = False
         self.last_valid_reading = None
         self.name = name
-        self.flip_filter = flip_filter
-    
+        self.flip_direction = flip_direction
+
     def filter(self, new_value):
+        # If the filter is active, we are in the dead zone
         if self.filter_active:
-            if self.flip_filter:
-                if new_value >= 700 or new_value <= 150:
-                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                    return None
-            else:
+            if not self.flip_direction:
+                # Normal orientation: Discard readings between 150 and 700
                 if 150 <= new_value <= 700:
                     print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
                     return None
+            else:
+                # Flipped orientation: Discard readings between 300 and 850
+                if 300 <= new_value <= 850:
+                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                    return None
+                
+            # Valid reading after dead zone
             print(f"[{self.name}] Valid reading after dead zone: {new_value}")
             self.filter_active = False
             self.last_valid_reading = new_value
             return new_value
         else:
+            # Not currently filtering
             if self.last_valid_reading is not None:
-                if self.flip_filter:
-                    if new_value < 150 or new_value > 700:
-                        print(f"[{self.name}] Spike detected: last valid {self.last_valid_reading}, new {new_value}")
-                        self.filter_active = True
-                        return None
-                else:
-                    if 150 <= new_value <= 700:
+                if not self.flip_direction:
+                    # Normal orientation: Check for sudden drop from high to middle
+                    if self.last_valid_reading > 950 and 150 <= new_value <= 700:
                         print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                         self.filter_active = True
                         return None
+                else:
+                    # Flipped orientation: Check for sudden rise from low to middle
+                    if self.last_valid_reading < 50 and 300 <= new_value <= 850:
+                        print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
+                        self.filter_active = True
+                        return None
+                    
+            # Valid reading
             self.last_valid_reading = new_value
             return new_value
 
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, name="PID"):
+    def __init__(self, Kp, Ki, Kd):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
         self.previous_error = 0
         self.integral = 0
         self.last_time = time.time()
-        self.name = name  # For debugging purposes
 
     def compute(self, error):
         current_time = time.time()
@@ -130,11 +139,10 @@ class PIDController:
         self.previous_error = error
         self.last_time = current_time
 
-        print(f"[{self.name}] P: {proportional:.2f}, I: {integral:.2f}, D: {derivative:.2f}, Control: {control_signal:.2f}")
         return control_signal
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0, flip_direction=False, flip_filter=False, pid_constants=(0.8, 0.1, 0.05)):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0, flip_direction=False):
         self.name = name
         self.in1 = in1
         self.in2 = in2
@@ -146,99 +154,92 @@ class MotorController:
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
-        self.pid = PIDController(Kp=pid_constants[0], Ki=pid_constants[1], Kd=pid_constants[2], name=f"{self.name} PID")
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
         self.start_time = None
-        self.spike_filter = SpikeFilter(name, flip_filter=flip_filter)
+        self.spike_filter = SpikeFilter(name, flip_direction)
         
     def read_position(self):
+        # Read raw ADC value
         raw_value = mcp.read_adc(self.adc_channel)
-        print(f"[{self.name}] Raw ADC Value: {raw_value}")
+        
+        # Apply spike filter
         filtered_value = self.spike_filter.filter(raw_value)
-        print(f"[{self.name}] Filtered ADC Value: {filtered_value}")
-    
+        
         if filtered_value is None:
+            # Use last valid position if in dead zone
             return self.last_valid_position if self.last_valid_position is not None else 0
         
-        degrees = (filtered_value / ADC_MAX) * MAX_ANGLE
+        # Convert filtered ADC value to degrees
+        degrees = (filtered_value / ADC_MAX) * 330.0
         
+        # If the motor is flipped, invert the position reading
         if self.flip_direction:
             degrees = MAX_ANGLE - degrees
-            print(f"[{self.name}] Flipped Position: {degrees:.2f}°")
-        else:
-            print(f"[{self.name}] Position: {degrees:.2f}°")
-                
+            
         self.last_valid_position = degrees
         return degrees
-    
+
     def set_motor_direction(self, direction):
+        # Flip the direction for motors on the opposite side
         if self.flip_direction:
             direction = 'backward' if direction == 'forward' else 'forward'
-            print(f"[{self.name}] Adjusted direction due to flip: {direction}")
-    
+            
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
         else:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
-    
+
     def move_to_position(self, target):
         current_position = self.read_position()
         
+        # If the motor is flipped, we need to adjust the target
+        if self.flip_direction:
+            target = MAX_ANGLE - target
+            
         error = target - current_position
 
         # Normalize error for circular movement
-        if error > (MAX_ANGLE / 2):
-            error -= MAX_ANGLE
-        elif error < -(MAX_ANGLE / 2):
-            error += MAX_ANGLE
+        if error > 165:
+            error -= 330
+        elif error < -165:
+            error += 330
 
-        # Invert error for flipped motors
-        if self.flip_direction:
-            error = -error
-            print(f"[{self.name}] Inverted Error due to flip: {error:.2f}°")
-        
-        print(f"[{self.name}] Target: {target:.2f}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
-    
+        # Use PID to compute control signal
         control_signal = self.pid.compute(error)
-    
-        # Clamp control signal
-        control_signal = max(-100, min(100, control_signal))
-    
-        if abs(error) <= 2:
+
+        # Determine direction and speed
+        if abs(error) <= 2:  # Tolerance
             self.stop_motor()
-            print(f"[{self.name}] Target reached within tolerance.")
             return True
-    
-        direction = 'forward' if control_signal > 0 else 'backward'
-        self.set_motor_direction(direction)
         
+        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
         speed = min(100, max(30, abs(control_signal)))
-        print(f"[{self.name}] Control Signal: {control_signal:.2f}, Speed: {speed}%")
         self.pwm.ChangeDutyCycle(speed)
         return False
-    
+
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
-        print(f"[{self.name}] Motor stopped.")
-    
+
     def generate_sawtooth_position(self):
         if self.start_time is None:
             self.start_time = time.time()
             
         elapsed_time = time.time() - self.start_time
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-    
-        # Generate sawtooth wave from 0 to MAX_ANGLE
-        position = position_in_cycle * MAX_ANGLE
-    
+        
         # Apply phase shift
-        shifted_position = (position + self.phase_shift) % MAX_ANGLE
-    
-        print(f"[{self.name}] Generated Sawtooth Position: {shifted_position:.2f}°")
+        shifted_position = (position_in_cycle * MAX_ANGLE + self.phase_shift) % MAX_ANGLE
+        
+        # Reset to 0 when reaching MAX_ANGLE
+        if shifted_position >= MAX_ANGLE:
+            shifted_position = 0
+            
         return shifted_position
+
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
     parser.add_argument("initial_position", type=int, nargs="?", default=90,
@@ -248,33 +249,17 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Initialize all motors
-        # Motors 1 and 3 are normal orientation
-        motor1 = MotorController(
-            "Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, 
-            MOTOR1_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=False
-        )
-        motor3 = MotorController(
-            "Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, 
-            MOTOR3_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=False
-        )
+        # Initialize motors with correct flip_direction for both motor control and encoder reading
+        motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, 
+                               MOTOR1_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=False)
+        motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, 
+                               MOTOR3_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=False)
         
-        # Motors 2 and 4 are flipped orientation
-        motor2 = MotorController(
-            "Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, 
-            MOTOR2_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=True
-        )
-        motor4 = MotorController(
-            "Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, 
-            MOTOR4_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=True
-        )
-
-        # Optional: Test motor directions before calibration
-        # Uncomment the following lines to perform direction tests
-        # test_motor_directions(motor1)
-        # test_motor_directions(motor2)
-        # test_motor_directions(motor3)
-        # test_motor_directions(motor4)
+        # Motors 2 and 4 are flipped in both direction and encoder reading
+        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, 
+                               MOTOR2_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=True)
+        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, 
+                               MOTOR4_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=True)
 
         # Initial calibration
         print("Starting initial calibration...")
