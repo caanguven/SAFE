@@ -70,35 +70,40 @@ motor4_pwm.start(0)
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 class SpikeFilter:
-    def __init__(self, name):
+    def __init__(self, name, flip_filter=False):
         self.filter_active = False
         self.last_valid_reading = None
-        self.name = name  # For debugging purposes
-
+        self.name = name
+        self.flip_filter = flip_filter
+    
     def filter(self, new_value):
-        # If the filter is active, we are in the dead zone
         if self.filter_active:
-            # Discard readings between 150 and 700
-            if 150 <= new_value <= 700:
-                print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                return None
+            if self.flip_filter:
+                if new_value >= 700 or new_value <= 150:
+                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                    return None
             else:
-                # Valid reading after dead zone
-                print(f"[{self.name}] Valid reading after dead zone: {new_value}")
-                self.filter_active = False
-                self.last_valid_reading = new_value
-                return new_value
+                if 150 <= new_value <= 700:
+                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                    return None
+            print(f"[{self.name}] Valid reading after dead zone: {new_value}")
+            self.filter_active = False
+            self.last_valid_reading = new_value
+            return new_value
         else:
-            # Not currently filtering
-            if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
-                # Sudden drop into dead zone detected
-                print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
-                self.filter_active = True
-                return None
-            else:
-                # Valid reading
-                self.last_valid_reading = new_value
-                return new_value
+            if self.last_valid_reading is not None:
+                if self.flip_filter:
+                    if new_value < 150 or new_value > 700:
+                        print(f"[{self.name}] Spike detected: last valid {self.last_valid_reading}, new {new_value}")
+                        self.filter_active = True
+                        return None
+                else:
+                    if 150 <= new_value <= 700:
+                        print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
+                        self.filter_active = True
+                        return None
+            self.last_valid_reading = new_value
+            return new_value
 
 class PIDController:
     def __init__(self, Kp, Ki, Kd, name="PID"):
@@ -129,7 +134,7 @@ class PIDController:
         return control_signal
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0, flip_direction=False, pid_constants=(0.8, 0.1, 0.05)):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0, flip_direction=False, flip_filter=False, pid_constants=(0.8, 0.1, 0.05)):
         self.name = name
         self.in1 = in1
         self.in2 = in2
@@ -143,25 +148,19 @@ class MotorController:
         self.last_valid_position = None
         self.pid = PIDController(Kp=pid_constants[0], Ki=pid_constants[1], Kd=pid_constants[2], name=f"{self.name} PID")
         self.start_time = None
-        self.spike_filter = SpikeFilter(name)
+        self.spike_filter = SpikeFilter(name, flip_filter=flip_filter)
         
     def read_position(self):
-        # Read raw ADC value
         raw_value = mcp.read_adc(self.adc_channel)
         print(f"[{self.name}] Raw ADC Value: {raw_value}")
-
-        # Apply spike filter
         filtered_value = self.spike_filter.filter(raw_value)
         print(f"[{self.name}] Filtered ADC Value: {filtered_value}")
-
+    
         if filtered_value is None:
-            # Use last valid position if in dead zone
             return self.last_valid_position if self.last_valid_position is not None else 0
         
-        # Convert filtered ADC value to degrees
         degrees = (filtered_value / ADC_MAX) * MAX_ANGLE
         
-        # If the motor is flipped, invert the position reading
         if self.flip_direction:
             degrees = MAX_ANGLE - degrees
             print(f"[{self.name}] Flipped Position: {degrees:.2f}°")
@@ -170,20 +169,19 @@ class MotorController:
                 
         self.last_valid_position = degrees
         return degrees
-
+    
     def set_motor_direction(self, direction):
-        # Flip the direction for motors on the opposite side
         if self.flip_direction:
             direction = 'backward' if direction == 'forward' else 'forward'
             print(f"[{self.name}] Adjusted direction due to flip: {direction}")
-
+    
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
         else:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
-
+    
     def move_to_position(self, target):
         current_position = self.read_position()
         
@@ -195,70 +193,52 @@ class MotorController:
         elif error < -(MAX_ANGLE / 2):
             error += MAX_ANGLE
 
+        # Invert error for flipped motors
+        if self.flip_direction:
+            error = -error
+            print(f"[{self.name}] Inverted Error due to flip: {error:.2f}°")
+        
         print(f"[{self.name}] Target: {target:.2f}°, Current: {current_position:.2f}°, Error: {error:.2f}°")
-
-        # Use PID to compute control signal
+    
         control_signal = self.pid.compute(error)
-
-        # Determine direction and speed
-        if abs(error) <= 2:  # Tolerance
+    
+        # Clamp control signal
+        control_signal = max(-100, min(100, control_signal))
+    
+        if abs(error) <= 2:
             self.stop_motor()
             print(f"[{self.name}] Target reached within tolerance.")
             return True
-
+    
         direction = 'forward' if control_signal > 0 else 'backward'
         self.set_motor_direction(direction)
         
-        # Adjust speed scaling as needed
         speed = min(100, max(30, abs(control_signal)))
         print(f"[{self.name}] Control Signal: {control_signal:.2f}, Speed: {speed}%")
         self.pwm.ChangeDutyCycle(speed)
         return False
-
+    
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
         print(f"[{self.name}] Motor stopped.")
-
+    
     def generate_sawtooth_position(self):
         if self.start_time is None:
             self.start_time = time.time()
             
         elapsed_time = time.time() - self.start_time
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-
+    
         # Generate sawtooth wave from 0 to MAX_ANGLE
         position = position_in_cycle * MAX_ANGLE
-
+    
         # Apply phase shift
         shifted_position = (position + self.phase_shift) % MAX_ANGLE
-
+    
         print(f"[{self.name}] Generated Sawtooth Position: {shifted_position:.2f}°")
         return shifted_position
-
-def test_motor_directions(motor):
-    """
-    Manually test motor directions to ensure correct wiring.
-    """
-    print(f"Testing directions for {motor.name}...")
-    try:
-        print(f"Setting {motor.name} to forward.")
-        motor.set_motor_direction('forward')
-        motor.pwm.ChangeDutyCycle(50)
-        time.sleep(2)
-        
-        print(f"Setting {motor.name} to backward.")
-        motor.set_motor_direction('backward')
-        motor.pwm.ChangeDutyCycle(50)
-        time.sleep(2)
-        
-        motor.stop_motor()
-        print(f"Direction test completed for {motor.name}.\n")
-    except KeyboardInterrupt:
-        motor.stop_motor()
-        print(f"\nDirection test interrupted for {motor.name}.")
-
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
     parser.add_argument("initial_position", type=int, nargs="?", default=90,
