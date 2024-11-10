@@ -1,4 +1,3 @@
- 
 import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
@@ -10,7 +9,7 @@ SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
 DEAD_ZONE_THRESHOLD = 50
-SAWTOOTH_PERIOD = 2  # Period in seconds
+SAWTOOTH_PERIOD = 5  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
 PHASE_SHIFT = 180  # Phase shift for Motor 3 in degrees
