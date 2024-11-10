@@ -1,4 +1,3 @@
-  
 import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
@@ -13,34 +12,59 @@ DEAD_ZONE_THRESHOLD = 50
 SAWTOOTH_PERIOD = 2  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-PHASE_SHIFT = 180  # Phase shift for Motor 3 in degrees
+PHASE_SHIFT = 180  # Phase shift between motor groups in degrees
 
-# GPIO Pins for Motor 1
+# GPIO Pins for all motors
 MOTOR1_IN1 = 7
 MOTOR1_IN2 = 26
 MOTOR1_SPD = 18
 MOTOR1_ADC_CHANNEL = 0
 
-# GPIO Pins for Motor 3
+MOTOR2_IN1 = 29
+MOTOR2_IN2 = 22
+MOTOR2_SPD = 31
+MOTOR2_ADC_CHANNEL = 1
+
 MOTOR3_IN1 = 11
 MOTOR3_IN2 = 32
 MOTOR3_SPD = 33
 MOTOR3_ADC_CHANNEL = 2
 
+MOTOR4_IN1 = 12
+MOTOR4_IN2 = 13
+MOTOR4_SPD = 35
+MOTOR4_ADC_CHANNEL = 3
+
 # GPIO setup
 GPIO.setmode(GPIO.BOARD)
+# Motor 1
 GPIO.setup(MOTOR1_IN1, GPIO.OUT)
 GPIO.setup(MOTOR1_IN2, GPIO.OUT)
 GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+# Motor 2
+GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+# Motor 3
 GPIO.setup(MOTOR3_IN1, GPIO.OUT)
 GPIO.setup(MOTOR3_IN2, GPIO.OUT)
 GPIO.setup(MOTOR3_SPD, GPIO.OUT)
+# Motor 4
+GPIO.setup(MOTOR4_IN1, GPIO.OUT)
+GPIO.setup(MOTOR4_IN2, GPIO.OUT)
+GPIO.setup(MOTOR4_SPD, GPIO.OUT)
 
-# Set up PWM for motor speed control
+# Set up PWM for all motors
 motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
+motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
 motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
+
+# Start PWM for all motors
+motor1_pwm.start(0)
+motor2_pwm.start(0)
 motor3_pwm.start(0)
+motor4_pwm.start(0)
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
