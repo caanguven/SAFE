@@ -14,26 +14,15 @@ MOTOR2_IN2 = 22
 MOTOR2_SPD = 31
 MOTOR2_ADC_CHANNEL = 1
 
-# GPIO Pins for Motor 4
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
-MOTOR4_ADC_CHANNEL = 3
-
 # GPIO setup
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup(MOTOR2_IN1, GPIO.OUT)
 GPIO.setup(MOTOR2_IN2, GPIO.OUT)
 GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
 
 # Set up PWM for motor speed control
 motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor2_pwm.start(50)  # Start Motor 2 at 50% speed
-motor4_pwm.start(50)  # Start Motor 4 at 50% speed
+motor2_pwm.start(10)  # Start Motor 2 at 10% speed for slow movement
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -53,19 +42,16 @@ def stop_motor(in1, in2):
     GPIO.output(in2, GPIO.LOW)
 
 try:
-    # Start Motor 2 and Motor 4 in forward direction
+    # Start Motor 2 in forward direction
     run_motor(MOTOR2_IN1, MOTOR2_IN2, "forward")
-    run_motor(MOTOR4_IN1, MOTOR4_IN2, "forward")
 
-    print("Running Motor 2 and Motor 4. Press Ctrl+C to stop.")
+    print("Running Motor 2 slowly. Press Ctrl+C to stop.")
     while True:
-        # Read ADC values for Motor 2 and Motor 4
+        # Read ADC value for Motor 2
         motor2_adc_value = mcp.read_adc(MOTOR2_ADC_CHANNEL)
-        motor4_adc_value = mcp.read_adc(MOTOR4_ADC_CHANNEL)
         
-        # Print ADC values
+        # Print ADC value
         print(f"Motor 2 ADC Value: {motor2_adc_value}")
-        print(f"Motor 4 ADC Value: {motor4_adc_value}")
         
         # Delay to avoid flooding the output
         time.sleep(0.5)
@@ -74,10 +60,8 @@ except KeyboardInterrupt:
     print("\nProgram interrupted by user")
 
 finally:
-    # Stop motors and cleanup
+    # Stop motor and cleanup
     stop_motor(MOTOR2_IN1, MOTOR2_IN2)
-    stop_motor(MOTOR4_IN1, MOTOR4_IN2)
     motor2_pwm.stop()
-    motor4_pwm.stop()
     GPIO.cleanup()
-    print("GPIO cleaned up")
+    print("GPIO cleaned up") 
