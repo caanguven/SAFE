@@ -40,32 +40,17 @@ MOTOR4_ADC_CHANNEL = 3
 
 # GPIO setup
 GPIO.setmode(GPIO.BOARD)
-# Motor 1 GPIO setup
-GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-# Motor 2 GPIO setup
-GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-# Motor 3 GPIO setup
-GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-# Motor 4 GPIO setup
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+GPIO.setup([MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD, MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD,
+            MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD, MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD], GPIO.OUT)
 
 # Set up PWM for motor speed control
 motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
 motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(0)
 motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-motor3_pwm.start(0)
 motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor4_pwm.start(0)
+
+for pwm in [motor1_pwm, motor2_pwm, motor3_pwm, motor4_pwm]:
+    pwm.start(0)
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
@@ -74,30 +59,21 @@ class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
         self.last_valid_reading = None
-        self.name = name  # For debugging purposes
+        self.name = name
 
     def filter(self, new_value):
-        # If the filter is active, we are in the dead zone
         if self.filter_active:
-            # Discard readings between 150 and 700
             if 150 <= new_value <= 700:
-                print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
                 return None
             else:
-                # Valid reading after dead zone
-                print(f"[{self.name}] Valid reading after dead zone: {new_value}")
                 self.filter_active = False
                 self.last_valid_reading = new_value
                 return new_value
         else:
-            # Not currently filtering
             if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
-                # Sudden drop into dead zone detected
-                print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                 self.filter_active = True
                 return None
             else:
-                # Valid reading
                 self.last_valid_reading = new_value
                 return new_value
 
@@ -139,48 +115,36 @@ class MotorController:
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
+        self.pid = PIDController(Kp=0.8, Ki=0.05, Kd=0.05)  # Adjusted PID values for stability
         self.start_time = None
         self.spike_filter = SpikeFilter(name)
-        
+
     def read_position(self):
-        # Read raw ADC value
         raw_value = mcp.read_adc(self.adc_channel)
-        
-        # Apply spike filter
         filtered_value = self.spike_filter.filter(raw_value)
         
         if filtered_value is None:
-            # Use last valid position if in dead zone
             return self.last_valid_position if self.last_valid_position is not None else 0
         
-        # Convert filtered ADC value to degrees
         degrees = (filtered_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
         return degrees
 
     def set_motor_direction(self, direction):
-        if direction == 'forward':
-            GPIO.output(self.in1, GPIO.HIGH)
-            GPIO.output(self.in2, GPIO.LOW)
-        else:
-            GPIO.output(self.in1, GPIO.LOW)
-            GPIO.output(self.in2, GPIO.HIGH)
+        GPIO.output(self.in1, GPIO.HIGH if direction == 'forward' else GPIO.LOW)
+        GPIO.output(self.in2, GPIO.LOW if direction == 'forward' else GPIO.HIGH)
 
     def move_to_position(self, target):
         current_position = self.read_position()
         error = target - current_position
 
-        # Normalize error for circular movement
         if error > 165:
             error -= 330
         elif error < -165:
             error += 330
 
-        # Use PID to compute control signal
         control_signal = self.pid.compute(error)
 
-        # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
             self.stop_motor()
             return True
@@ -201,15 +165,8 @@ class MotorController:
             
         elapsed_time = time.time() - self.start_time
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-        
-        # Apply phase shift
         shifted_position = (position_in_cycle * MAX_ANGLE + self.phase_shift) % MAX_ANGLE
-        
-        # Reset to 0 when reaching MAX_ANGLE
-        if shifted_position >= MAX_ANGLE:
-            shifted_position = 0
-            
-        return shifted_position
+        return shifted_position if shifted_position < MAX_ANGLE else 0
 
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
@@ -218,7 +175,6 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Initialize motors with phase shift
         motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, 
                                  MOTOR1_ADC_CHANNEL, args.motor1_target, phase_shift=0)
         motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, 
@@ -228,8 +184,6 @@ def main():
         motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, 
                                  MOTOR4_ADC_CHANNEL, args.motor1_target, phase_shift=0)
 
-        # Initial calibration
-        print("Starting initial calibration...")
         calibration_start = time.time()
         while True:
             m1_done = motor1.move_to_position(args.motor1_target)
@@ -237,7 +191,6 @@ def main():
             m3_done = motor3.move_to_position(args.motor3_target)
             m4_done = motor4.move_to_position(args.motor1_target)
             
-            # Print calibration progress
             m1_pos = motor1.read_position()
             m2_pos = motor2.read_position()
             m3_pos = motor3.read_position()
@@ -250,37 +203,30 @@ def main():
             if m1_done and m2_done and m3_done and m4_done:
                 break
                 
-            # Timeout after 30 seconds
             if time.time() - calibration_start > 30:
                 print("\nCalibration timeout! Check motor connections.")
                 raise TimeoutError("Calibration timeout")
                 
             time.sleep(0.05)
 
-        print("\nCalibration complete. Stopping for 5 seconds...")
         motor1.stop_motor()
         motor2.stop_motor()
         motor3.stop_motor()
         motor4.stop_motor()
         time.sleep(5)
 
-        print("Starting sawtooth pattern with 180-degree phase shift for Motor 2 and Motor 3...")
         while True:
-            # Generate sawtooth positions
             m1_target = motor1.generate_sawtooth_position()
             m3_target = motor3.generate_sawtooth_position()
             
-            # Set targets for Motor 2 and Motor 4
-            m2_target = m3_target  # Motor 2 follows Motor 3
-            m4_target = m1_target  # Motor 4 follows Motor 1
+            m2_target = m3_target
+            m4_target = m1_target
             
-            # Move motors to positions
             motor1.move_to_position(m1_target)
             motor2.move_to_position(m2_target)
             motor3.move_to_position(m3_target)
             motor4.move_to_position(m4_target)
             
-            # Print current positions
             m1_pos = motor1.read_position()
             m2_pos = motor2.read_position()
             m3_pos = motor3.read_position()
