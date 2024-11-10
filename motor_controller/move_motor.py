@@ -118,7 +118,73 @@ class MotorController:
         self.start_time = None
         self.spike_filter = SpikeFilter(name)
         
-    [Previous MotorController methods remain exactly the same]
+    def read_position(self):
+        # Read raw ADC value
+        raw_value = mcp.read_adc(self.adc_channel)
+        
+        # Apply spike filter
+        filtered_value = self.spike_filter.filter(raw_value)
+        
+        if filtered_value is None:
+            # Use last valid position if in dead zone
+            return self.last_valid_position if self.last_valid_position is not None else 0
+        
+        # Convert filtered ADC value to degrees
+        degrees = (filtered_value / ADC_MAX) * 330.0
+        self.last_valid_position = degrees
+        return degrees
+
+    def set_motor_direction(self, direction):
+        if direction == 'forward':
+            GPIO.output(self.in1, GPIO.HIGH)
+            GPIO.output(self.in2, GPIO.LOW)
+        else:
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.HIGH)
+
+    def move_to_position(self, target):
+        current_position = self.read_position()
+        error = target - current_position
+
+        # Normalize error for circular movement
+        if error > 165:
+            error -= 330
+        elif error < -165:
+            error += 330
+
+        # Use PID to compute control signal
+        control_signal = self.pid.compute(error)
+
+        # Determine direction and speed
+        if abs(error) <= 2:  # Tolerance
+            self.stop_motor()
+            return True
+        
+        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
+        speed = min(100, max(30, abs(control_signal)))
+        self.pwm.ChangeDutyCycle(speed)
+        return False
+
+    def stop_motor(self):
+        GPIO.output(self.in1, GPIO.LOW)
+        GPIO.output(self.in2, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(0)
+
+    def generate_sawtooth_position(self):
+        if self.start_time is None:
+            self.start_time = time.time()
+            
+        elapsed_time = time.time() - self.start_time
+        position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
+        
+        # Apply phase shift
+        shifted_position = (position_in_cycle * MAX_ANGLE + self.phase_shift) % MAX_ANGLE
+        
+        # Reset to 0 when reaching MAX_ANGLE
+        if shifted_position >= MAX_ANGLE:
+            shifted_position = 0
+            
+        return shifted_position
 
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
