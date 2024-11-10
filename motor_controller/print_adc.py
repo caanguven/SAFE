@@ -22,7 +22,7 @@ GPIO.setup(MOTOR2_SPD, GPIO.OUT)
 
 # Set up PWM for motor speed control
 motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(10)  # Start Motor 2 at 10% speed for slow movement
+motor2_pwm.start(40)  # Start Motor 2 at 10% speed for slow movement
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))

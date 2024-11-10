@@ -127,7 +127,7 @@ class PIDController:
         return control_signal
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0, flip_direction=False):
         self.name = name
         self.in1 = in1
         self.in2 = in2
@@ -135,6 +135,7 @@ class MotorController:
         self.adc_channel = adc_channel
         self.target_position = target_position
         self.phase_shift = phase_shift
+        self.flip_direction = flip_direction
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
@@ -155,10 +156,19 @@ class MotorController:
         
         # Convert filtered ADC value to degrees
         degrees = (filtered_value / ADC_MAX) * 330.0
+        
+        # If the motor is flipped, invert the position reading
+        if self.flip_direction:
+            degrees = MAX_ANGLE - degrees
+            
         self.last_valid_position = degrees
         return degrees
 
     def set_motor_direction(self, direction):
+        # Flip the direction for motors on the opposite side
+        if self.flip_direction:
+            direction = 'backward' if direction == 'forward' else 'forward'
+            
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
@@ -168,6 +178,11 @@ class MotorController:
 
     def move_to_position(self, target):
         current_position = self.read_position()
+        
+        # If the motor is flipped, we need to adjust the target
+        if self.flip_direction:
+            target = MAX_ANGLE - target
+            
         error = target - current_position
 
         # Normalize error for circular movement
@@ -209,7 +224,7 @@ class MotorController:
             shifted_position = 0
             
         return shifted_position
-
+    
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
     parser.add_argument("initial_position", type=int, nargs="?", default=90,
@@ -220,17 +235,17 @@ def main():
 
     try:
         # Initialize all motors
-        # Motors 1 and 4 are in sync with no phase shift
+        # Motors 1 and 3 are normal orientation
         motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, 
-                               MOTOR1_ADC_CHANNEL, args.initial_position, phase_shift=0)
-        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, 
-                               MOTOR4_ADC_CHANNEL, args.initial_position, phase_shift=0)
-        
-        # Motors 2 and 3 are in sync with PHASE_SHIFT relative to motors 1/4
-        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, 
-                               MOTOR2_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT)
+                               MOTOR1_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=False)
         motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, 
-                               MOTOR3_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT)
+                               MOTOR3_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=False)
+        
+        # Motors 2 and 4 are flipped orientation
+        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, 
+                               MOTOR2_ADC_CHANNEL, args.shifted_position, phase_shift=PHASE_SHIFT, flip_direction=True)
+        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, 
+                               MOTOR4_ADC_CHANNEL, args.initial_position, phase_shift=0, flip_direction=True)
 
         # Initial calibration
         print("Starting initial calibration...")
