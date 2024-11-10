@@ -210,7 +210,7 @@ if __name__ == "__main__":
     
     ####################################
     
-    import RPi.GPIO as GPIO
+import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
