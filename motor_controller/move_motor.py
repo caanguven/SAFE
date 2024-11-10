@@ -12,7 +12,7 @@ DEAD_ZONE_THRESHOLD = 50
 SAWTOOTH_PERIOD = 2  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-PHASE_SHIFT = 180  # Phase shift for Motor 3 and Motor 2 in degrees
+PHASE_SHIFT = 180  # Phase shift for Motor 3 in degrees
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -166,7 +166,11 @@ class MotorController:
         return degrees
 
     def set_motor_direction(self, direction):
-        if (direction == 'forward' and not self.direction_inverted) or (direction == 'backward' and self.direction_inverted):
+        # Adjust direction based on inversion
+        if self.direction_inverted:
+            direction = 'backward' if direction == 'forward' else 'forward'
+
+        if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
         else:
@@ -220,41 +224,78 @@ class MotorController:
 
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
-    parser.add_argument("motor1_target", type=int, nargs="?", default=90)
-    parser.add_argument("motor3_target", type=int, nargs="?", default=270)
+    parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 and Motor 4")
+    parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 2 and Motor 3")
     args = parser.parse_args()
 
     try:
         # Initialize motors with phase shift and inversion settings
-        motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
-                                 MOTOR1_ADC_CHANNEL, args.motor1_target, phase_shift=0)
-        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
-                                 MOTOR2_ADC_CHANNEL, args.motor1_target, phase_shift=0,
-                                 encoder_inverted=True, direction_inverted=True)
-        motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
-                                 MOTOR3_ADC_CHANNEL, args.motor3_target, phase_shift=PHASE_SHIFT)
-        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
-                                 MOTOR4_ADC_CHANNEL, args.motor3_target, phase_shift=PHASE_SHIFT,
-                                 encoder_inverted=True, direction_inverted=True)
+        motor1 = MotorController(
+            "Motor 1",
+            MOTOR1_IN1,
+            MOTOR1_IN2,
+            motor1_pwm,
+            MOTOR1_ADC_CHANNEL,
+            args.motor1_target,
+            phase_shift=0,
+            encoder_inverted=False,
+            direction_inverted=False
+        )
+        motor2 = MotorController(
+            "Motor 2",
+            MOTOR2_IN1,
+            MOTOR2_IN2,
+            motor2_pwm,
+            MOTOR2_ADC_CHANNEL,
+            args.motor3_target,  # Motor 2 follows Motor 3's target
+            phase_shift=PHASE_SHIFT,  # Same phase shift as Motor 3
+            encoder_inverted=True,
+            direction_inverted=True
+        )
+        motor3 = MotorController(
+            "Motor 3",
+            MOTOR3_IN1,
+            MOTOR3_IN2,
+            motor3_pwm,
+            MOTOR3_ADC_CHANNEL,
+            args.motor3_target,
+            phase_shift=PHASE_SHIFT,
+            encoder_inverted=False,
+            direction_inverted=False
+        )
+        motor4 = MotorController(
+            "Motor 4",
+            MOTOR4_IN1,
+            MOTOR4_IN2,
+            motor4_pwm,
+            MOTOR4_ADC_CHANNEL,
+            args.motor1_target,  # Motor 4 follows Motor 1's target
+            phase_shift=0,  # Same phase shift as Motor 1
+            encoder_inverted=True,
+            direction_inverted=True
+        )
 
         # Initial calibration
         print("Starting initial calibration...")
         calibration_start = time.time()
         while True:
             m1_done = motor1.move_to_position(args.motor1_target)
-            m2_done = motor2.move_to_position(args.motor1_target)
+            m2_done = motor2.move_to_position(args.motor3_target)
             m3_done = motor3.move_to_position(args.motor3_target)
-            m4_done = motor4.move_to_position(args.motor3_target)
+            m4_done = motor4.move_to_position(args.motor1_target)
 
             # Print calibration progress
             m1_pos = motor1.read_position()
             m2_pos = motor2.read_position()
             m3_pos = motor3.read_position()
             m4_pos = motor4.read_position()
-            print(f"\rCalibrating - M1: {m1_pos:.1f}° / {args.motor1_target}°, "
-                  f"M2: {m2_pos:.1f}° / {args.motor1_target}°, "
-                  f"M3: {m3_pos:.1f}° / {args.motor3_target}°, "
-                  f"M4: {m4_pos:.1f}° / {args.motor3_target}°", end='')
+            print(
+                f"\rCalibrating - M1: {m1_pos:.1f}° / {args.motor1_target}°, "
+                f"M2: {m2_pos:.1f}° / {args.motor3_target}°, "
+                f"M3: {m3_pos:.1f}° / {args.motor3_target}°, "
+                f"M4: {m4_pos:.1f}° / {args.motor1_target}°",
+                end=''
+            )
 
             if m1_done and m2_done and m3_done and m4_done:
                 break
@@ -273,7 +314,7 @@ def main():
         motor4.stop_motor()
         time.sleep(5)
 
-        print("Starting sawtooth pattern with 180-degree phase shift for Motor 3 and Motor 2...")
+        print("Starting sawtooth pattern with appropriate phase shifts...")
         while True:
             # Generate sawtooth positions
             m1_target = motor1.generate_sawtooth_position()
@@ -298,6 +339,7 @@ def main():
             print(f"Motor 4 - Target: {m4_target:.1f}°, Current: {m4_pos:.1f}°")
             print(f"Phase Difference M1-M3: {abs(m3_pos - m1_pos):.1f}°")
             print(f"Phase Difference M2-M4: {abs(m4_pos - m2_pos):.1f}°")
+            print("-" * 60)
 
             time.sleep(0.05)
 
