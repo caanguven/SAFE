@@ -35,7 +35,7 @@ MOTOR3_ADC_CHANNEL = 2
 # GPIO Pins for Motor 4 (Please replace with actual pins)
 MOTOR4_IN1 = 13
 MOTOR4_IN2 = 15
-MOTOR4_SPD = 16
+MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
 
 # GPIO setup
