@@ -8,7 +8,8 @@ import argparse
 SPI_PORT = 0
 SPI_DEVICE = 0
 ADC_MAX = 1023
-DEAD_ZONE_THRESHOLD = 50
+DEAD_ZONE_THRESHOLD_NORMAL = 150  # For normal encoders
+DEAD_ZONE_THRESHOLD_INVERTED = 150  # For inverted encoders near ADC=0
 SAWTOOTH_PERIOD = 2  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
@@ -80,38 +81,40 @@ class SpikeFilter:
 
         if self.filter_active:
             if not self.is_inverted:
-                # For normal encoders, forward increases ADC, dead zone near 0
-                if 150 <= new_value <= 700:
-                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                    return None
-                else:
+                # For normal encoders, dead zone near low ADC values
+                if new_value > DEAD_ZONE_THRESHOLD_NORMAL:
                     # Valid reading after dead zone
                     print(f"[{self.name}] Valid reading after dead zone: {new_value}")
                     self.filter_active = False
                     self.last_valid_reading = new_value
                     return new_value
+                else:
+                    # Still in dead zone
+                    print(f"[{self.name}] Still in dead zone: {new_value}")
+                    return None
             else:
-                # For inverted encoders, forward decreases ADC, dead zone near ADC_MAX
-                if 300 <= new_value <= 900:
-                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                    return None
-                else:
+                # For inverted encoders, dead zone near low ADC values (approaching 0)
+                if new_value < DEAD_ZONE_THRESHOLD_INVERTED:
                     # Valid reading after dead zone
                     print(f"[{self.name}] Valid reading after dead zone: {new_value}")
                     self.filter_active = False
                     self.last_valid_reading = new_value
                     return new_value
+                else:
+                    # Still in dead zone
+                    print(f"[{self.name}] Still in dead zone: {new_value}")
+                    return None
         else:
             if self.last_valid_reading is not None:
                 if not self.is_inverted:
-                    # Normal encoder: sudden drop into dead zone
-                    if self.last_valid_reading > 950 and 150 <= new_value <= 700:
+                    # Normal encoder: detect sudden drop into dead zone
+                    if self.last_valid_reading > ADC_MAX - DEAD_ZONE_THRESHOLD_NORMAL and new_value <= DEAD_ZONE_THRESHOLD_NORMAL:
                         print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                         self.filter_active = True
                         return None
                 else:
-                    # Inverted encoder: sudden rise into dead zone
-                    if self.last_valid_reading < 100 and 300 <= new_value <= 900:
+                    # Inverted encoder: detect sudden rise into dead zone
+                    if self.last_valid_reading < DEAD_ZONE_THRESHOLD_INVERTED and new_value >= DEAD_ZONE_THRESHOLD_INVERTED:
                         print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                         self.filter_active = True
                         return None
@@ -122,13 +125,14 @@ class SpikeFilter:
 
 
 class PIDController:
-    def __init__(self, Kp, Ki, Kd):
+    def __init__(self, Kp, Ki, Kd, output_limits=(None, None)):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
         self.previous_error = 0
         self.integral = 0
         self.last_time = time.time()
+        self.min_output, self.max_output = output_limits
 
     def compute(self, error):
         current_time = time.time()
@@ -138,14 +142,27 @@ class PIDController:
 
         proportional = self.Kp * error
         self.integral += error * delta_time
-        integral = self.Ki * self.integral
+        # Clamp integral to prevent wind-up
+        integral = self.Ki * max(min(self.integral, 1000), -1000)
         derivative = self.Kd * (error - self.previous_error) / delta_time
 
         control_signal = proportional + integral + derivative
+
+        # Clamp control_signal to output limits
+        if self.min_output is not None:
+            control_signal = max(self.min_output, control_signal)
+        if self.max_output is not None:
+            control_signal = min(self.max_output, control_signal)
+
         self.previous_error = error
         self.last_time = current_time
 
         return control_signal
+
+    def reset(self):
+        self.previous_error = 0
+        self.integral = 0
+        self.last_time = time.time()
 
 
 class MotorController:
@@ -161,7 +178,8 @@ class MotorController:
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
+        # Added output limits to PID to prevent excessive control signals
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05, output_limits=(-100, 100))
         self.start_time = None
         self.invert_encoder = invert_encoder
         self.invert_direction = invert_direction
@@ -187,7 +205,7 @@ class MotorController:
             return self.last_valid_position if self.last_valid_position is not None else 0
 
         # Convert filtered ADC value to degrees
-        degrees = (filtered_value / ADC_MAX) * 330.0
+        degrees = (filtered_value / ADC_MAX) * MAX_ANGLE
         self.last_valid_position = degrees
         print(f"[{self.name}] Converted Position: {degrees:.1f}°")
         return degrees
@@ -212,9 +230,9 @@ class MotorController:
 
         # Normalize error for circular movement
         if error > 165:
-            error -= 330
+            error -= MAX_ANGLE
         elif error < -165:
-            error += 330
+            error += MAX_ANGLE
 
         print(f"[{self.name}] Current Position: {current_position:.1f}°, Target: {target:.1f}°, Error: {error:.1f}°")
 
@@ -225,12 +243,13 @@ class MotorController:
         # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
             self.stop_motor()
+            self.pid.reset()  # Reset PID when within tolerance
             print(f"[{self.name}] Within tolerance. Stopping motor.")
             return True
 
         direction = 'forward' if control_signal > 0 else 'backward'
         self.set_motor_direction(direction)
-        speed = min(100, max(30, abs(control_signal)))
+        speed = min(100, max(30, abs(control_signal)))  # Clamp speed between 30% and 100%
         self.pwm.ChangeDutyCycle(speed)
         print(f"[{self.name}] Motor speed set to {speed}%")
         return False
