@@ -31,10 +31,46 @@ PHASE_SHIFT = 180  # Phase shift for Motor 3 and Motor 4 in degrees
 
 # GPIO Pins for Motors
 MOTORS_CONFIG = {
-    'Motor1': {'in1': 7, 'in2': 26, 'spd': 18, 'adc_channel': 0, 'target': 180},
-    'Motor2': {'in1': 29, 'in2': 22, 'spd': 31, 'adc_channel': 1, 'target': 180, 'invert_encoder': True, 'invert_direction': True},
-    'Motor3': {'in1': 11, 'in2': 32, 'spd': 33, 'adc_channel': 2, 'target': 180, 'phase_shift': PHASE_SHIFT},
-    'Motor4': {'in1': 12, 'in2': 13, 'spd': 35, 'adc_channel': 3, 'target': 180, 'invert_encoder': True, 'invert_direction': True, 'phase_shift': PHASE_SHIFT}
+    'Motor1': {
+        'in1': 7,
+        'in2': 26,
+        'spd': 18,
+        'adc_channel': 0,
+        'target': 180,
+        'invert_encoder': False,
+        'invert_direction': False,
+        'phase_shift': 0
+    },
+    'Motor2': {
+        'in1': 29,
+        'in2': 22,
+        'spd': 31,
+        'adc_channel': 1,
+        'target': 180,
+        'invert_encoder': False,  # Set to False based on your working Motor 2 code
+        'invert_direction': False,  # Set to False unless physically inverted
+        'phase_shift': 0
+    },
+    'Motor3': {
+        'in1': 11,
+        'in2': 32,
+        'spd': 33,
+        'adc_channel': 2,
+        'target': 180,
+        'invert_encoder': False,
+        'invert_direction': False,
+        'phase_shift': PHASE_SHIFT
+    },
+    'Motor4': {
+        'in1': 12,
+        'in2': 13,
+        'spd': 35,
+        'adc_channel': 3,
+        'target': 180,
+        'invert_encoder': False,  # Set to False based on your working Motor 2 code
+        'invert_direction': False,  # Set to False unless physically inverted
+        'phase_shift': PHASE_SHIFT
+    }
 }
 
 # ----------------------------
