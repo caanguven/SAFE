@@ -12,7 +12,7 @@ DEAD_ZONE_THRESHOLD = 50
 SAWTOOTH_PERIOD = 2  # Period in seconds
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-PHASE_SHIFT = 180  # Phase shift for Motor 3 in degrees
+PHASE_SHIFT = 180  # Phase shift for Motor 3 and Motor 2 in degrees
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
@@ -68,35 +68,57 @@ mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 
 class SpikeFilter:
-    def __init__(self, name):
+    def __init__(self, name, is_inverted=False):
         self.filter_active = False
         self.last_valid_reading = None
         self.name = name  # For debugging purposes
+        self.is_inverted = is_inverted
 
     def filter(self, new_value):
-        # If the filter is active, we are in the dead zone
+        # Debug: Print the raw new_value
+        print(f"[{self.name}] Raw ADC Value: {new_value}")
+
         if self.filter_active:
-            # Discard readings between 150 and 700
-            if 150 <= new_value <= 700:
-                print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
-                return None
+            if not self.is_inverted:
+                # For normal encoders, forward increases ADC, dead zone near 0
+                if 150 <= new_value <= 700:
+                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                    return None
+                else:
+                    # Valid reading after dead zone
+                    print(f"[{self.name}] Valid reading after dead zone: {new_value}")
+                    self.filter_active = False
+                    self.last_valid_reading = new_value
+                    return new_value
             else:
-                # Valid reading after dead zone
-                print(f"[{self.name}] Valid reading after dead zone: {new_value}")
-                self.filter_active = False
-                self.last_valid_reading = new_value
-                return new_value
+                # For inverted encoders, forward decreases ADC, dead zone near ADC_MAX
+                if 300 <= new_value <= 900:
+                    print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                    return None
+                else:
+                    # Valid reading after dead zone
+                    print(f"[{self.name}] Valid reading after dead zone: {new_value}")
+                    self.filter_active = False
+                    self.last_valid_reading = new_value
+                    return new_value
         else:
-            # Not currently filtering
-            if self.last_valid_reading is not None and self.last_valid_reading > 950 and 150 <= new_value <= 700:
-                # Sudden drop into dead zone detected
-                print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
-                self.filter_active = True
-                return None
-            else:
-                # Valid reading
-                self.last_valid_reading = new_value
-                return new_value
+            if self.last_valid_reading is not None:
+                if not self.is_inverted:
+                    # Normal encoder: sudden drop into dead zone
+                    if self.last_valid_reading > 950 and 150 <= new_value <= 700:
+                        print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
+                        self.filter_active = True
+                        return None
+                else:
+                    # Inverted encoder: sudden rise into dead zone
+                    if self.last_valid_reading < 100 and 300 <= new_value <= 900:
+                        print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
+                        self.filter_active = True
+                        return None
+            # Valid reading
+            self.last_valid_reading = new_value
+            print(f"[{self.name}] Valid reading: {new_value}")
+            return new_value
 
 
 class PIDController:
@@ -127,21 +149,23 @@ class PIDController:
 
 
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, phase_shift=0, invert_encoder=False, invert_direction=False):
+    def __init__(self, name, in1, in2, pwm, adc_channel, target_position, phase_shift=0,
+                 invert_encoder=False, invert_direction=False):
         self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
         self.adc_channel = adc_channel
+        self.target_position = target_position
         self.phase_shift = phase_shift
         self.position = 0
         self.in_dead_zone = False
         self.last_valid_position = None
         self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
         self.start_time = None
-        self.spike_filter = SpikeFilter(name)
         self.invert_encoder = invert_encoder
         self.invert_direction = invert_direction
+        self.spike_filter = SpikeFilter(name, is_inverted=invert_encoder)
 
     def read_position(self):
         # Read raw ADC value
@@ -150,23 +174,29 @@ class MotorController:
         # Invert encoder reading if necessary
         if self.invert_encoder:
             raw_value = ADC_MAX - raw_value
+            print(f"[{self.name}] Inverted ADC Value: {raw_value}")
+        else:
+            print(f"[{self.name}] Normal ADC Value: {raw_value}")
 
         # Apply spike filter
         filtered_value = self.spike_filter.filter(raw_value)
 
         if filtered_value is None:
             # Use last valid position if in dead zone
+            print(f"[{self.name}] In dead zone. Using last valid position: {self.last_valid_position}")
             return self.last_valid_position if self.last_valid_position is not None else 0
 
         # Convert filtered ADC value to degrees
         degrees = (filtered_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
+        print(f"[{self.name}] Converted Position: {degrees:.1f}°")
         return degrees
 
     def set_motor_direction(self, direction):
         # Invert direction if necessary
         if self.invert_direction:
             direction = 'backward' if direction == 'forward' else 'forward'
+            print(f"[{self.name}] Direction inverted. New direction: {direction}")
 
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
@@ -174,6 +204,7 @@ class MotorController:
         else:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
+        print(f"[{self.name}] Motor direction set to {direction}")
 
     def move_to_position(self, target):
         current_position = self.read_position()
@@ -185,23 +216,30 @@ class MotorController:
         elif error < -165:
             error += 330
 
+        print(f"[{self.name}] Current Position: {current_position:.1f}°, Target: {target:.1f}°, Error: {error:.1f}°")
+
         # Use PID to compute control signal
         control_signal = self.pid.compute(error)
+        print(f"[{self.name}] Control Signal: {control_signal:.2f}")
 
         # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
             self.stop_motor()
+            print(f"[{self.name}] Within tolerance. Stopping motor.")
             return True
 
-        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
+        direction = 'forward' if control_signal > 0 else 'backward'
+        self.set_motor_direction(direction)
         speed = min(100, max(30, abs(control_signal)))
         self.pwm.ChangeDutyCycle(speed)
+        print(f"[{self.name}] Motor speed set to {speed}%")
         return False
 
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
+        print(f"[{self.name}] Motor stopped.")
 
     def generate_sawtooth_position(self):
         if self.start_time is None:
@@ -217,54 +255,93 @@ class MotorController:
         if shifted_position >= MAX_ANGLE:
             shifted_position = 0
 
+        print(f"[{self.name}] Generated Sawtooth Position: {shifted_position:.1f}°")
         return shifted_position
 
 
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern")
+    parser.add_argument("motor1_target", type=int, nargs="?", default=90, help="Target position for Motor 1 and Motor 4")
+    parser.add_argument("motor3_target", type=int, nargs="?", default=270, help="Target position for Motor 2 and Motor 3")
     args = parser.parse_args()
 
     try:
-        # Initialize motors
-        motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, MOTOR1_ADC_CHANNEL)
-        motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, MOTOR3_ADC_CHANNEL, phase_shift=PHASE_SHIFT)
-
-        # Add Motor 2 and Motor 4 with inversion
-        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, MOTOR2_ADC_CHANNEL,
-                                 phase_shift=PHASE_SHIFT, invert_encoder=True, invert_direction=True)
-        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, MOTOR4_ADC_CHANNEL,
-                                 invert_encoder=True, invert_direction=True)
+        # Initialize motors with phase shift and inversion settings
+        motor1 = MotorController(
+            name="Motor 1",
+            in1=MOTOR1_IN1,
+            in2=MOTOR1_IN2,
+            pwm=motor1_pwm,
+            adc_channel=MOTOR1_ADC_CHANNEL,
+            target_position=args.motor1_target,
+            phase_shift=0,
+            invert_encoder=False,
+            invert_direction=False
+        )
+        motor2 = MotorController(
+            name="Motor 2",
+            in1=MOTOR2_IN1,
+            in2=MOTOR2_IN2,
+            pwm=motor2_pwm,
+            adc_channel=MOTOR2_ADC_CHANNEL,
+            target_position=args.motor3_target,  # Motor 2 follows Motor 3's target
+            phase_shift=0,  # No phase shift; behaves like Motor 3
+            invert_encoder=True,
+            invert_direction=True
+        )
+        motor3 = MotorController(
+            name="Motor 3",
+            in1=MOTOR3_IN1,
+            in2=MOTOR3_IN2,
+            pwm=motor3_pwm,
+            adc_channel=MOTOR3_ADC_CHANNEL,
+            target_position=args.motor3_target,
+            phase_shift=PHASE_SHIFT,
+            invert_encoder=False,
+            invert_direction=False
+        )
+        motor4 = MotorController(
+            name="Motor 4",
+            in1=MOTOR4_IN1,
+            in2=MOTOR4_IN2,
+            pwm=motor4_pwm,
+            adc_channel=MOTOR4_ADC_CHANNEL,
+            target_position=args.motor1_target,  # Motor 4 follows Motor 1's target
+            phase_shift=PHASE_SHIFT,  # Phase shift similar to Motor 1
+            invert_encoder=True,
+            invert_direction=True
+        )
 
         # Initial calibration
         print("Starting initial calibration...")
         calibration_start = time.time()
-        while True:
-            # Set target positions
-            motor1_target = 180
-            motor3_target = 180
-            motor2_target = 180
-            motor4_target = 180
+        calibration_timeout = 30  # seconds
 
-            m1_done = motor1.move_to_position(motor1_target)
-            m3_done = motor3.move_to_position(motor3_target)
-            m2_done = motor2.move_to_position(motor2_target)
-            m4_done = motor4.move_to_position(motor4_target)
+        while True:
+            # Move each motor to its calibration target
+            m1_done = motor1.move_to_position(args.motor1_target)
+            m2_done = motor2.move_to_position(args.motor3_target)
+            m3_done = motor3.move_to_position(args.motor3_target)
+            m4_done = motor4.move_to_position(args.motor1_target)
+
+            # Read current positions
+            m1_pos = motor1.read_position()
+            m2_pos = motor2.read_position()
+            m3_pos = motor3.read_position()
+            m4_pos = motor4.read_position()
 
             # Print calibration progress
-            m1_pos = motor1.read_position()
-            m3_pos = motor3.read_position()
-            m2_pos = motor2.read_position()
-            m4_pos = motor4.read_position()
-            print(f"\rCalibrating - M1: {m1_pos:.1f}° / {motor1_target}°, "
-                  f"M2: {m2_pos:.1f}° / {motor2_target}°, "
-                  f"M3: {m3_pos:.1f}° / {motor3_target}°, "
-                  f"M4: {m4_pos:.1f}° / {motor4_target}°", end='')
+            print(f"\rCalibrating - M1: {m1_pos:.1f}° / {args.motor1_target}°, "
+                  f"M2: {m2_pos:.1f}° / {args.motor3_target}°, "
+                  f"M3: {m3_pos:.1f}° / {args.motor3_target}°, "
+                  f"M4: {m4_pos:.1f}° / {args.motor1_target}°", end='')
 
-            if m1_done and m3_done and m2_done and m4_done:
+            # Check if all motors have reached their targets
+            if m1_done and m2_done and m3_done and m4_done:
                 break
 
-            # Timeout after 30 seconds
-            if time.time() - calibration_start > 30:
+            # Check for calibration timeout
+            if time.time() - calibration_start > calibration_timeout:
                 print("\nCalibration timeout! Check motor connections.")
                 raise TimeoutError("Calibration timeout")
 
@@ -272,30 +349,32 @@ def main():
 
         print("\nCalibration complete. Stopping for 5 seconds...")
         motor1.stop_motor()
-        motor3.stop_motor()
         motor2.stop_motor()
+        motor3.stop_motor()
         motor4.stop_motor()
         time.sleep(5)
 
         print("Starting sawtooth pattern...")
         while True:
-            # Generate sawtooth positions
+            # Generate sawtooth positions for each motor
             m1_target = motor1.generate_sawtooth_position()
-            m3_target = motor3.generate_sawtooth_position()
             m2_target = motor2.generate_sawtooth_position()
+            m3_target = motor3.generate_sawtooth_position()
             m4_target = motor4.generate_sawtooth_position()
 
-            # Move motors to positions
-            motor1.move_to_position(m1_target)
-            motor3.move_to_position(m3_target)
-            motor2.move_to_position(m2_target)
-            motor4.move_to_position(m4_target)
+            # Move motors to generated positions
+            m1_done = motor1.move_to_position(m1_target)
+            m2_done = motor2.move_to_position(m2_target)
+            m3_done = motor3.move_to_position(m3_target)
+            m4_done = motor4.move_to_position(m4_target)
 
-            # Print current positions
+            # Read current positions
             m1_pos = motor1.read_position()
-            m3_pos = motor3.read_position()
             m2_pos = motor2.read_position()
+            m3_pos = motor3.read_position()
             m4_pos = motor4.read_position()
+
+            # Print current positions and phase differences
             print(f"Motor 1 - Target: {m1_target:.1f}°, Current: {m1_pos:.1f}°")
             print(f"Motor 2 - Target: {m2_target:.1f}°, Current: {m2_pos:.1f}°")
             print(f"Motor 3 - Target: {m3_target:.1f}°, Current: {m3_pos:.1f}°")
@@ -312,12 +391,12 @@ def main():
         print(f"\nError: {e}")
     finally:
         motor1.stop_motor()
-        motor3.stop_motor()
         motor2.stop_motor()
+        motor3.stop_motor()
         motor4.stop_motor()
         motor1_pwm.stop()
-        motor3_pwm.stop()
         motor2_pwm.stop()
+        motor3_pwm.stop()
         motor4_pwm.stop()
         GPIO.cleanup()
         print("GPIO cleaned up")
