@@ -54,7 +54,7 @@ try:
         print(f"Motor 2 ADC Value: {motor2_adc_value}")
         
         # Delay to avoid flooding the output
-        time.sleep(0.5)
+        time.sleep(0.1)
 
 except KeyboardInterrupt:
     print("\nProgram interrupted by user")
