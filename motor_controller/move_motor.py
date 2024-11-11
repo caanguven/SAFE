@@ -67,17 +67,12 @@ motor4_pwm.start(0)
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 class SpikeFilter:
-    def __init__(self, name, encoder_flipped=False):
+    def __init__(self, name):
         self.filter_active = False
         self.last_valid_reading = None
         self.name = name  # For debugging purposes
-        self.encoder_flipped = encoder_flipped
 
     def filter(self, new_value):
-        # If the encoder is flipped, invert the ADC reading
-        if self.encoder_flipped:
-            new_value = ADC_MAX - new_value
-
         if self.filter_active:
             # Discard readings in the dead zone (150 to 700)
             if 150 <= new_value <= 700:
@@ -142,7 +137,7 @@ class MotorController:
         self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
         self.start_time = None
         self.encoder_flipped = encoder_flipped
-        self.spike_filter = SpikeFilter(name, encoder_flipped)
+        self.spike_filter = SpikeFilter(name)
         
     def read_position(self):
         # Read raw ADC value
