@@ -65,6 +65,7 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
+
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
@@ -75,9 +76,11 @@ class SpikeFilter:
         if self.filter_active:
             # Discard readings in the dead zone (150 to 700)
             if 150 <= new_value <= 700:
+                # print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
                 return None
             else:
                 # Valid reading after dead zone
+                # print(f"[{self.name}] Valid reading after dead zone: {new_value}")
                 self.filter_active = False
                 self.last_valid_reading = new_value
                 return new_value
@@ -85,12 +88,14 @@ class SpikeFilter:
             # Not currently filtering
             if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
                 # Sudden jump detected, activate filter
+                # print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                 self.filter_active = True
                 return None
             else:
                 # Valid reading
                 self.last_valid_reading = new_value
                 return new_value
+
 
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
@@ -117,6 +122,7 @@ class PIDController:
         self.last_time = current_time
 
         return control_signal
+
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
@@ -196,6 +202,7 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
+
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
@@ -204,6 +211,7 @@ def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX
     else:
         position = (max_angle - (position_in_cycle * max_angle)) % max_angle
     return position
+
 
 class MotorGroup:
     def __init__(self, motors, group_phase_difference=0, movement_direction=1):
@@ -225,6 +233,7 @@ class MotorGroup:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
+
 
 def configure_motor_groups(direction, motors):
     if direction == 'forward':
@@ -260,7 +269,7 @@ def configure_motor_groups(direction, motors):
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            movement_direction=1  # M2 and M4 move forward
+            movement_direction=-1  # M2 and M4 move backward
         )
         overall_direction = 1
     elif direction == 'right':
@@ -272,12 +281,13 @@ def configure_motor_groups(direction, motors):
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            movement_direction=-1  # M2 and M4 move backward
+            movement_direction=1  # M2 and M4 move forward
         )
         overall_direction = -1
     else:
         raise ValueError("Invalid direction")
     return [group1, group2], overall_direction
+
 
 def main(stdscr):
     # Curses setup
@@ -346,7 +356,7 @@ def main(stdscr):
                 motor_groups, overall_direction = configure_motor_groups(current_direction, motors)
                 group1, group2 = motor_groups
 
-                # Generate base position
+                # Generate base position based on overall direction
                 base_position = generate_sawtooth_position(start_time, direction=overall_direction)
 
                 # Generate target positions for each group
@@ -420,6 +430,7 @@ def main(stdscr):
         curses.endwin()
 
         print("GPIO cleaned up and program terminated.")
+
 
 if __name__ == "__main__":
     curses.wrapper(main)
