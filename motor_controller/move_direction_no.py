@@ -258,13 +258,13 @@ def configure_motor_groups(direction, motors):
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
             group_phase_difference=180,
-            movement_direction=-1  # M1 and M3 move backward
+            movement_direction=1  # M1 and M3 move backward
         )
     elif direction == 'right':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=0,
-            movement_direction=-1  # M2 and M4 move backward
+            movement_direction=1  # M2 and M4 move backward
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
