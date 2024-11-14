@@ -75,11 +75,11 @@ class SpikeFilter:
         if self.filter_active:
             # Discard readings in the dead zone (150 to 700)
             if 150 <= new_value <= 700:
-                print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
+                # print(f"[{self.name}] Discarding invalid reading during dead zone: {new_value}")
                 return None
             else:
                 # Valid reading after dead zone
-                print(f"[{self.name}] Valid reading after dead zone: {new_value}")
+                # print(f"[{self.name}] Valid reading after dead zone: {new_value}")
                 self.filter_active = False
                 self.last_valid_reading = new_value
                 return new_value
@@ -87,7 +87,7 @@ class SpikeFilter:
             # Not currently filtering
             if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
                 # Sudden jump detected, activate filter
-                print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
+                # print(f"[{self.name}] Dead zone detected: last valid {self.last_valid_reading}, new {new_value}")
                 self.filter_active = True
                 return None
             else:
@@ -181,7 +181,7 @@ class MotorController:
         control_signal = self.pid.compute(error)
 
         # Adjust control signal based on movement direction
-        adjusted_control_signal = control_signal
+        adjusted_control_signal = control_signal * self.movement_direction
 
         # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
@@ -199,7 +199,7 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
-def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
+def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
     position = (position_in_cycle * max_angle) % max_angle
@@ -221,8 +221,8 @@ class MotorGroup:
     def generate_target_positions(self, base_position):
         target_positions = []
         for motor in self.motors:
-            # Adjust the base_position by group phase difference and movement direction
-            position = (base_position + self.movement_direction * self.group_phase_difference) % MAX_ANGLE
+            # Adjust the base_position by group phase difference
+            position = (base_position + self.group_phase_difference) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
 
@@ -246,7 +246,7 @@ def configure_motor_groups(direction, motors):
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
-            group_phase_difference=-180,
+            group_phase_difference=180,
             movement_direction=-1
         )
     elif direction == 'left':
@@ -257,7 +257,7 @@ def configure_motor_groups(direction, motors):
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
-            group_phase_difference=-180,
+            group_phase_difference=180,
             movement_direction=-1  # M1 and M3 move backward
         )
     elif direction == 'right':
@@ -268,7 +268,7 @@ def configure_motor_groups(direction, motors):
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
-            group_phase_difference=-180,
+            group_phase_difference=180,
             movement_direction=1  # M1 and M3 move forward
         )
     else:
@@ -343,7 +343,7 @@ def main(stdscr):
                 group1, group2 = motor_groups
 
                 # Generate base position (always increasing)
-                base_position = generate_sawtooth_position(start_time, direction=1)
+                base_position = generate_sawtooth_position(start_time)
 
                 # Generate target positions for each group
                 group1_targets = group1.generate_target_positions(base_position)
