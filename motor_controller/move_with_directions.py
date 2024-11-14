@@ -142,18 +142,18 @@ class MotorController:
     def read_position(self):
         # Read raw ADC value
         raw_value = mcp.read_adc(self.adc_channel)
-        
+
         # Invert raw_value if encoder is flipped
         if self.encoder_flipped:
             raw_value = ADC_MAX - raw_value
-        
+
         # Apply spike filter
         filtered_value = self.spike_filter.filter(raw_value)
-        
+
         if filtered_value is None:
             # Use last valid position if in dead zone
             return self.last_valid_position if self.last_valid_position is not None else 0
-        
+
         # Convert filtered ADC value to degrees
         degrees = (filtered_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
@@ -184,7 +184,7 @@ class MotorController:
         adjusted_control_signal = control_signal * self.movement_direction
 
         # Determine direction and speed
-        if abs(error) <= 5:  # Tolerance
+        if abs(error) <= 2:  # Tolerance
             self.stop_motor()
             return True
 
@@ -274,29 +274,37 @@ def configure_motor_groups(direction, motors):
         raise ValueError("Invalid direction")
     return [group1, group2]
 
-def calibrate_motors(motors, calibration_positions):
+def calibrate_motors(motor_groups):
     print("\nStarting calibration...")
     calibration_start = time.time()
-    while True:
-        # Move each motor to its calibration position
-        m1_done = motors['M1'].move_to_position(calibration_positions['M1'])
-        m2_done = motors['M2'].move_to_position(calibration_positions['M2'])
-        m3_done = motors['M3'].move_to_position(calibration_positions['M3'])
-        m4_done = motors['M4'].move_to_position(calibration_positions['M4'])
+    base_position = 0  # Starting position for calibration
 
-        # Read current positions
-        m1_pos = motors['M1'].read_position()
-        m2_pos = motors['M2'].read_position()
-        m3_pos = motors['M3'].read_position()
-        m4_pos = motors['M4'].read_position()
+    # Generate target positions for each group
+    group1_targets = motor_groups[0].generate_target_positions(base_position)
+    group2_targets = motor_groups[1].generate_target_positions(base_position)
+
+    # Map motors to their targets
+    motor_targets = {}
+    for motor, target in zip(motor_groups[0].motors, group1_targets):
+        motor_targets[motor] = target
+    for motor, target in zip(motor_groups[1].motors, group2_targets):
+        motor_targets[motor] = target
+
+    while True:
+        all_done = True
+        for motor, target in motor_targets.items():
+            done = motor.move_to_position(target)
+            if not done:
+                all_done = False
 
         # Print calibration progress
-        print(f"\rCalibrating - M1: {m1_pos:.1f}° -> {calibration_positions['M1']}°, "
-              f"M2: {m2_pos:.1f}° -> {calibration_positions['M2']}°, "
-              f"M3: {m3_pos:.1f}° -> {calibration_positions['M3']}°, "
-              f"M4: {m4_pos:.1f}° -> {calibration_positions['M4']}°", end='')
+        positions = []
+        for motor in motor_targets.keys():
+            positions.append(f"{motor.name}: {motor.read_position():.1f}° -> {motor_targets[motor]:.1f}°")
 
-        if m1_done and m2_done and m3_done and m4_done:
+        print("\rCalibrating - " + ", ".join(positions), end='')
+
+        if all_done:
             break
 
         # Timeout after 30 seconds
@@ -334,18 +342,9 @@ def main():
 
         # Configure motor groups based on direction
         motor_groups = configure_motor_groups(args.direction, motors)
-        group1, group2 = motor_groups
 
-        # Define calibration positions
-        calibration_positions = {
-            'M1': 90,
-            'M2': 270,
-            'M3': 90,
-            'M4': 270
-        }
-
-        # Calibrate motors to specified positions
-        calibrate_motors(motors, calibration_positions)
+        # Calibrate motors using the same configuration as the movement
+        calibrate_motors(motor_groups)
         time.sleep(2)  # Optional pause after calibration
 
         print("Starting sawtooth pattern with synchronization...")
@@ -355,15 +354,15 @@ def main():
             base_position = generate_sawtooth_position(start_time)
 
             # Generate target positions for each group
-            group1_targets = group1.generate_target_positions(base_position)
-            group2_targets = group2.generate_target_positions(base_position)
+            group1_targets = motor_groups[0].generate_target_positions(base_position)
+            group2_targets = motor_groups[1].generate_target_positions(base_position)
 
             # Move motors in group1
-            for motor, target in zip(group1.motors, group1_targets):
+            for motor, target in zip(motor_groups[0].motors, group1_targets):
                 motor.move_to_position(target)
 
             # Move motors in group2
-            for motor, target in zip(group2.motors, group2_targets):
+            for motor, target in zip(motor_groups[1].motors, group2_targets):
                 motor.move_to_position(target)
 
             # Read current positions
