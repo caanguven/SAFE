@@ -303,8 +303,7 @@ def main():
         motor_groups = configure_motor_groups(args.direction, motors)
         group1, group2 = motor_groups
 
-        # Optional: Initial Calibration if needed (Removed as per request)
-        # If you still want to set motors to specific starting positions, implement here.
+        # Removed Calibration Phase
 
         print("Starting movement based on selected direction...")
         start_time = time.time()
@@ -340,8 +339,8 @@ def main():
 
             # Print current positions and phase differences
             print(f"\nMotor 1 - Current: {m1_pos:.1f}°")
-            print(f"Motor 2 - Current: {m2_pos:.1f}°")
             print(f"Motor 3 - Current: {m3_pos:.1f}°")
+            print(f"Motor 2 - Current: {m2_pos:.1f}°")
             print(f"Motor 4 - Current: {m4_pos:.1f}°")
             print(f"Phase Difference M1-M3: {phase_diff_m1_m3:.1f}°, M2-M4: {phase_diff_m2_m4:.1f}°")
 
