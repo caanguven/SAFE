@@ -65,7 +65,6 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
@@ -93,7 +92,6 @@ class SpikeFilter:
                 self.last_valid_reading = new_value
                 return new_value
 
-
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
         self.Kp = Kp
@@ -120,7 +118,6 @@ class PIDController:
 
         return control_signal
 
-
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
         self.name = name
@@ -134,6 +131,10 @@ class MotorController:
         self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
         self.encoder_flipped = encoder_flipped
         self.spike_filter = SpikeFilter(name)
+        self.movement_direction = 1  # 1 for forward, -1 for backward
+
+    def set_movement_direction(self, movement_direction):
+        self.movement_direction = movement_direction
 
     def read_position(self):
         # Read raw ADC value
@@ -176,14 +177,17 @@ class MotorController:
         # Use PID to compute control signal
         control_signal = self.pid.compute(error)
 
+        # Adjust control signal based on movement direction
+        adjusted_control_signal = control_signal * self.movement_direction
+
         # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
             self.stop_motor()
             return True
 
-        direction = 'forward' if control_signal > 0 else 'backward'
+        direction = 'forward' if adjusted_control_signal > 0 else 'backward'
         self.set_motor_direction_output(direction)
-        speed = min(100, max(30, abs(control_signal)))
+        speed = min(100, max(30, abs(adjusted_control_signal)))
         self.pwm.ChangeDutyCycle(speed)
         return False
 
@@ -192,86 +196,88 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
-
-def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
+def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
-    position = (position_in_cycle * max_angle) % max_angle
+    if direction == 1:
+        position = (position_in_cycle * max_angle) % max_angle
+    else:
+        position = (max_angle - (position_in_cycle * max_angle)) % max_angle
     return position
 
-
 class MotorGroup:
-    def __init__(self, motors, group_phase_difference=0, direction=1):
+    def __init__(self, motors, group_phase_difference=0, movement_direction=1):
         """
         motors: list of MotorController instances
         group_phase_difference: in degrees, phase difference relative to base position
-        direction: 1 for normal direction, -1 for opposite direction
+        movement_direction: 1 for forward, -1 for backward
         """
         self.motors = motors
         self.group_phase_difference = group_phase_difference
-        self.direction = direction  # 1 or -1
+        self.movement_direction = movement_direction
+        for motor in self.motors:
+            motor.set_movement_direction(self.movement_direction)
 
     def generate_target_positions(self, base_position):
         target_positions = []
         for motor in self.motors:
             # Adjust the base_position by group phase difference
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
-            # If direction is -1, invert the position
-            if self.direction == -1:
-                position = (MAX_ANGLE - position) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
-
 
 def configure_motor_groups(direction, motors):
     if direction == 'forward':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M3']],
             group_phase_difference=0,
-            direction=1
+            movement_direction=1
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
             group_phase_difference=180,
-            direction=1
+            movement_direction=1
         )
+        overall_direction = 1
     elif direction == 'backward':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M3']],
             group_phase_difference=0,
-            direction=-1
+            movement_direction=-1
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
             group_phase_difference=180,
-            direction=-1
+            movement_direction=-1
         )
+        overall_direction = -1
     elif direction == 'left':
         group1 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
             group_phase_difference=0,
-            direction=1  # M1 and M3 move forward
+            movement_direction=1  # M1 and M3 move forward
         )
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            direction=-1  # M2 and M4 move backward
+            movement_direction=1  # M2 and M4 move forward
         )
+        overall_direction = 1
     elif direction == 'right':
         group1 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
             group_phase_difference=0,
-            direction=-1  # M1 and M3 move backward
+            movement_direction=-1  # M1 and M3 move backward
         )
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            direction=1  # M2 and M4 move forward
+            movement_direction=-1  # M2 and M4 move backward
         )
+        overall_direction = -1
     else:
         raise ValueError("Invalid direction")
-    return [group1, group2]
-
+    return [group1, group2], overall_direction
 
 def main(stdscr):
     # Curses setup
@@ -337,11 +343,11 @@ def main(stdscr):
 
             if current_direction != 'stable':
                 # Configure motor groups based on current direction
-                motor_groups = configure_motor_groups(current_direction, motors)
+                motor_groups, overall_direction = configure_motor_groups(current_direction, motors)
                 group1, group2 = motor_groups
 
                 # Generate base position
-                base_position = generate_sawtooth_position(start_time)
+                base_position = generate_sawtooth_position(start_time, direction=overall_direction)
 
                 # Generate target positions for each group
                 group1_targets = group1.generate_target_positions(base_position)
@@ -414,7 +420,6 @@ def main(stdscr):
         curses.endwin()
 
         print("GPIO cleaned up and program terminated.")
-
 
 if __name__ == "__main__":
     curses.wrapper(main)
