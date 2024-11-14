@@ -199,10 +199,13 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
-def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
+def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
-    position = (position_in_cycle * max_angle) % max_angle
+    if direction == 1:
+        position = (position_in_cycle * max_angle) % max_angle
+    else:
+        position = (max_angle - (position_in_cycle * max_angle)) % max_angle
     return position
 
 class MotorGroup:
@@ -282,13 +285,13 @@ def main():
 
     try:
         # Initialize motors with encoder flipping as necessary
-        motor1 = MotorController("Motor 1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
+        motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
                                  MOTOR1_ADC_CHANNEL, encoder_flipped=False)
-        motor2 = MotorController("Motor 2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
+        motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
                                  MOTOR2_ADC_CHANNEL, encoder_flipped=True)
-        motor3 = MotorController("Motor 3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
+        motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
                                  MOTOR3_ADC_CHANNEL, encoder_flipped=False)
-        motor4 = MotorController("Motor 4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
+        motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
                                  MOTOR4_ADC_CHANNEL, encoder_flipped=True)
 
         # Map motor names to instances
@@ -303,13 +306,18 @@ def main():
         motor_groups = configure_motor_groups(args.direction, motors)
         group1, group2 = motor_groups
 
-        # Removed Calibration Phase
-
         print("Starting movement based on selected direction...")
         start_time = time.time()
         while True:
-            # Generate base position
-            base_position = generate_sawtooth_position(start_time)
+            # Determine overall movement direction for base_position generation
+            # For 'forward' and 'backward', the direction is consistent
+            # For 'left' and 'right', it's based on group1's movement_direction
+            # Assuming group1's movement_direction determines the overall direction
+
+            overall_direction = motor_groups[0].movement_direction
+
+            # Generate base position based on overall direction
+            base_position = generate_sawtooth_position(start_time, direction=overall_direction)
 
             # Generate target positions for each group
             group1_targets = group1.generate_target_positions(base_position)
@@ -330,19 +338,16 @@ def main():
             m4_pos = motor4.read_position()
 
             # Calculate phase differences
-            phase_diff_m1_m3 = abs(m1_pos - m3_pos)
-            phase_diff_m2_m4 = abs(m2_pos - m4_pos)
+            phase_diff_m1_m4 = abs(m1_pos - m4_pos)
+            phase_diff_m2_m3 = abs(m2_pos - m3_pos)
 
             # Adjust phase differences to account for circular measurement
-            phase_diff_m1_m3 = min(phase_diff_m1_m3, 330 - phase_diff_m1_m3)
-            phase_diff_m2_m4 = min(phase_diff_m2_m4, 330 - phase_diff_m2_m4)
+            phase_diff_m1_m4 = min(phase_diff_m1_m4, 330 - phase_diff_m1_m4)
+            phase_diff_m2_m3 = min(phase_diff_m2_m3, 330 - phase_diff_m2_m3)
 
             # Print current positions and phase differences
-            print(f"\nMotor 1 - Current: {m1_pos:.1f}°")
-            print(f"Motor 3 - Current: {m3_pos:.1f}°")
-            print(f"Motor 2 - Current: {m2_pos:.1f}°")
-            print(f"Motor 4 - Current: {m4_pos:.1f}°")
-            print(f"Phase Difference M1-M3: {phase_diff_m1_m3:.1f}°, M2-M4: {phase_diff_m2_m4:.1f}°")
+            print(f"\nM1 - Current: {m1_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M1-M4: {phase_diff_m1_m4:.1f}°")
+            print(f"M2 - Current: {m2_pos:.1f}°, M3 - Current: {m3_pos:.1f}° | Phase Diff M2-M3: {phase_diff_m2_m3:.1f}°")
 
             time.sleep(0.05)
 
