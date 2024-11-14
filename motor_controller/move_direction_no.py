@@ -2,7 +2,6 @@ import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
-import argparse
 import curses
 
 # Constants for SPI and ADC
@@ -66,7 +65,6 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
@@ -97,7 +95,6 @@ class SpikeFilter:
                 self.last_valid_reading = new_value
                 return new_value
 
-
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
         self.Kp = Kp
@@ -123,7 +120,6 @@ class PIDController:
         self.last_time = current_time
 
         return control_signal
-
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
@@ -185,7 +181,7 @@ class MotorController:
         control_signal = self.pid.compute(error)
 
         # Adjust control signal based on movement direction
-        adjusted_control_signal = control_signal * self.movement_direction
+        adjusted_control_signal = control_signal
 
         # Determine direction and speed
         if abs(error) <= 2:  # Tolerance
@@ -203,16 +199,11 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
-
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
-    if direction == 1:
-        position = (position_in_cycle * max_angle) % max_angle
-    else:
-        position = (max_angle - (position_in_cycle * max_angle)) % max_angle
+    position = (position_in_cycle * max_angle) % max_angle
     return position
-
 
 class MotorGroup:
     def __init__(self, motors, group_phase_difference=0, movement_direction=1):
@@ -230,11 +221,10 @@ class MotorGroup:
     def generate_target_positions(self, base_position):
         target_positions = []
         for motor in self.motors:
-            # Adjust the base_position by group phase difference
-            position = (base_position + self.group_phase_difference) % MAX_ANGLE
+            # Adjust the base_position by group phase difference and movement direction
+            position = (base_position + self.movement_direction * self.group_phase_difference) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
-
 
 def configure_motor_groups(direction, motors):
     if direction == 'forward':
@@ -256,35 +246,34 @@ def configure_motor_groups(direction, motors):
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
+            group_phase_difference=-180,
             movement_direction=-1
         )
     elif direction == 'left':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=0,
-            movement_direction=1  # forward
+            movement_direction=1  # M2 and M4 move forward
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
-            group_phase_difference=180,
-            movement_direction=-1  # backward
+            group_phase_difference=-180,
+            movement_direction=-1  # M1 and M3 move backward
         )
     elif direction == 'right':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=0,
-            movement_direction=-1  # backward
+            movement_direction=-1  # M2 and M4 move backward
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
-            group_phase_difference=180,
-            movement_direction=1  # forward
+            group_phase_difference=-180,
+            movement_direction=1  # M1 and M3 move forward
         )
     else:
         raise ValueError("Invalid direction")
     return [group1, group2]
-
 
 def main(stdscr):
     # Curses setup
@@ -353,9 +342,8 @@ def main(stdscr):
                 motor_groups = configure_motor_groups(current_direction, motors)
                 group1, group2 = motor_groups
 
-                # Generate base position based on overall direction
-                overall_direction = group1.movement_direction
-                base_position = generate_sawtooth_position(start_time, direction=overall_direction)
+                # Generate base position (always increasing)
+                base_position = generate_sawtooth_position(start_time, direction=1)
 
                 # Generate target positions for each group
                 group1_targets = group1.generate_target_positions(base_position)
@@ -380,18 +368,18 @@ def main(stdscr):
             m4_pos = motor4.read_position()
 
             # Calculate phase differences
-            phase_diff_m1_m4 = abs(m1_pos - m4_pos)
-            phase_diff_m2_m3 = abs(m2_pos - m3_pos)
+            phase_diff_m1_m3 = abs(m1_pos - m3_pos)
+            phase_diff_m2_m4 = abs(m2_pos - m4_pos)
 
             # Adjust phase differences to account for circular measurement
-            phase_diff_m1_m4 = min(phase_diff_m1_m4, MAX_ANGLE - phase_diff_m1_m4)
-            phase_diff_m2_m3 = min(phase_diff_m2_m3, MAX_ANGLE - phase_diff_m2_m3)
+            phase_diff_m1_m3 = min(phase_diff_m1_m3, MAX_ANGLE - phase_diff_m1_m3)
+            phase_diff_m2_m4 = min(phase_diff_m2_m4, MAX_ANGLE - phase_diff_m2_m4)
 
             # Display current positions and phase differences
             status_lines = [
                 f"Direction: {current_direction.capitalize()}",
-                f"M1 - Current: {m1_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M1-M4: {phase_diff_m1_m4:.1f}°",
-                f"M2 - Current: {m2_pos:.1f}°, M3 - Current: {m3_pos:.1f}° | Phase Diff M2-M3: {phase_diff_m2_m3:.1f}°"
+                f"M1 - Current: {m1_pos:.1f}°, M3 - Current: {m3_pos:.1f}° | Phase Diff M1-M3: {phase_diff_m1_m3:.1f}°",
+                f"M2 - Current: {m2_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M2-M4: {phase_diff_m2_m4:.1f}°"
             ]
 
             for idx, line in enumerate(status_lines, start=10):
@@ -428,7 +416,6 @@ def main(stdscr):
         curses.endwin()
 
         print("GPIO cleaned up and program terminated.")
-
 
 if __name__ == "__main__":
     curses.wrapper(main)
