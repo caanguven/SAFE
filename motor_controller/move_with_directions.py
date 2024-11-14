@@ -274,6 +274,40 @@ def configure_motor_groups(direction, motors):
         raise ValueError("Invalid direction")
     return [group1, group2]
 
+def calibrate_motors_to_180(motors):
+    print("\nCalibrating all motors to 180 degrees...")
+    calibration_start = time.time()
+    while True:
+        # Move all motors to 180 degrees
+        m1_done = motors['M1'].move_to_position(180)
+        m2_done = motors['M2'].move_to_position(180)
+        m3_done = motors['M3'].move_to_position(180)
+        m4_done = motors['M4'].move_to_position(180)
+
+        # Read current positions
+        m1_pos = motors['M1'].read_position()
+        m2_pos = motors['M2'].read_position()
+        m3_pos = motors['M3'].read_position()
+        m4_pos = motors['M4'].read_position()
+
+        # Print calibration progress
+        print(f"\rCalibrating to 180° - M1: {m1_pos:.1f}°, "
+              f"M2: {m2_pos:.1f}°, "
+              f"M3: {m3_pos:.1f}°, "
+              f"M4: {m4_pos:.1f}°", end='')
+
+        if m1_done and m2_done and m3_done and m4_done:
+            break
+
+        # Timeout after 30 seconds
+        if time.time() - calibration_start > 30:
+            print("\nCalibration to 180 degrees timeout! Check motor connections.")
+            raise TimeoutError("Calibration timeout")
+
+        time.sleep(0.05)
+
+    print("\nAll motors calibrated to 180 degrees. Proceeding...")
+
 def main():
     parser = argparse.ArgumentParser(description="Motor control with sawtooth pattern and synchronization")
     parser.add_argument("direction", type=str, choices=["forward", "backward", "left", "right"], help="Direction of movement")
@@ -302,47 +336,9 @@ def main():
         motor_groups = configure_motor_groups(args.direction, motors)
         group1, group2 = motor_groups
 
-        # Initial calibration
-        print("Starting initial calibration...")
-        calibration_start = time.time()
-        while True:
-            # Generate target positions for calibration
-            base_position = 0  # Start calibration from 0 degrees
-            group1_targets = group1.generate_target_positions(base_position)
-            group2_targets = group2.generate_target_positions(base_position)
-
-            # Move motors to calibration positions
-            m1_done = motor1.move_to_position(group2_targets[0])
-            m2_done = motor2.move_to_position(group1_targets[0])
-            m3_done = motor3.move_to_position(group1_targets[1])
-            m4_done = motor4.move_to_position(group2_targets[1])
-
-            # Print calibration progress
-            m1_pos = motor1.read_position()
-            m2_pos = motor2.read_position()
-            m3_pos = motor3.read_position()
-            m4_pos = motor4.read_position()
-            print(f"\rCalibrating - M1: {m1_pos:.1f}°, "
-                  f"M2: {m2_pos:.1f}°, "
-                  f"M3: {m3_pos:.1f}°, "
-                  f"M4: {m4_pos:.1f}°", end='')
-
-            if m1_done and m2_done and m3_done and m4_done:
-                break
-
-            # Timeout after 30 seconds
-            if time.time() - calibration_start > 30:
-                print("\nCalibration timeout! Check motor connections.")
-                raise TimeoutError("Calibration timeout")
-
-            time.sleep(0.05)
-
-        print("\nCalibration complete. Stopping for 5 seconds...")
-        motor1.stop_motor()
-        motor2.stop_motor()
-        motor3.stop_motor()
-        motor4.stop_motor()
-        time.sleep(5)
+        # Calibrate all motors to 180 degrees
+        calibrate_motors_to_180(motors)
+        time.sleep(2)  # Optional pause after calibration
 
         print("Starting sawtooth pattern with synchronization...")
         start_time = time.time()
