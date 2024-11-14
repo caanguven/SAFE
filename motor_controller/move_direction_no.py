@@ -206,6 +206,17 @@ def configure_motor_groups(direction, motors):
             group_phase_difference=180,
             direction=1
         )
+    elif direction == 'backward':  # New backward direction
+        group1 = MotorGroup(
+            motors=[motors['M2'], motors['M3']],
+            group_phase_difference=0,
+            direction=-1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M1'], motors['M4']],
+            group_phase_difference=180,
+            direction=-1
+        )
     elif direction == 'right':
         group1 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
@@ -216,6 +227,17 @@ def configure_motor_groups(direction, motors):
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
             direction=1
+        )
+    elif direction == 'left':  # New left direction
+        group1 = MotorGroup(
+            motors=[motors['M1'], motors['M3']],
+            group_phase_difference=0,
+            direction=1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M2'], motors['M4']],
+            group_phase_difference=180,
+            direction=-1
         )
     else:
         raise ValueError("Invalid direction")
@@ -246,30 +268,44 @@ def main(stdscr):
 
     current_direction = 'stable'
     start_time = time.time()
+    last_input_time = time.time()
+    INPUT_TIMEOUT = 0.5  # Timeout in seconds
 
     # Display instructions
     stdscr.addstr(0, 0, "Motor Control System")
     stdscr.addstr(2, 0, "Controls:")
     stdscr.addstr(3, 2, "Up Arrow    : Forward")
-    stdscr.addstr(4, 2, "Right Arrow : Turn Right")
-    stdscr.addstr(5, 2, "Space      : Stop")
-    stdscr.addstr(6, 2, "Q          : Quit")
+    stdscr.addstr(4, 2, "Down Arrow  : Backward")
+    stdscr.addstr(5, 2, "Right Arrow : Turn Right")
+    stdscr.addstr(6, 2, "Left Arrow  : Turn Left")
+    stdscr.addstr(7, 2, "Space      : Stop")
+    stdscr.addstr(8, 2, "Q          : Quit")
     stdscr.refresh()
 
     try:
         while True:
             key = stdscr.getch()
+            current_time = time.time()
 
-            if key == curses.KEY_UP:
-                current_direction = 'forward'
-            elif key == curses.KEY_RIGHT:
-                current_direction = 'right'
-            elif key == ord(' '):
+            if key != -1:  # If a key was pressed
+                last_input_time = current_time
+                if key == curses.KEY_UP:
+                    current_direction = 'forward'
+                elif key == curses.KEY_DOWN:
+                    current_direction = 'backward'
+                elif key == curses.KEY_RIGHT:
+                    current_direction = 'right'
+                elif key == curses.KEY_LEFT:
+                    current_direction = 'left'
+                elif key == ord(' '):
+                    current_direction = 'stable'
+                elif key == ord('q') or key == ord('Q'):
+                    break
+            elif current_time - last_input_time > INPUT_TIMEOUT:
+                # Auto-stop if no input received within timeout period
                 current_direction = 'stable'
-            elif key == ord('q') or key == ord('Q'):
-                break
 
-            stdscr.move(8, 0)
+            stdscr.move(10, 0)
             stdscr.clrtoeol()
 
             if current_direction != 'stable':
@@ -308,7 +344,7 @@ def main(stdscr):
                 f"M2: {m2_pos:.1f}°, M4: {m4_pos:.1f}° | Phase M2-M4: {phase_diff_m2_m4:.1f}°"
             ]
 
-            for idx, line in enumerate(status_lines, start=8):
+            for idx, line in enumerate(status_lines, start=10):
                 stdscr.addstr(idx, 0, line)
                 stdscr.clrtoeol()
 
@@ -316,7 +352,7 @@ def main(stdscr):
             time.sleep(0.05)
 
     except Exception as e:
-        stdscr.addstr(12, 0, f"Error: {str(e)}")
+        stdscr.addstr(14, 0, f"Error: {str(e)}")
         stdscr.refresh()
         time.sleep(2)
     finally:
