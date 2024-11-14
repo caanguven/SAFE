@@ -10,7 +10,7 @@ SPI_DEVICE = 0
 ADC_MAX = 1023
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 2.6  # Period in seconds
+SAWTOOTH_PERIOD = 3  # Period in seconds
 
 # GPIO Pins for Motor 1
 MOTOR1_IN1 = 7
