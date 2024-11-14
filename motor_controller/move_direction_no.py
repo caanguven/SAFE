@@ -3,6 +3,7 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
+import curses
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -65,6 +66,7 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
+
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
@@ -95,6 +97,7 @@ class SpikeFilter:
                 self.last_valid_reading = new_value
                 return new_value
 
+
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
         self.Kp = Kp
@@ -120,6 +123,7 @@ class PIDController:
         self.last_time = current_time
 
         return control_signal
+
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
@@ -199,6 +203,7 @@ class MotorController:
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
 
+
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE, direction=1):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
@@ -207,6 +212,7 @@ def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX
     else:
         position = (max_angle - (position_in_cycle * max_angle)) % max_angle
     return position
+
 
 class MotorGroup:
     def __init__(self, motors, group_phase_difference=0, movement_direction=1):
@@ -228,6 +234,7 @@ class MotorGroup:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
+
 
 def configure_motor_groups(direction, motors):
     if direction == 'forward':
@@ -278,56 +285,93 @@ def configure_motor_groups(direction, motors):
         raise ValueError("Invalid direction")
     return [group1, group2]
 
-def main():
-    parser = argparse.ArgumentParser(description="Motor control with synchronization")
-    parser.add_argument("direction", type=str, choices=["forward", "backward", "left", "right"], help="Direction of movement")
-    args = parser.parse_args()
+
+def main(stdscr):
+    # Curses setup
+    curses.cbreak()
+    curses.noecho()
+    stdscr.nodelay(True)
+    stdscr.keypad(True)
+
+    # Initialize motors with encoder flipping as necessary
+    motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
+                             MOTOR1_ADC_CHANNEL, encoder_flipped=False)
+    motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
+                             MOTOR2_ADC_CHANNEL, encoder_flipped=True)
+    motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
+                             MOTOR3_ADC_CHANNEL, encoder_flipped=False)
+    motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
+                             MOTOR4_ADC_CHANNEL, encoder_flipped=True)
+
+    # Map motor names to instances
+    motors = {
+        'M1': motor1,
+        'M2': motor2,
+        'M3': motor3,
+        'M4': motor4
+    }
+
+    current_direction = 'stable'  # Initial direction
+    group1 = None
+    group2 = None
+    start_time = time.time()
+
+    # Instructions
+    stdscr.addstr(0, 0, "Motor Control System")
+    stdscr.addstr(2, 0, "Use Arrow Keys to Control Motors:")
+    stdscr.addstr(3, 2, "Up Arrow    : Forward")
+    stdscr.addstr(4, 2, "Down Arrow  : Backward")
+    stdscr.addstr(5, 2, "Left Arrow  : Left Turn")
+    stdscr.addstr(6, 2, "Right Arrow : Right Turn")
+    stdscr.addstr(8, 0, "Press 'q' to Quit.")
+    stdscr.refresh()
 
     try:
-        # Initialize motors with encoder flipping as necessary
-        motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
-                                 MOTOR1_ADC_CHANNEL, encoder_flipped=False)
-        motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
-                                 MOTOR2_ADC_CHANNEL, encoder_flipped=True)
-        motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
-                                 MOTOR3_ADC_CHANNEL, encoder_flipped=False)
-        motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
-                                 MOTOR4_ADC_CHANNEL, encoder_flipped=True)
-
-        # Map motor names to instances
-        motors = {
-            'M1': motor1,
-            'M2': motor2,
-            'M3': motor3,
-            'M4': motor4
-        }
-
-        # Configure motor groups based on direction
-        motor_groups = configure_motor_groups(args.direction, motors)
-        group1, group2 = motor_groups
-
-        # Removed Calibration Phase
-
-        print("Starting movement based on selected direction...")
-        start_time = time.time()
         while True:
-            # Determine overall movement direction based on group1's movement_direction
-            overall_direction = group1.movement_direction
+            key = stdscr.getch()
 
-            # Generate base position based on overall direction
-            base_position = generate_sawtooth_position(start_time, direction=overall_direction)
+            # Map keys to directions
+            if key == curses.KEY_UP:
+                current_direction = 'forward'
+            elif key == curses.KEY_DOWN:
+                current_direction = 'backward'
+            elif key == curses.KEY_LEFT:
+                current_direction = 'left'
+            elif key == curses.KEY_RIGHT:
+                current_direction = 'right'
+            elif key == ord('q') or key == ord('Q'):
+                break
+            else:
+                current_direction = 'stable'
 
-            # Generate target positions for each group
-            group1_targets = group1.generate_target_positions(base_position)
-            group2_targets = group2.generate_target_positions(base_position)
+            # Clear previous status
+            stdscr.move(10, 0)
+            stdscr.clrtoeol()
 
-            # Move motors in group1
-            for motor, target in zip(group1.motors, group1_targets):
-                motor.move_to_position(target)
+            if current_direction != 'stable':
+                # Configure motor groups based on current direction
+                motor_groups = configure_motor_groups(current_direction, motors)
+                group1, group2 = motor_groups
 
-            # Move motors in group2
-            for motor, target in zip(group2.motors, group2_targets):
-                motor.move_to_position(target)
+                # Generate base position based on overall direction
+                overall_direction = group1.movement_direction
+                base_position = generate_sawtooth_position(start_time, direction=overall_direction)
+
+                # Generate target positions for each group
+                group1_targets = group1.generate_target_positions(base_position)
+                group2_targets = group2.generate_target_positions(base_position)
+
+                # Move motors in group1
+                for motor, target in zip(group1.motors, group1_targets):
+                    motor.move_to_position(target)
+
+                # Move motors in group2
+                for motor, target in zip(group2.motors, group2_targets):
+                    motor.move_to_position(target)
+            else:
+                # Stop all motors if stable
+                for motor in motors.values():
+                    motor.stop_motor()
 
             # Read current positions
             m1_pos = motor1.read_position()
@@ -343,22 +387,30 @@ def main():
             phase_diff_m1_m4 = min(phase_diff_m1_m4, MAX_ANGLE - phase_diff_m1_m4)
             phase_diff_m2_m3 = min(phase_diff_m2_m3, MAX_ANGLE - phase_diff_m2_m3)
 
-            # Print current positions and phase differences
-            print(f"\nM1 - Current: {m1_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M1-M4: {phase_diff_m1_m4:.1f}°")
-            print(f"M2 - Current: {m2_pos:.1f}°, M3 - Current: {m3_pos:.1f}° | Phase Diff M2-M3: {phase_diff_m2_m3:.1f}°")
+            # Display current positions and phase differences
+            status_lines = [
+                f"Direction: {current_direction.capitalize()}",
+                f"M1 - Current: {m1_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M1-M4: {phase_diff_m1_m4:.1f}°",
+                f"M2 - Current: {m2_pos:.1f}°, M3 - Current: {m3_pos:.1f}° | Phase Diff M2-M3: {phase_diff_m2_m3:.1f}°"
+            ]
 
-            time.sleep(0.05)
+            for idx, line in enumerate(status_lines, start=10):
+                stdscr.addstr(idx, 0, line)
+                stdscr.clrtoeol()
 
-    except KeyboardInterrupt:
-        print("\nProgram interrupted by user")
+            stdscr.refresh()
+
+            time.sleep(0.05)  # 50 ms delay for smooth control
+
     except Exception as e:
-        print(f"\nError: {e}")
+        # Display exception in the terminal
+        stdscr.addstr(14, 0, f"Exception: {str(e)}")
+        stdscr.refresh()
+        time.sleep(2)
     finally:
         # Stop all motors
-        motor1.stop_motor()
-        motor2.stop_motor()
-        motor3.stop_motor()
-        motor4.stop_motor()
+        for motor in motors.values():
+            motor.stop_motor()
 
         # Stop PWM
         motor1_pwm.stop()
@@ -368,7 +420,15 @@ def main():
 
         # Cleanup GPIO
         GPIO.cleanup()
-        print("GPIO cleaned up")
+
+        # Restore terminal settings
+        curses.nocbreak()
+        stdscr.keypad(False)
+        curses.echo()
+        curses.endwin()
+
+        print("GPIO cleaned up and program terminated.")
+
 
 if __name__ == "__main__":
-    main()
+    curses.wrapper(main)
