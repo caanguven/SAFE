@@ -306,15 +306,13 @@ def main():
         motor_groups = configure_motor_groups(args.direction, motors)
         group1, group2 = motor_groups
 
+        # Removed Calibration Phase
+
         print("Starting movement based on selected direction...")
         start_time = time.time()
         while True:
-            # Determine overall movement direction for base_position generation
-            # For 'forward' and 'backward', the direction is consistent
-            # For 'left' and 'right', it's based on group1's movement_direction
-            # Assuming group1's movement_direction determines the overall direction
-
-            overall_direction = motor_groups[0].movement_direction
+            # Determine overall movement direction based on group1's movement_direction
+            overall_direction = group1.movement_direction
 
             # Generate base position based on overall direction
             base_position = generate_sawtooth_position(start_time, direction=overall_direction)
@@ -342,8 +340,8 @@ def main():
             phase_diff_m2_m3 = abs(m2_pos - m3_pos)
 
             # Adjust phase differences to account for circular measurement
-            phase_diff_m1_m4 = min(phase_diff_m1_m4, 330 - phase_diff_m1_m4)
-            phase_diff_m2_m3 = min(phase_diff_m2_m3, 330 - phase_diff_m2_m3)
+            phase_diff_m1_m4 = min(phase_diff_m1_m4, MAX_ANGLE - phase_diff_m1_m4)
+            phase_diff_m2_m3 = min(phase_diff_m2_m3, MAX_ANGLE - phase_diff_m2_m3)
 
             # Print current positions and phase differences
             print(f"\nM1 - Current: {m1_pos:.1f}°, M4 - Current: {m4_pos:.1f}° | Phase Diff M1-M4: {phase_diff_m1_m4:.1f}°")
