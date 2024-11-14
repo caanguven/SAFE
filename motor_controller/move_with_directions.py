@@ -184,7 +184,7 @@ class MotorController:
         adjusted_control_signal = control_signal * self.movement_direction
 
         # Determine direction and speed
-        if abs(error) <= 2:  # Tolerance
+        if abs(error) <= 5:  # Tolerance
             self.stop_motor()
             return True
 
