@@ -166,7 +166,8 @@ class MotorController:
             self.stop_motor()
             return True
 
-        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
+        direction = 'forward' if control_signal > 0 else 'backward'
+        self.set_motor_direction(direction)
         speed = min(100, max(30, abs(control_signal)))
         self.pwm.ChangeDutyCycle(speed)
         return False
@@ -183,16 +184,16 @@ def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX
     return position
 
 class MotorGroup:
-    def __init__(self, motors, group_phase_difference=0, direction=1):
+    def __init__(self, motors, group_phase_difference=0, direction='forward'):
         self.motors = motors
         self.group_phase_difference = group_phase_difference
-        self.direction = direction
+        self.direction = direction  # 'forward' or 'backward'
 
     def generate_target_positions(self, base_position):
         target_positions = []
         for motor in self.motors:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
-            if self.direction == -1:
+            if self.direction == 'backward':
                 position = (MAX_ANGLE - position) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
@@ -211,45 +212,45 @@ def configure_motor_groups(direction, motors):
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M3']],
             group_phase_difference=0,
-            direction=1
+            direction='forward'
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
             group_phase_difference=180,
-            direction=1
+            direction='forward'
         )
-    elif direction == 'backward':  # New backward direction
+    elif direction == 'backward':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M3']],
             group_phase_difference=0,
-            direction=-1
+            direction='backward'
         )
         group2 = MotorGroup(
             motors=[motors['M1'], motors['M4']],
             group_phase_difference=180,
-            direction=-1
+            direction='backward'
         )
     elif direction == 'right':
         group1 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
             group_phase_difference=0,
-            direction=-1
+            direction='backward'
         )
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            direction=1
+            direction='forward'
         )
-    elif direction == 'left':  # New left direction
+    elif direction == 'left':
         group1 = MotorGroup(
             motors=[motors['M1'], motors['M3']],
             group_phase_difference=0,
-            direction=1
+            direction='forward'
         )
         group2 = MotorGroup(
             motors=[motors['M2'], motors['M4']],
             group_phase_difference=180,
-            direction=-1
+            direction='backward'
         )
     else:
         raise ValueError("Invalid direction")
@@ -279,7 +280,6 @@ def main(stdscr):
     }
 
     current_direction = 'stable'
-    previous_direction = 'stable'  # Track the previous direction
     start_time = time.time()
     last_input_time = time.time()
     INPUT_TIMEOUT = 0.5  # Timeout in seconds
@@ -308,7 +308,6 @@ def main(stdscr):
                     # Ignore the input if within debounce interval
                     pass
                 else:
-                    last_input_time = current_time
                     new_direction = current_direction  # Default to current
 
                     if key == curses.KEY_UP:
@@ -325,13 +324,14 @@ def main(stdscr):
                         break
 
                     # Check for opposite direction
-                    if not is_opposite_direction(current_direction, new_direction):
+                    if new_direction == 'stable' or not is_opposite_direction(current_direction, new_direction):
                         if new_direction != current_direction:
                             current_direction = new_direction
                             last_direction_change = current_time
+                            last_input_time = current_time
                     else:
                         # Provide feedback that the direction is not allowed
-                        stdscr.addstr(9, 0, f"Cannot switch to {new_direction} while moving {current_direction}.")
+                        stdscr.addstr(9, 0, f"Cannot switch to {new_direction.capitalize()} while moving {current_direction.capitalize()}.")
                         stdscr.clrtoeol()
                         stdscr.refresh()
 
@@ -340,7 +340,7 @@ def main(stdscr):
                 if current_direction != 'stable':
                     current_direction = 'stable'
 
-            # Clear previous status message
+            # Clear previous feedback message
             stdscr.move(9, 0)
             stdscr.clrtoeol()
 
