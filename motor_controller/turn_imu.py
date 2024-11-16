@@ -42,7 +42,11 @@ MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
 
 # GPIO setup
-GPIO.setmode(GPIO.BOARD) 
+current_mode = GPIO.getmode()
+if current_mode is None:
+    GPIO.setmode(GPIO.BOARD)
+elif current_mode != GPIO.BOARD:
+    raise ValueError(f"GPIO mode already set to {current_mode}, expected GPIO.BOARD.")
 GPIO.setup(MOTOR1_IN1, GPIO.OUT)
 GPIO.setup(MOTOR1_IN2, GPIO.OUT)
 GPIO.setup(MOTOR1_SPD, GPIO.OUT)
