@@ -349,7 +349,7 @@ def main(stdscr):
                 stdscr.clrtoeol()
 
             stdscr.refresh()
-            time.sleep(0.05)
+            time.sleep(0.01)
 
     except Exception as e:
         stdscr.addstr(14, 0, f"Error: {str(e)}")
