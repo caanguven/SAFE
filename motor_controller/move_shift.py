@@ -148,7 +148,7 @@ class MotorController:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
 
-    def move_to_position(self, target, speed_multiplier=1.0):
+    def move_to_position(self, target):
         current_position = self.read_position()
         error = target - current_position
 
@@ -164,8 +164,7 @@ class MotorController:
             return True
 
         self.set_motor_direction('forward' if control_signal > 0 else 'backward')
-        speed = min(100, max(30, abs(control_signal))) * speed_multiplier
-        speed = min(100, speed)  # Ensure speed does not exceed 100%
+        speed = min(100, max(30, abs(control_signal)))
         self.pwm.ChangeDutyCycle(speed)
         return False
 
@@ -186,29 +185,29 @@ class MotorGroup:
         self.group_phase_difference = group_phase_difference
         self.direction = direction
 
-    def generate_target_positions(self, base_position):
+    def generate_target_positions(self, base_position, phase_offsets=None):
         target_positions = []
         for motor in self.motors:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
             if self.direction == -1:
                 position = (MAX_ANGLE - position) % MAX_ANGLE
+            # Apply individual phase offset if provided
+            if phase_offsets and motor.name in phase_offsets:
+                position = (position + phase_offsets[motor.name]) % MAX_ANGLE
             target_positions.append(position)
         return target_positions
 
-def configure_motor_groups(direction, motors):
-    if direction in ['forward', 'left', 'right']:
-        group1 = MotorGroup(
-            motors=[motors['M2'], motors['M3']],
-            group_phase_difference=0,
-            direction=1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
-            direction=1
-        )
-    else:
-        raise ValueError("Invalid direction")
+def configure_motor_groups(motors):
+    group1 = MotorGroup(
+        motors=[motors['M2'], motors['M3']],
+        group_phase_difference=0,
+        direction=1
+    )
+    group2 = MotorGroup(
+        motors=[motors['M1'], motors['M4']],
+        group_phase_difference=180,
+        direction=1
+    )
     return [group1, group2]
 
 def main():
@@ -235,32 +234,33 @@ def main():
         'M4': motor4
     }
 
-    # Set speed multipliers based on direction
+    # Phase offset in degrees
+    phase_offset_degrees = 5  # Adjust this value to change the amount of shift
+
+    # Set phase offsets based on direction
     if direction == 'left':
-        speed_multipliers = {'M1': 1.1, 'M3': 1.1, 'M2': 1.0, 'M4': 1.0}
+        phase_offsets = {'M2': phase_offset_degrees, 'M4': phase_offset_degrees}
     elif direction == 'right':
-        speed_multipliers = {'M1': 1.0, 'M3': 1.0, 'M2': 1.1, 'M4': 1.1}
+        phase_offsets = {'M1': phase_offset_degrees, 'M3': phase_offset_degrees}
     else:
-        speed_multipliers = {'M1': 1.0, 'M2': 1.0, 'M3': 1.0, 'M4': 1.0}
+        phase_offsets = {}
 
     start_time = time.time()
     try:
         while True:
-            motor_groups = configure_motor_groups(direction, motors)
+            motor_groups = configure_motor_groups(motors)
             group1, group2 = motor_groups
 
             base_position = generate_sawtooth_position(start_time)
 
-            group1_targets = group1.generate_target_positions(base_position)
-            group2_targets = group2.generate_target_positions(base_position)
+            group1_targets = group1.generate_target_positions(base_position, phase_offsets)
+            group2_targets = group2.generate_target_positions(base_position, phase_offsets)
 
             for motor, target in zip(group1.motors, group1_targets):
-                speed_multiplier = speed_multipliers[motor.name]
-                motor.move_to_position(target, speed_multiplier=speed_multiplier)
+                motor.move_to_position(target)
 
             for motor, target in zip(group2.motors, group2_targets):
-                speed_multiplier = speed_multipliers[motor.name]
-                motor.move_to_position(target, speed_multiplier=speed_multiplier)
+                motor.move_to_position(target)
 
             # Sleep for a short time to prevent excessive CPU usage
             time.sleep(0.02)
