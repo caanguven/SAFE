@@ -239,53 +239,74 @@ class TurnController:
             motor.stop()
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python3 turn_imu.py <target_angle>")
-        print("Example: python3 turn_imu.py 30")
-        sys.exit(1)
-    
     try:
-        target_angle = float(sys.argv[1])
-        if target_angle < 0 or target_angle >= 360:
-            print("Error: Target angle must be between 0 and 360 degrees")
-            sys.exit(1)
-    except ValueError:
-        print("Error: Target angle must be a number")
-        sys.exit(1)
+        # Check if GPIO mode is already set
+        if GPIO.getmode() is None:
+            GPIO.setmode(GPIO.BOARD)
+        else:
+            print("GPIO mode already set")
 
-    try:
-        # Setup GPIO and get PWM objects
-        pwm1, pwm2, pwm3, pwm4 = setup_gpio()
-        
-        # Initialize IMU
-        print("\nInitializing IMU...")
-        imu_sensor = IMUSensor()
-        if not imu_sensor.initialize():
-            print("Failed to initialize IMU. Exiting.")
-            GPIO.cleanup()
+        if len(sys.argv) != 2:
+            print("Usage: python3 turn_imu.py <target_angle>")
+            print("Example: python3 turn_imu.py 30")
             sys.exit(1)
         
-        # Initialize motors
-        print("\nInitializing motors...")
-        motors = {
-            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, pwm1),
-            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, pwm2),
-            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, pwm3),
-            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, pwm4)
-        }
-        
-        # Initialize turn controller
-        turn_controller = TurnController(motors)
-        
-        print(f"\nStarting turn to {target_angle}°")
-        print("Press Ctrl+C to stop")
-        
-        # Keep turning until target is reached
-        while not turn_controller.turn(imu_sensor.get_yaw(), target_angle):
-            time.sleep(0.1)
-        
-        print("\nTurn complete!")
+        try:
+            target_angle = float(sys.argv[1])
+            if target_angle < 0 or target_angle >= 360:
+                print("Error: Target angle must be between 0 and 360 degrees")
+                sys.exit(1)
+        except ValueError:
+            print("Error: Target angle must be a number")
+            sys.exit(1)
+
+        try:
+            # Setup GPIO and get PWM objects
+            pwm1, pwm2, pwm3, pwm4 = setup_gpio()
             
+            # Initialize IMU
+            print("\nInitializing IMU...")
+            imu_sensor = IMUSensor()
+            if not imu_sensor.initialize():
+                print("Failed to initialize IMU. Exiting.")
+                GPIO.cleanup()
+                sys.exit(1)
+            
+            # Initialize motors
+            print("\nInitializing motors...")
+            motors = {
+                'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, pwm1),
+                'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, pwm2),
+                'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, pwm3),
+                'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, pwm4)
+            }
+            
+            # Initialize turn controller
+            turn_controller = TurnController(motors)
+            
+            print(f"\nStarting turn to {target_angle}°")
+            print("Press Ctrl+C to stop")
+            
+            # Keep turning until target is reached
+            while not turn_controller.turn(imu_sensor.get_yaw(), target_angle):
+                time.sleep(0.1)
+            
+            print("\nTurn complete!")
+                
+        except KeyboardInterrupt:
+            print("\nTurn interrupted by user")
+        except Exception as e:
+            print(f"\nError during operation: {str(e)}")
+        finally:
+            # Cleanup
+            print("\nCleaning up...")
+            try:
+                if 'turn_controller' in locals():
+                    turn_controller.stop_all_motors()
+            except:
+                pass
+            GPIO.cleanup()
+
     except KeyboardInterrupt:
         print("\nTurn interrupted by user")
     except Exception as e:
