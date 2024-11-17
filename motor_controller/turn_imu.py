@@ -1,9 +1,14 @@
+import warnings
+# Suppress specific I2C frequency warning
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="adafruit_blinka.microcontroller.generic_linux.i2c")
+
 import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import busio
 import board
+import adafruit_bno08x  # Import the module for accessing constants
 from adafruit_bno08x.i2c import BNO08X_I2C
 import curses
 import sys
@@ -44,7 +49,7 @@ MIN_ANGLE = 0
 MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
-# GPIO Pins for Motor Control (Replace with BCM pin numbers)
+# GPIO Pins for Motor Control (Using BCM numbering)
 MOTOR1_IN1 = 4    # BCM Pin 4 (Originally BOARD pin 7)
 MOTOR1_IN2 = 7    # BCM Pin 7 (Originally BOARD pin 26)
 MOTOR1_SPD = 24   # BCM Pin 24 (Originally BOARD pin 18)
@@ -64,6 +69,27 @@ MOTOR4_IN1 = 18   # BCM Pin 18 (Originally BOARD pin 12)
 MOTOR4_IN2 = 27   # BCM Pin 27 (Originally BOARD pin 13)
 MOTOR4_SPD = 19   # BCM Pin 19 (Originally BOARD pin 35)
 MOTOR4_ADC_CHANNEL = 3
+
+# Function to set GPIO mode safely
+def safe_setmode(mode):
+    current_mode = GPIO.getmode()
+    if current_mode is None:
+        GPIO.setmode(mode)
+        logging.info(f"GPIO mode set to {mode}.")
+    elif current_mode == mode:
+        logging.info(f"GPIO mode already set to {mode}.")
+    else:
+        logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
+        GPIO.cleanup()
+        try:
+            GPIO.setmode(mode)
+            logging.info(f"GPIO mode reset to {mode}.")
+        except ValueError as ve:
+            logging.error(f"Failed to set GPIO mode to {mode}: {ve}")
+            sys.exit(1)
+
+# Set GPIO mode safely to BCM
+safe_setmode(GPIO.BCM)
 
 # Setup GPIO pins
 motor_pins = [
@@ -119,7 +145,7 @@ def setup_imu():
     try:
         i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
         bno = BNO08X_I2C(i2c)
-        bno.enable_feature(BNO08X_I2C.REPORT_ROTATION_VECTOR)
+        bno.enable_feature(adafruit_bno08x.BNO08X_ROTATION_VECTOR)  # Corrected attribute
         logging.info("IMU initialized and rotation vector reporting enabled.")
         return bno
     except Exception as e:
