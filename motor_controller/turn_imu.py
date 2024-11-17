@@ -9,9 +9,6 @@ from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 import math
 
-# First, clean up any existing GPIO settings
-GPIO.cleanup()
-
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
@@ -23,6 +20,31 @@ MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD = 7, 26, 18
 MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD = 29, 22, 31
 MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD = 11, 32, 33
 MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD = 12, 13, 35
+
+# GPIO setup at module level
+GPIO.setmode(GPIO.BOARD)
+GPIO.setup(MOTOR1_IN1, GPIO.OUT)
+GPIO.setup(MOTOR1_IN2, GPIO.OUT)
+GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+GPIO.setup(MOTOR3_SPD, GPIO.OUT)
+GPIO.setup(MOTOR4_IN1, GPIO.OUT)
+GPIO.setup(MOTOR4_IN2, GPIO.OUT)
+GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+
+# Set up PWM at module level
+motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
+motor1_pwm.start(0)
+motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+motor2_pwm.start(0)
+motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+motor3_pwm.start(0)
+motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
+motor4_pwm.start(0)
 
 class IMUSensor:
     def __init__(self):
@@ -75,10 +97,8 @@ class IMUSensor:
                 return self.last_yaw
                 
             quat_i, quat_j, quat_k, quat_real = quat
-            
             yaw = math.degrees(math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
                                         1 - 2 * (quat_j * quat_j + quat_k * quat_k)))
-            
             yaw = (yaw + 360) % 360
             self.last_yaw = yaw
             return yaw
@@ -88,20 +108,11 @@ class IMUSensor:
             return self.last_yaw
 
 class MotorController:
-    def __init__(self, name, in1, in2, spd):
+    def __init__(self, name, in1, in2, pwm):
         self.name = name
         self.in1 = in1
         self.in2 = in2
-        self.spd = spd
-        
-        # Setup GPIO
-        GPIO.setup(in1, GPIO.OUT)
-        GPIO.setup(in2, GPIO.OUT)
-        GPIO.setup(spd, GPIO.OUT)
-        
-        # Setup PWM
-        self.pwm = GPIO.PWM(spd, 1000)
-        self.pwm.start(0)
+        self.pwm = pwm
 
     def set_direction(self, direction):
         if direction == 'forward':
@@ -163,20 +174,6 @@ def turn_to_angle(motors, imu_sensor, target_angle):
     
     return False
 
-def setup_gpio():
-    """Setup GPIO with proper error handling."""
-    try:
-        # First cleanup any existing settings
-        GPIO.cleanup()
-        
-        # Set GPIO mode
-        GPIO.setmode(GPIO.BOARD)
-        
-        return True
-    except Exception as e:
-        print(f"Error setting up GPIO: {str(e)}")
-        return False
-
 def main():
     # Check command line arguments
     if len(sys.argv) != 2:
@@ -190,11 +187,6 @@ def main():
         print("Error: Target angle must be a number")
         sys.exit(1)
     
-    # Initialize GPIO
-    if not setup_gpio():
-        print("Failed to setup GPIO. Exiting.")
-        sys.exit(1)
-    
     # Initialize IMU
     imu_sensor = IMUSensor()
     if not imu_sensor.initialize():
@@ -202,18 +194,13 @@ def main():
         GPIO.cleanup()
         sys.exit(1)
     
-    # Initialize motors
-    try:
-        motors = {
-            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
-            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
-            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
-            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
-        }
-    except Exception as e:
-        print(f"Error initializing motors: {str(e)}")
-        GPIO.cleanup()
-        sys.exit(1)
+    # Initialize motors using the already set up PWM objects
+    motors = {
+        'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm),
+        'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm),
+        'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm),
+        'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm)
+    }
     
     print(f"Starting turn to {target_angle}°")
     print("Press Ctrl+C to stop")
