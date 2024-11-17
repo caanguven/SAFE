@@ -9,70 +9,55 @@ from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 import math
 
-# First, cleanup any existing GPIO configuration
-try:
-    GPIO.cleanup()
-except:
-    pass
+# Clear any existing GPIO setup first
+GPIO.setwarnings(False)
+GPIO.cleanup()
 
-try:
-    # Try to get current mode
-    current_mode = GPIO.getmode()
-    if current_mode != GPIO.BOARD:
-        # If mode is different or not set, cleanup and set to BOARD
-        GPIO.cleanup()
-        GPIO.setmode(GPIO.BOARD)
-except:
-    # If any error occurs during mode check/set, cleanup and set mode
-    try:
-        GPIO.cleanup()
-        GPIO.setmode(GPIO.BOARD)
-    except:
-        print("Error: Could not set GPIO mode. Try running with sudo.")
-        sys.exit(1)
-
-# Constants for SPI and ADC
-SPI_PORT = 0
-SPI_DEVICE = 0
-ADC_MAX = 1023
+# Constants
 TOLERANCE = 6.0  # Degrees of acceptable error
 
-# Motor GPIO Pin Configuration
+# Motor GPIO Pin Configuration (Using BOARD mode numbering)
 MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD = 7, 26, 18
 MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD = 29, 22, 31
 MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD = 11, 32, 33
 MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD = 12, 13, 35
 
-# GPIO setup
-try:
-    GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-    GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-    GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-    GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-    GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-    GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-    GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-    GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-    GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-    GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-    GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-    GPIO.setup(MOTOR4_SPD, GPIO.OUT)
-
-    # Set up PWM
-    motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-    motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-    motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-    motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-
-    motor1_pwm.start(0)
-    motor2_pwm.start(0)
-    motor3_pwm.start(0)
-    motor4_pwm.start(0)
-    
-except Exception as e:
-    print(f"Error setting up GPIO: {str(e)}")
-    GPIO.cleanup()
-    sys.exit(1)
+def setup_gpio():
+    """Setup GPIO with proper error handling."""
+    try:
+        GPIO.setwarnings(False)
+        GPIO.cleanup()
+        GPIO.setmode(GPIO.BOARD)
+        
+        # Setup all motor pins
+        pins = [
+            MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD,
+            MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD,
+            MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD,
+            MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD
+        ]
+        
+        for pin in pins:
+            GPIO.setup(pin, GPIO.OUT)
+            GPIO.output(pin, GPIO.LOW)
+        
+        # Initialize PWM
+        pwm1 = GPIO.PWM(MOTOR1_SPD, 1000)
+        pwm2 = GPIO.PWM(MOTOR2_SPD, 1000)
+        pwm3 = GPIO.PWM(MOTOR3_SPD, 1000)
+        pwm4 = GPIO.PWM(MOTOR4_SPD, 1000)
+        
+        pwm1.start(0)
+        pwm2.start(0)
+        pwm3.start(0)
+        pwm4.start(0)
+        
+        return pwm1, pwm2, pwm3, pwm4
+        
+    except Exception as e:
+        print(f"GPIO Setup Error: {str(e)}")
+        GPIO.cleanup()
+        sys.exit(1)
 
 class IMUSensor:
     def __init__(self):
@@ -267,31 +252,34 @@ def main():
     except ValueError:
         print("Error: Target angle must be a number")
         sys.exit(1)
-    
-    # Initialize IMU
-    print("\nInitializing IMU...")
-    imu_sensor = IMUSensor()
-    if not imu_sensor.initialize():
-        print("Failed to initialize IMU. Exiting.")
-        GPIO.cleanup()
-        sys.exit(1)
-    
-    # Initialize motors
-    print("\nInitializing motors...")
-    motors = {
-        'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm),
-        'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm),
-        'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm),
-        'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm)
-    }
-    
-    # Initialize turn controller
-    turn_controller = TurnController(motors)
-    
-    print(f"\nStarting turn to {target_angle}°")
-    print("Press Ctrl+C to stop")
-    
+
     try:
+        # Setup GPIO and get PWM objects
+        pwm1, pwm2, pwm3, pwm4 = setup_gpio()
+        
+        # Initialize IMU
+        print("\nInitializing IMU...")
+        imu_sensor = IMUSensor()
+        if not imu_sensor.initialize():
+            print("Failed to initialize IMU. Exiting.")
+            GPIO.cleanup()
+            sys.exit(1)
+        
+        # Initialize motors
+        print("\nInitializing motors...")
+        motors = {
+            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, pwm1),
+            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, pwm2),
+            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, pwm3),
+            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, pwm4)
+        }
+        
+        # Initialize turn controller
+        turn_controller = TurnController(motors)
+        
+        print(f"\nStarting turn to {target_angle}°")
+        print("Press Ctrl+C to stop")
+        
         # Keep turning until target is reached
         while not turn_controller.turn(imu_sensor.get_yaw(), target_angle):
             time.sleep(0.1)
@@ -305,7 +293,11 @@ def main():
     finally:
         # Cleanup
         print("\nCleaning up...")
-        turn_controller.stop_all_motors()
+        try:
+            if 'turn_controller' in locals():
+                turn_controller.stop_all_motors()
+        except:
+            pass
         GPIO.cleanup()
 
 if __name__ == "__main__":
