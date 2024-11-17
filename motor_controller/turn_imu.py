@@ -145,7 +145,7 @@ def setup_imu():
     try:
         i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
         bno = BNO08X_I2C(i2c)
-        bno.enable_feature(adafruit_bno08x.BNO08X_ROTATION_VECTOR)  # Corrected attribute
+        bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)  # Corrected attribute
         logging.info("IMU initialized and rotation vector reporting enabled.")
         return bno
     except Exception as e:
@@ -210,7 +210,7 @@ def set_motor_direction(motor, direction):
 def set_motor_speed(motor, speed):
     motor_pwms[motor].ChangeDutyCycle(speed)
     logging.debug(f"Motor {motor} speed set to {speed}%.")
-
+    
 def stop_all_motors():
     for motor in motor_pwms:
         set_motor_direction(motor, 'stop')
