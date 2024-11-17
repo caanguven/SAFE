@@ -179,9 +179,6 @@ def control_motor():
         print(f"Error in control_motor route: {str(e)}")  # Log any errors
         return jsonify({'status': 'error', 'message': str(e)})
 
-
-
-
 # Route to start motor control using follow_pid.py
 @app.route('/motor_control')
 def motor_control():
