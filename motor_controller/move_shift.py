@@ -54,32 +54,7 @@ MOTOR4_IN2 = 27
 MOTOR4_SPD = 19
 MOTOR4_ADC_CHANNEL = 3
 
-# GPIO setup
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
-
-# Set up PWM for motor speed control
-motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
-motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(0)
-motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-motor3_pwm.start(0)
-motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor4_pwm.start(0)
-
-# Set up MCP3008
+# Initialize MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
 # IMU setup functions
@@ -280,7 +255,30 @@ class MotorController:
         self.set_motor_direction('stop')
         self.pwm.ChangeDutyCycle(0)
 
+def setup_motors():
+    """Initialize GPIO pins and PWM for motors."""
+    motor_pins = [
+        (MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
+        (MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
+        (MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
+        (MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
+    ]
+    
+    for in1, in2, spd in motor_pins:
+        GPIO.setup(in1, GPIO.OUT)
+        GPIO.setup(in2, GPIO.OUT)
+        GPIO.setup(spd, GPIO.OUT)
+    
+    motor_pwms = {}
+    for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
+        pwm = GPIO.PWM(spd, 1000)
+        pwm.start(0)
+        motor_pwms[f"M{i}"] = pwm
+    
+    return motor_pins, motor_pwms
+
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
+    """Generate a sawtooth wave position for gait."""
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
     position = (position_in_cycle * max_angle) % max_angle
@@ -293,6 +291,7 @@ class MotorGroup:
         self.direction = direction
 
     def generate_target_positions(self, base_position, phase_offsets=None):
+        """Generate target positions for each motor in the group."""
         target_positions = []
         for motor in self.motors:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
@@ -305,6 +304,7 @@ class MotorGroup:
         return target_positions
 
 def configure_motor_groups(motors):
+    """Configure motor groups for gait."""
     group1 = MotorGroup(
         motors=[motors['M2'], motors['M3']],
         group_phase_difference=0,
@@ -318,6 +318,7 @@ def configure_motor_groups(motors):
     return [group1, group2]
 
 def stop_all_motors(motors):
+    """Stop all motors."""
     for motor in motors.values():
         motor.stop_motor()
 
@@ -361,7 +362,11 @@ def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calib
         return
 
     # Determine target yaw
-    target_yaw = (initial_yaw + angle) % 360
+    if turn_direction == 'right':
+        target_yaw = (initial_yaw + angle) % 360
+    else:
+        target_yaw = (initial_yaw - angle) % 360
+
     if target_yaw > 180:
         target_yaw -= 360  # Convert to range [-180, 180]
 
@@ -373,9 +378,14 @@ def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calib
             break
 
         # Calculate turned angle
-        turned_angle = (current_yaw - initial_yaw) % 360
-        if turned_angle > 180:
-            turned_angle -= 360
+        if turn_direction == 'right':
+            turned_angle = (current_yaw - initial_yaw) % 360
+            if turned_angle > 180:
+                turned_angle -= 360
+        else:
+            turned_angle = (initial_yaw - current_yaw) % 360
+            if turned_angle > 180:
+                turned_angle -= 360
 
         print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Turned: {turned_angle:.2f}°    ", end='\r')
 
@@ -386,10 +396,11 @@ def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calib
         time.sleep(0.05)
 
     # Stop motors after point turn
-    stop_all_motors(motor_pins)
+    stop_all_motors(motor_pwms)
     time.sleep(0.5)  # Brief pause after turn
 
 def set_motor_direction(motor_pins, motor, direction):
+    """Set the direction of a specified motor."""
     in1, in2, _ = motor_pins[int(motor[1])-1]  # Assuming motor names are 'M1', 'M2', etc.
     if direction == 'forward':
         GPIO.output(in1, GPIO.HIGH)
@@ -402,6 +413,7 @@ def set_motor_direction(motor_pins, motor, direction):
         GPIO.output(in2, GPIO.LOW)
 
 def set_motor_speed(motor_pwms, motor, speed):
+    """Set the speed of a specified motor."""
     motor_pwms[motor].ChangeDutyCycle(speed)
 
 def main():
@@ -420,8 +432,18 @@ def main():
     # Point turn correction angle (degrees)
     CORRECTION_ANGLE = 10.0  # Adjust as needed for desired correction
 
-    # Initialize phase offsets
-    phase_offsets = {}
+    # Initialize motor controllers
+    motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor_pwms['M1'], MOTOR1_ADC_CHANNEL, encoder_flipped=False)
+    motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor_pwms['M2'], MOTOR2_ADC_CHANNEL, encoder_flipped=True)
+    motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor_pwms['M3'], MOTOR3_ADC_CHANNEL, encoder_flipped=False)
+    motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor_pwms['M4'], MOTOR4_ADC_CHANNEL, encoder_flipped=True)
+
+    motors = {
+        'M1': motor1,
+        'M2': motor2,
+        'M3': motor3,
+        'M4': motor4
+    }
 
     # Start time for gait generation
     start_time = time.time()
@@ -455,12 +477,7 @@ def main():
             phase_offsets = {}
 
             # Generate motor target positions
-            motor_groups = configure_motor_groups({
-                'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, MOTOR1_ADC_CHANNEL, encoder_flipped=False),
-                'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, MOTOR2_ADC_CHANNEL, encoder_flipped=True),
-                'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, MOTOR3_ADC_CHANNEL, encoder_flipped=False),
-                'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, MOTOR4_ADC_CHANNEL, encoder_flipped=True)
-            })
+            motor_groups = configure_motor_groups(motors)
             group1, group2 = motor_groups
 
             group1_targets = group1.generate_target_positions(base_position, phase_offsets)
@@ -482,16 +499,9 @@ def main():
     except Exception as e:
         print(f"\nUnexpected error: {e}")
     finally:
-        stop_all_motors({
-            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm, MOTOR1_ADC_CHANNEL, encoder_flipped=False),
-            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm, MOTOR2_ADC_CHANNEL, encoder_flipped=True),
-            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm, MOTOR3_ADC_CHANNEL, encoder_flipped=False),
-            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm, MOTOR4_ADC_CHANNEL, encoder_flipped=True)
-        })
-        motor1_pwm.stop()
-        motor2_pwm.stop()
-        motor3_pwm.stop()
-        motor4_pwm.stop()
+        stop_all_motors(motors)
+        for pwm in motor_pwms.values():
+            pwm.stop()
         GPIO.cleanup()
 
 if __name__ == "__main__":
