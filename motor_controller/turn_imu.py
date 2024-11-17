@@ -1,7 +1,7 @@
 import warnings
 import argparse
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="adafruit_blinka.microcontroller.generic_linux.i2c")
-warnings.filterwarnings("ignore", category=RuntimeWarning)  # Added to suppress more warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 import RPi.GPIO as GPIO
 import time
@@ -24,7 +24,7 @@ logging.basicConfig(
 # Suppress GPIO warnings
 GPIO.setwarnings(False)
 
-# GPIO Pins configuration remains the same
+# GPIO Pins configuration
 MOTOR1_IN1 = 4    # Left Front
 MOTOR1_IN2 = 7
 MOTOR1_SPD = 24
@@ -41,7 +41,39 @@ MOTOR4_IN1 = 18   # Right Rear
 MOTOR4_IN2 = 27
 MOTOR4_SPD = 19
 
-# Motor setup remains the same
+def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles (roll, pitch, yaw)
+    """
+    try:
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (quat_real * quat_i + quat_j * quat_k)
+        cosr_cosp = 1 - 2 * (quat_i * quat_i + quat_j * quat_j)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (y-axis rotation)
+        sinp = 2 * (quat_real * quat_j - quat_k * quat_i)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)  # Use 90 degrees if out of range
+        else:
+            pitch = math.asin(sinp)
+
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (quat_real * quat_k + quat_i * quat_j)
+        cosy_cosp = 1 - 2 * (quat_j * quat_j + quat_k * quat_k)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        # Convert to degrees
+        roll_deg = math.degrees(roll)
+        pitch_deg = math.degrees(pitch)
+        yaw_deg = math.degrees(yaw)
+
+        return roll_deg, pitch_deg, yaw_deg
+
+    except Exception as e:
+        print(f"Error in quaternion conversion: {str(e)}")
+        return None, None, None
+
 def setup_motors():
     GPIO.setmode(GPIO.BCM)
     motor_pins = [
@@ -73,28 +105,24 @@ def setup_imu():
         try:
             print(f"Attempting to initialize IMU (attempt {attempt + 1}/{max_retries})...")
             
-            # Create I2C interface
-            i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)  # Reduced frequency
-            
-            # Wait for I2C bus to be ready
+            i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
             time.sleep(0.5)
             
-            # Initialize BNO08x
             bno = BNO08X_I2C(i2c)
-            
-            # Wait for sensor to be ready
             time.sleep(1)
             
-            # Enable rotation vector feature
             bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-            
-            # Wait for feature to be enabled
             time.sleep(0.5)
             
-            # Verify sensor is working
+            # Verify sensor
             quat = bno.quaternion
             if quat is None:
                 raise RuntimeError("Unable to read quaternion data")
+            
+            # Test quaternion conversion
+            roll, pitch, yaw = quaternion_to_euler(*quat)
+            if any(x is None for x in [roll, pitch, yaw]):
+                raise RuntimeError("Invalid quaternion conversion")
                 
             print("IMU initialized successfully")
             return bno
@@ -123,7 +151,7 @@ def calibrate_imu(bno):
             
             if quat is not None and len(quat) == 4:
                 _, _, yaw = quaternion_to_euler(*quat)
-                if not math.isnan(yaw):
+                if yaw is not None and not math.isnan(yaw):
                     samples.append(yaw)
                     time.sleep(0.1)
             else:
@@ -134,12 +162,12 @@ def calibrate_imu(bno):
             print(f"\nError during calibration: {str(e)}")
             time.sleep(0.5)
     
-    if len(samples) >= max_samples / 2:  # Accept if we have at least half the samples
+    if len(samples) >= max_samples / 2:
         calibration_offset = sum(samples) / len(samples)
         print(f"\nCalibration complete. Reference angle: {calibration_offset:.2f}°")
         return calibration_offset
     else:
-        raise RuntimeError("Failed to collect enough valid samples for calibration")
+        raise RuntimeError(f"Failed to collect enough valid samples (got {len(samples)} of {max_samples})")
 
 def get_current_yaw(bno, calibration_offset, retries=3):
     """Get current yaw with retry mechanism"""
@@ -148,12 +176,12 @@ def get_current_yaw(bno, calibration_offset, retries=3):
             quat = bno.quaternion
             if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
                 _, _, yaw = quaternion_to_euler(*quat)
-                return (yaw - calibration_offset) % 360
+                if yaw is not None:
+                    return (yaw - calibration_offset) % 360
         except Exception:
             time.sleep(0.1)
     return None
 
-# Motor control functions remain the same
 def set_motor_direction(motor_pins, motor, direction):
     in1, in2, _ = motor_pins[int(motor[1])-1]
     if direction == 'forward':
@@ -193,18 +221,13 @@ def main():
         GPIO.cleanup()
     
     try:
-        # Initialize IMU
         bno = setup_imu()
-        
-        # Calibrate IMU
         calibration_offset = calibrate_imu(bno)
         
-        # Get initial yaw
         initial_yaw = get_current_yaw(bno, calibration_offset)
         if initial_yaw is None:
             raise RuntimeError("Failed to get initial yaw reading")
         
-        # Set up turn parameters
         turn_direction = 'right' if args.angle > 0 else 'left'
         target_angle = abs(args.angle)
         motor_speed = 70
@@ -233,7 +256,6 @@ def main():
             if current_yaw is None:
                 raise RuntimeError("Lost IMU connection")
             
-            # Calculate angle turned
             if turn_direction == 'right':
                 angle_turned = (current_yaw - initial_yaw) % 360
                 if angle_turned > 180:
