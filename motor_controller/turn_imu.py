@@ -21,25 +21,72 @@ MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD = 29, 22, 31
 MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD = 11, 32, 33
 MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD = 12, 13, 35
 
-# Initialize IMU
-i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
-bno = BNO08X_I2C(i2c)
-bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-
-def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
-    """Convert quaternion to Euler angles."""
-    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 
-                      1 - 2 * (quat_i**2 + quat_j**2))
-    pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
-    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 
-                     1 - 2 * (quat_j**2 + quat_k**2))
-    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
-
-def get_current_yaw():
-    """Get current yaw angle from IMU."""
-    quat_i, quat_j, quat_k, quat_real = bno.quaternion
-    _, _, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-    return yaw
+class IMUSensor:
+    def __init__(self):
+        self.bno = None
+        self.initialized = False
+        self.last_yaw = 0
+        
+    def initialize(self):
+        """Initialize the IMU with error handling and retries."""
+        MAX_RETRIES = 3
+        retry_count = 0
+        
+        while retry_count < MAX_RETRIES:
+            try:
+                print("Initializing IMU...")
+                i2c = busio.I2C(board.SCL, board.SDA)
+                time.sleep(0.1)  # Short delay before initialization
+                
+                self.bno = BNO08X_I2C(i2c)
+                time.sleep(0.5)  # Give the sensor time to settle
+                
+                # Enable the rotation vector feature
+                print("Enabling rotation vector...")
+                self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                time.sleep(0.1)  # Wait for feature to be enabled
+                
+                # Test reading
+                print("Testing IMU reading...")
+                self.get_yaw()
+                
+                self.initialized = True
+                print("IMU initialization successful!")
+                return True
+                
+            except Exception as e:
+                retry_count += 1
+                print(f"IMU initialization attempt {retry_count} failed: {str(e)}")
+                time.sleep(1)  # Wait before retrying
+                
+                if retry_count >= MAX_RETRIES:
+                    print("Failed to initialize IMU after maximum retries")
+                    return False
+    
+    def get_yaw(self):
+        """Get current yaw angle from IMU with error handling."""
+        if not self.initialized:
+            return self.last_yaw
+            
+        try:
+            quat = self.bno.quaternion
+            if quat is None:
+                return self.last_yaw
+                
+            quat_i, quat_j, quat_k, quat_real = quat
+            
+            # Convert quaternion to Euler angles
+            yaw = math.degrees(math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
+                                        1 - 2 * (quat_j * quat_j + quat_k * quat_k)))
+            
+            # Normalize yaw to 0-360 range
+            yaw = (yaw + 360) % 360
+            self.last_yaw = yaw
+            return yaw
+            
+        except Exception as e:
+            print(f"Error reading IMU: {str(e)}")
+            return self.last_yaw
 
 class MotorController:
     def __init__(self, name, in1, in2, spd):
@@ -75,13 +122,9 @@ class MotorController:
         self.set_direction('stop')
         self.pwm.ChangeDutyCycle(0)
 
-def turn_to_angle(motors, target_angle):
-    """
-    Turn the robot to reach the target angle based on IMU readings.
-    Returns True when target is reached, False otherwise.
-    """
-    # Get current yaw from IMU
-    current_yaw = get_current_yaw()
+def turn_to_angle(motors, imu_sensor, target_angle):
+    """Turn the robot to reach the target angle based on IMU readings."""
+    current_yaw = imu_sensor.get_yaw()
     
     # Calculate error (shortest path to target)
     error = target_angle - current_yaw
@@ -137,6 +180,12 @@ def main():
     # Initialize GPIO
     GPIO.setmode(GPIO.BOARD)
     
+    # Initialize IMU
+    imu_sensor = IMUSensor()
+    if not imu_sensor.initialize():
+        print("Failed to initialize IMU. Exiting.")
+        sys.exit(1)
+    
     # Initialize motors
     motors = {
         'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
@@ -150,7 +199,7 @@ def main():
     
     try:
         # Keep turning until target is reached
-        while not turn_to_angle(motors, target_angle):
+        while not turn_to_angle(motors, imu_sensor, target_angle):
             time.sleep(0.1)  # Small delay between adjustments
         
         # Stop all motors when target is reached
