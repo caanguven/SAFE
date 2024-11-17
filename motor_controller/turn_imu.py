@@ -36,46 +36,33 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-# Function to set GPIO mode safely
-def safe_setmode(mode):
-    current_mode = GPIO.getmode()
-    if current_mode is None:
-        GPIO.setmode(mode)
-        logging.info(f"GPIO mode set to {mode}.")
-    elif current_mode == mode:
-        logging.info(f"GPIO mode already set to {mode}.")
-    else:
-        logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
-        GPIO.cleanup()
-        try:
-            GPIO.setmode(mode)
-            logging.info(f"GPIO mode reset to {mode}.")
-        except ValueError as ve:
-            logging.error(f"Failed to set GPIO mode to {mode}: {ve}")
-            sys.exit(1)
-
-# Set GPIO mode safely to BCM
-safe_setmode(GPIO.BCM)
+# Constants for SPI and ADC
+SPI_PORT = 0
+SPI_DEVICE = 0
+ADC_MAX = 1023
+MIN_ANGLE = 0
+MAX_ANGLE = 330
+SAWTOOTH_PERIOD = 2  # Period in seconds
 
 # GPIO Pins for Motor Control (Replace with BCM pin numbers)
-MOTOR1_IN1 = 4    # Previously BOARD pin 7
-MOTOR1_IN2 = 7    # Previously BOARD pin 26
-MOTOR1_SPD = 24   # Previously BOARD pin 18
+MOTOR1_IN1 = 4    # BCM Pin 4 (Originally BOARD pin 7)
+MOTOR1_IN2 = 7    # BCM Pin 7 (Originally BOARD pin 26)
+MOTOR1_SPD = 24   # BCM Pin 24 (Originally BOARD pin 18)
 MOTOR1_ADC_CHANNEL = 0
 
-MOTOR2_IN1 = 5    # Previously BOARD pin 29
-MOTOR2_IN2 = 25   # Previously BOARD pin 22
-MOTOR2_SPD = 6    # Previously BOARD pin 31
+MOTOR2_IN1 = 5    # BCM Pin 5 (Originally BOARD pin 29)
+MOTOR2_IN2 = 25   # BCM Pin 25 (Originally BOARD pin 22)
+MOTOR2_SPD = 6    # BCM Pin 6 (Originally BOARD pin 31)
 MOTOR2_ADC_CHANNEL = 1
 
-MOTOR3_IN1 = 17   # Previously BOARD pin 11
-MOTOR3_IN2 = 12   # Previously BOARD pin 32
-MOTOR3_SPD = 13   # Previously BOARD pin 33
+MOTOR3_IN1 = 17   # BCM Pin 17 (Originally BOARD pin 11)
+MOTOR3_IN2 = 12   # BCM Pin 12 (Originally BOARD pin 32)
+MOTOR3_SPD = 13   # BCM Pin 13 (Originally BOARD pin 33)
 MOTOR3_ADC_CHANNEL = 2
 
-MOTOR4_IN1 = 18   # Previously BOARD pin 12
-MOTOR4_IN2 = 27   # Previously BOARD pin 13
-MOTOR4_SPD = 19   # Previously BOARD pin 35
+MOTOR4_IN1 = 18   # BCM Pin 18 (Originally BOARD pin 12)
+MOTOR4_IN2 = 27   # BCM Pin 27 (Originally BOARD pin 13)
+MOTOR4_SPD = 19   # BCM Pin 19 (Originally BOARD pin 35)
 MOTOR4_ADC_CHANNEL = 3
 
 # Setup GPIO pins
@@ -197,7 +184,7 @@ def set_motor_direction(motor, direction):
 def set_motor_speed(motor, speed):
     motor_pwms[motor].ChangeDutyCycle(speed)
     logging.debug(f"Motor {motor} speed set to {speed}%.")
-    
+
 def stop_all_motors():
     for motor in motor_pwms:
         set_motor_direction(motor, 'stop')
@@ -290,40 +277,4 @@ def main(stdscr):
                         if diff >= target_turn_angle:
                             turning = False
                             stop_all_motors()
-                            logging.info(f"Right turn completed. Current Yaw: {current_yaw}°")
-
-            # Update display
-            yaw = get_current_yaw(bno, calibration_offset)
-            if yaw is not None:
-                stdscr.addstr(8, 0, f"Current Yaw: {yaw:.2f}°")
-            else:
-                stdscr.addstr(8, 0, "Current Yaw: N/A")
-            stdscr.addstr(10, 0, f"Turning: {'Yes' if turning else 'No'} Direction: {turn_direction if turn_direction else 'N/A'}")
-            stdscr.refresh()
-            time.sleep(0.1)
-
-    except Exception as e:
-        logging.exception("An error occurred in the main loop:")
-    finally:
-        logging.info("Entering cleanup phase.")
-        stop_all_motors()
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
-        curses.nocbreak()
-        stdscr.keypad(False)
-        curses.echo()
-        curses.endwin()
-        logging.info("GPIO cleanup completed.")
-
-if __name__ == "__main__":
-    try:
-        logging.info("Script started.")
-        curses.wrapper(main)
-    except Exception as e:
-        logging.exception("An unexpected error occurred:")
-        stop_all_motors()
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
-        sys.exit(1)
+                            logging.info(f"Right turn complete
