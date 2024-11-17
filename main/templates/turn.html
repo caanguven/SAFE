@@ -194,7 +194,7 @@
                 if (status.is_turning) {
                     const direction = status.target_angle > 0 ? 'Right' : 'Left';
                     statusDisplay.textContent = `Status: Turning ${direction}`;
-                    turnProgress.textContent = `Current: ${status.current_angle.toFixed(1)}° / Target: ${status.target_angle}°`;
+                    turnProgress.textContent = `: Target: ${status.target_angle}°`;
                 } else if (isRunning) {
                     statusDisplay.textContent = 'Status: Turn completed';
                     clearInterval(statusInterval);
