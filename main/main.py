@@ -454,6 +454,48 @@ def get_turn_status():
             'target_angle': 0,
             'error': str(e)
         })
+        
+def run_turn_script(angle):
+    global turn_status
+    with turn_lock:
+        turn_status['is_turning'] = True
+        turn_status['error'] = None
+        turn_status['target_angle'] = angle
+        turn_status['current_angle'] = 0
+
+    try:
+        script_path = os.path.join(os.path.dirname(__file__), 'turn_imu.py')
+        process = subprocess.Popen(['python3', script_path, str(angle)], 
+                                 stdout=subprocess.PIPE, 
+                                 stderr=subprocess.PIPE,
+                                 universal_newlines=True)
+        
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                if "Current angle:" in output:
+                    try:
+                        current = float(output.split("Current angle:")[1].split("°")[0])
+                        with turn_lock:
+                            turn_status['current_angle'] = current
+                    except:
+                        pass
+
+        return_code = process.poll()
+        if return_code != 0:
+            error_output = process.stderr.read()
+            with turn_lock:
+                turn_status['error'] = f"Error: {error_output}"
+    
+    except Exception as e:
+        with turn_lock:
+            turn_status['error'] = f"Error: {str(e)}"
+    
+    finally:
+        with turn_lock:
+            turn_status['is_turning'] = False
 
 if __name__ == '__main__':
     threading.Thread(target=update_imu_data, daemon=True).start()
