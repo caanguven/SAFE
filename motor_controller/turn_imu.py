@@ -3,6 +3,7 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import curses
+import sys
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -36,20 +37,11 @@ MOTOR4_IN2 = 13
 MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
 
-# GPIO setup with mode checking
-current_mode = GPIO.getmode()
-if current_mode is None:
-    GPIO.setmode(GPIO.BOARD)
-    print("GPIO mode set to BOARD.")
-elif current_mode == GPIO.BOARD:
-    print("GPIO mode already set to BOARD.")
-else:
-    print(f"GPIO mode already set to {current_mode}, attempting to reset to BOARD.")
-    GPIO.cleanup()
-    GPIO.setmode(GPIO.BOARD)
-    print("GPIO mode reset to BOARD.")
+# Suppress GPIO warnings (optional)
+GPIO.setwarnings(False)
 
-# Proceed with GPIO setup
+# GPIO setup
+GPIO.setmode(GPIO.BOARD)
 GPIO.setup(MOTOR1_IN1, GPIO.OUT)
 GPIO.setup(MOTOR1_IN2, GPIO.OUT)
 GPIO.setup(MOTOR1_SPD, GPIO.OUT)
@@ -76,7 +68,6 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-# Define your classes and functions here
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
