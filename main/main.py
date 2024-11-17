@@ -396,7 +396,7 @@ turn_lock = Lock()
 
 @app.route('/turn')
 def turn_control():
-    return render_template('turn_control.html')
+    return render_template('turn.html')
 
 @app.route('/start_turn', methods=['POST'])
 def start_turn():
