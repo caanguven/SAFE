@@ -8,6 +8,11 @@ import busio
 import board
 from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
+import logging
+
+# Configure logging
+logging.basicConfig(filename='motor_control.log', level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -18,53 +23,116 @@ MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 3  # Period in seconds
 
 # GPIO Pins for Motor 1
-MOTOR1_IN1 = 7
-MOTOR1_IN2 = 26
-MOTOR1_SPD = 18
+MOTOR1_IN1 = 7    # Physical Pin 7 (GPIO4)
+MOTOR1_IN2 = 26   # Physical Pin 26 (GPIO7)
+MOTOR1_SPD = 18   # Physical Pin 12 (GPIO24)
 MOTOR1_ADC_CHANNEL = 0
 
 # GPIO Pins for Motor 2
-MOTOR2_IN1 = 29
-MOTOR2_IN2 = 22
-MOTOR2_SPD = 31
+MOTOR2_IN1 = 29   # Physical Pin 29 (GPIO5)
+MOTOR2_IN2 = 22   # Physical Pin 22 (GPIO6)
+MOTOR2_SPD = 31   # Physical Pin 31 (GPIO6)
 MOTOR2_ADC_CHANNEL = 1
 
 # GPIO Pins for Motor 3
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
+MOTOR3_IN1 = 11   # Physical Pin 11 (GPIO17)
+MOTOR3_IN2 = 32   # Physical Pin 32 (GPIO12)
+MOTOR3_SPD = 33   # Physical Pin 33 (GPIO13)
 MOTOR3_ADC_CHANNEL = 2
 
 # GPIO Pins for Motor 4
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
+MOTOR4_IN1 = 12   # Physical Pin 12 (GPIO18)
+MOTOR4_IN2 = 13   # Physical Pin 13 (GPIO27)
+MOTOR4_SPD = 35   # Physical Pin 35 (GPIO19)
 MOTOR4_ADC_CHANNEL = 3
 
+# GPIO setup with robust mode handling
+def setup_gpio():
+    current_mode = GPIO.getmode()
+    logging.debug(f"Current GPIO mode: {current_mode}")
+    if current_mode is None:
+        GPIO.setmode(GPIO.BOARD)
+        logging.info("GPIO mode set to GPIO.BOARD.")
+    elif current_mode != GPIO.BOARD:
+        logging.warning(f"GPIO mode already set to {current_mode}, expected GPIO.BOARD. Attempting to reset.")
+        GPIO.cleanup()
+        GPIO.setmode(GPIO.BOARD)
+        logging.info("GPIO mode reset to GPIO.BOARD.")
+    else:
+        logging.info("GPIO mode already set to GPIO.BOARD.")
+
+    # Setup GPIO pins
+    GPIO.setup(MOTOR1_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR1_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR3_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+    logging.info("GPIO pins set as outputs.")
+
+# Set up PWM for motor speed control
+def setup_pwm():
+    motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
+    motor1_pwm.start(0)
+    motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+    motor2_pwm.start(0)
+    motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+    motor3_pwm.start(0)
+    motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
+    motor4_pwm.start(0)
+    logging.info("PWM initialized for all motors.")
+    return motor1_pwm, motor2_pwm, motor3_pwm, motor4_pwm
+
+# Set up MCP3008
+def setup_mcp3008():
+    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+    logging.info("MCP3008 ADC initialized.")
+    return mcp
+
 # Initialize I2C and IMU
-i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
-bno = BNO08X_I2C(i2c)
-bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+def setup_imu():
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
+        bno = BNO08X_I2C(i2c)
+        bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+        logging.info("IMU initialized and rotation vector reporting enabled.")
+        return bno
+    except Exception as e:
+        logging.error(f"Failed to initialize IMU: {e}")
+        raise
 
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
     """
     Convert quaternion to Euler angles.
     """
-    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 1 - 2 * (quat_i**2 + quat_j**2))
+    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k),
+                     1 - 2 * (quat_i**2 + quat_j**2))
     pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
-    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
+    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
+                    1 - 2 * (quat_j**2 + quat_k**2))
     return roll, pitch, yaw
 
-def calibrate_imu():
+def calibrate_imu(bno):
     """
     Calibrate the IMU by capturing the initial yaw angle.
     """
     quat_i, quat_j, quat_k, quat_real = bno.quaternion
     roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-    calibration_offsets = {'roll': math.degrees(roll), 'pitch': math.degrees(pitch), 'yaw': math.degrees(yaw)}
+    calibration_offsets = {
+        'roll': math.degrees(roll),
+        'pitch': math.degrees(pitch),
+        'yaw': math.degrees(yaw)
+    }
+    logging.info(f"IMU calibrated with offsets: {calibration_offsets}")
     return calibration_offsets
 
-def get_current_yaw(calibration_offsets):
+def get_current_yaw(bno, calibration_offsets):
     """
     Get the current yaw angle, adjusted by calibration offsets.
     """
@@ -74,6 +142,7 @@ def get_current_yaw(calibration_offsets):
     yaw_deg = math.degrees(yaw) - calibration_offsets['yaw']
     # Normalize yaw to [0, 360)
     yaw_deg = yaw_deg % 360
+    logging.debug(f"Current yaw: {yaw_deg} degrees")
     return yaw_deg
 
 def angular_difference(target, current):
@@ -129,6 +198,7 @@ class PIDController:
         self.previous_error = error
         self.last_time = current_time
 
+        logging.debug(f"PID Compute -> Error: {error}, Proportional: {proportional}, Integral: {integral}, Derivative: {derivative}, Control Signal: {control_signal}")
         return control_signal
 
 class MotorController:
@@ -144,7 +214,7 @@ class MotorController:
         self.encoder_flipped = encoder_flipped
         self.spike_filter = SpikeFilter(name)
 
-    def read_position(self):
+    def read_position(self, mcp):
         raw_value = mcp.read_adc(self.adc_channel)
         
         if self.encoder_flipped:
@@ -157,6 +227,7 @@ class MotorController:
             
         degrees = (filtered_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
+        logging.debug(f"{self.name} Position: {degrees} degrees")
         return degrees
 
     def set_motor_direction(self, direction):
@@ -169,9 +240,10 @@ class MotorController:
         else:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.LOW)
+        logging.debug(f"{self.name} direction set to {direction}")
 
-    def move_to_position(self, target):
-        current_position = self.read_position()
+    def move_to_position(self, target, mcp):
+        current_position = self.read_position(mcp)
         error = target - current_position
 
         if error > 165:
@@ -183,18 +255,21 @@ class MotorController:
 
         if abs(error) <= 2:
             self.stop_motor()
+            logging.info(f"{self.name} reached target position: {target} degrees.")
             return True
 
         direction = 'forward' if control_signal > 0 else 'backward'
         self.set_motor_direction(direction)
         speed = min(100, max(30, abs(control_signal)))
         self.pwm.ChangeDutyCycle(speed)
+        logging.debug(f"{self.name} moving {direction} at speed {speed}%")
         return False
 
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
+        logging.info(f"{self.name} stopped.")
 
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
     elapsed_time = time.time() - start_time
@@ -282,12 +357,10 @@ def main(stdscr):
     stdscr.nodelay(True)
     stdscr.keypad(True)
 
-    # Check and set GPIO mode
-    current_mode = GPIO.getmode()
-    if current_mode is None:
-        GPIO.setmode(GPIO.BOARD)
-    elif current_mode != GPIO.BOARD:
-        raise ValueError(f"GPIO mode already set to {current_mode}, expected GPIO.BOARD.")
+    setup_gpio()
+    motor1_pwm, motor2_pwm, motor3_pwm, motor4_pwm = setup_pwm()
+    mcp = setup_mcp3008()
+    bno = setup_imu()
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
@@ -314,7 +387,7 @@ def main(stdscr):
     last_direction_change = time.time()
 
     # Initialize IMU and calibrate
-    calibration_offsets = calibrate_imu()
+    calibration_offsets = calibrate_imu(bno)
 
     # Variables for turning
     turning = False
@@ -350,27 +423,33 @@ def main(stdscr):
                     if key == curses.KEY_UP:
                         new_direction = 'forward'
                         turning = False  # Stop any ongoing turning
+                        logging.info("Received command: Forward")
                     elif key == curses.KEY_DOWN:
                         new_direction = 'backward'
                         turning = False
+                        logging.info("Received command: Backward")
                     elif key == curses.KEY_RIGHT:
                         if not turning:
-                            current_yaw = get_current_yaw(calibration_offsets)
+                            current_yaw = get_current_yaw(bno, calibration_offsets)
                             target_yaw = (current_yaw + desired_turn_angle) % 360
                             turning = True
                             turn_direction = 'right'
                             new_direction = 'right'
+                            logging.info(f"Received command: Turn Right to {target_yaw} degrees")
                     elif key == curses.KEY_LEFT:
                         if not turning:
-                            current_yaw = get_current_yaw(calibration_offsets)
+                            current_yaw = get_current_yaw(bno, calibration_offsets)
                             target_yaw = (current_yaw - desired_turn_angle) % 360
                             turning = True
                             turn_direction = 'left'
                             new_direction = 'left'
+                            logging.info(f"Received command: Turn Left to {target_yaw} degrees")
                     elif key == ord(' '):
                         new_direction = 'stable'
                         turning = False  # Stop any ongoing turning
+                        logging.info("Received command: Stop")
                     elif key == ord('q') or key == ord('Q'):
+                        logging.info("Received command: Quit")
                         break
 
                     # Check for opposite direction
@@ -379,17 +458,20 @@ def main(stdscr):
                             current_direction = new_direction
                             last_direction_change = current_time
                             last_input_time = current_time
+                            logging.debug(f"Direction changed to {current_direction}")
                     else:
                         # Provide feedback that the direction is not allowed
                         stdscr.addstr(9, 0, f"Cannot switch to {new_direction.capitalize()} while moving {current_direction.capitalize()}.")
                         stdscr.clrtoeol()
                         stdscr.refresh()
+                        logging.warning(f"Attempted to switch to {new_direction} while moving {current_direction}")
 
             elif current_time - last_input_time > INPUT_TIMEOUT:
                 # Auto-stop if no input received within timeout period
                 if current_direction != 'stable':
                     current_direction = 'stable'
                     turning = False  # Stop any ongoing turning
+                    logging.info("Auto-stop due to input timeout.")
 
             # Clear previous feedback message
             stdscr.move(9, 0)
@@ -398,15 +480,20 @@ def main(stdscr):
             # Update motor actions based on current direction
             if current_direction != 'stable':
                 if turning:
-                    current_yaw = get_current_yaw(calibration_offsets)
+                    current_yaw = get_current_yaw(bno, calibration_offsets)
                     diff = angular_difference(target_yaw, current_yaw)
                     stdscr.addstr(9, 0, f"Turning {turn_direction.capitalize()}, Current Yaw: {current_yaw:.2f}°, Target Yaw: {target_yaw:.2f}°, Difference: {diff:.2f}°")
+                    stdscr.clrtoeol()
+                    stdscr.refresh()
+                    logging.debug(f"Turning {turn_direction}: Current Yaw={current_yaw}, Target Yaw={target_yaw}, Diff={diff}")
+
                     if abs(diff) <= tolerance:
                         # Target reached
                         turning = False
                         current_direction = 'stable'
                         for motor in motors.values():
                             motor.stop_motor()
+                        logging.info("Target yaw angle reached. Turning stopped.")
                     else:
                         # Keep turning
                         motor_groups = configure_motor_groups(turn_direction, motors)
@@ -418,10 +505,10 @@ def main(stdscr):
                         group2_targets = group2.generate_target_positions(base_position)
 
                         for motor, target in zip(group1.motors, group1_targets):
-                            motor.move_to_position(target)
+                            motor.move_to_position(target, mcp)
 
                         for motor, target in zip(group2.motors, group2_targets):
-                            motor.move_to_position(target)
+                            motor.move_to_position(target, mcp)
                 else:
                     # Normal movement (forward or backward)
                     motor_groups = configure_motor_groups(current_direction, motors)
@@ -433,19 +520,19 @@ def main(stdscr):
                     group2_targets = group2.generate_target_positions(base_position)
 
                     for motor, target in zip(group1.motors, group1_targets):
-                        motor.move_to_position(target)
+                        motor.move_to_position(target, mcp)
 
                     for motor, target in zip(group2.motors, group2_targets):
-                        motor.move_to_position(target)
+                        motor.move_to_position(target, mcp)
             else:
                 for motor in motors.values():
                     motor.stop_motor()
 
             # Display current status
-            m1_pos = motor1.read_position()
-            m2_pos = motor2.read_position()
-            m3_pos = motor3.read_position()
-            m4_pos = motor4.read_position()
+            m1_pos = motor1.read_position(mcp)
+            m2_pos = motor2.read_position(mcp)
+            m3_pos = motor3.read_position(mcp)
+            m4_pos = motor4.read_position(mcp)
 
             phase_diff_m1_m3 = abs(m1_pos - m3_pos)
             phase_diff_m2_m4 = abs(m2_pos - m4_pos)
@@ -466,12 +553,35 @@ def main(stdscr):
             stdscr.refresh()
             time.sleep(0.02)  # Reduced sleep for better responsiveness
 
-    if __name__ == "__main__":
-        try:
-            curses.wrapper(main)
-        except ValueError as ve:
-            print(f"GPIO Mode Error: {ve}")
-            GPIO.cleanup()
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            GPIO.cleanup()
+    except Exception as e:
+        logging.exception("An error occurred in the main loop:")
+        stdscr.addstr(14, 0, f"Error: {str(e)}")
+        stdscr.refresh()
+        time.sleep(2)
+    finally:
+        for motor in motors.values():
+            motor.stop_motor()
+
+        motor1_pwm.stop()
+        motor2_pwm.stop()
+        motor3_pwm.stop()
+        motor4_pwm.stop()
+        GPIO.cleanup()
+
+        curses.nocbreak()
+        stdscr.keypad(False)
+        curses.echo()
+        curses.endwin()
+        logging.info("GPIO cleaned up and program terminated.")
+
+if __name__ == "__main__":
+    try:
+        curses.wrapper(main)
+    except ValueError as ve:
+        logging.error(f"GPIO Mode Error: {ve}")
+        GPIO.cleanup()
+        print(f"GPIO Mode Error: {ve}")
+    except Exception as e:
+        logging.exception("An unexpected error occurred:")
+        GPIO.cleanup()
+        print(f"An unexpected error occurred: {e}")
