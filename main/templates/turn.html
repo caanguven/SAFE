@@ -1,0 +1,187 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMU Turn Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            background-color: #f5f5f5;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .input-group {
+            margin: 20px 0;
+        }
+        input[type="number"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 100px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .progress {
+            margin-top: 20px;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IMU Turn Control</h1>
+        
+        <div class="input-group">
+            <input type="number" id="angleInput" min="0.1" max="179.9" step="0.1" value="90">
+            <button id="turnButton" onclick="startTurn()">Start Turn</button>
+        </div>
+        
+        <div class="status" id="statusDisplay">
+            Status: Ready
+        </div>
+        
+        <div class="progress" id="progressBar">
+            <div class="progress-bar" id="progressBarFill" style="width: 0%"></div>
+        </div>
+        
+        <div class="error" id="errorDisplay"></div>
+    </div>
+
+    <script>
+        let isRunning = false;
+        let statusInterval;
+
+        function validateAngle(angle) {
+            return angle > 0 && angle < 180;
+        }
+
+        async function startTurn() {
+            const angleInput = document.getElementById('angleInput');
+            const angle = parseFloat(angleInput.value);
+            
+            if (!validateAngle(angle)) {
+                showError('Angle must be between 0 and 180 (exclusive)');
+                return;
+            }
+            
+            const turnButton = document.getElementById('turnButton');
+            turnButton.disabled = true;
+            isRunning = true;
+            
+            try {
+                const response = await fetch('/start_turn', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ angle: angle })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to start turn');
+                }
+                
+                // Start polling status
+                statusInterval = setInterval(updateStatus, 100);
+                
+            } catch (error) {
+                showError(error.message);
+                turnButton.disabled = false;
+                isRunning = false;
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                const status = await response.json();
+                
+                const statusDisplay = document.getElementById('statusDisplay');
+                const progressBarFill = document.getElementById('progressBarFill');
+                const turnButton = document.getElementById('turnButton');
+                
+                if (status.error) {
+                    showError(status.error);
+                    clearInterval(statusInterval);
+                    turnButton.disabled = false;
+                    isRunning = false;
+                    return;
+                }
+                
+                if (status.is_turning) {
+                    statusDisplay.textContent = `Turning: Current angle ${status.current_angle.toFixed(1)}°`;
+                    const progress = (Math.abs(status.current_angle) / status.target_angle) * 100;
+                    progressBarFill.style.width = `${Math.min(progress, 100)}%`;
+                } else if (isRunning) {
+                    statusDisplay.textContent = 'Turn completed';
+                    progressBarFill.style.width = '100%';
+                    clearInterval(statusInterval);
+                    turnButton.disabled = false;
+                    isRunning = false;
+                }
+                
+            } catch (error) {
+                showError('Failed to update status');
+                clearInterval(statusInterval);
+                document.getElementById('turnButton').disabled = false;
+                isRunning = false;
+            }
+        }
+
+        function showError(message) {
+            const errorDisplay = document.getElementById('errorDisplay');
+            errorDisplay.textContent = message;
+            setTimeout(() => {
+                errorDisplay.textContent = '';
+            }, 5000);
+        }
+
+        // Input validation
+        document.getElementById('angleInput').addEventListener('input', function(e) {
+            const angle = parseFloat(e.target.value);
+            if (!validateAngle(angle)) {
+                showError('Angle must be between 0 and 180 (exclusive)');
+            }
+        });
+    </script>
+</body>
+</html>
