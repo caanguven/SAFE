@@ -47,31 +47,35 @@ def safe_setmode(mode):
     else:
         logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
         GPIO.cleanup()
-        GPIO.setmode(mode)
-        logging.info(f"GPIO mode reset to {mode}.")
+        try:
+            GPIO.setmode(mode)
+            logging.info(f"GPIO mode reset to {mode}.")
+        except ValueError as ve:
+            logging.error(f"Failed to set GPIO mode to {mode}: {ve}")
+            sys.exit(1)
 
-# Set GPIO mode safely
-safe_setmode(GPIO.BOARD)
+# Set GPIO mode safely to BCM
+safe_setmode(GPIO.BCM)
 
-# GPIO Pins for Motor Control (Replace with your actual pin numbers)
-MOTOR1_IN1 = 7
-MOTOR1_IN2 = 26
-MOTOR1_SPD = 18
+# GPIO Pins for Motor Control (Replace with BCM pin numbers)
+MOTOR1_IN1 = 4    # Previously BOARD pin 7
+MOTOR1_IN2 = 7    # Previously BOARD pin 26
+MOTOR1_SPD = 24   # Previously BOARD pin 18
 MOTOR1_ADC_CHANNEL = 0
 
-MOTOR2_IN1 = 29
-MOTOR2_IN2 = 22
-MOTOR2_SPD = 31
+MOTOR2_IN1 = 5    # Previously BOARD pin 29
+MOTOR2_IN2 = 25   # Previously BOARD pin 22
+MOTOR2_SPD = 6    # Previously BOARD pin 31
 MOTOR2_ADC_CHANNEL = 1
 
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
+MOTOR3_IN1 = 17   # Previously BOARD pin 11
+MOTOR3_IN2 = 12   # Previously BOARD pin 32
+MOTOR3_SPD = 13   # Previously BOARD pin 33
 MOTOR3_ADC_CHANNEL = 2
 
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
+MOTOR4_IN1 = 18   # Previously BOARD pin 12
+MOTOR4_IN2 = 27   # Previously BOARD pin 13
+MOTOR4_SPD = 19   # Previously BOARD pin 35
 MOTOR4_ADC_CHANNEL = 3
 
 # Setup GPIO pins
@@ -193,7 +197,7 @@ def set_motor_direction(motor, direction):
 def set_motor_speed(motor, speed):
     motor_pwms[motor].ChangeDutyCycle(speed)
     logging.debug(f"Motor {motor} speed set to {speed}%.")
-
+    
 def stop_all_motors():
     for motor in motor_pwms:
         set_motor_direction(motor, 'stop')
@@ -235,7 +239,7 @@ def main(stdscr):
                         initial_yaw = get_current_yaw(bno, calibration_offset)
                         if initial_yaw is not None:
                             target_yaw = (initial_yaw - target_turn_angle) % 360
-                            # Example: To turn left, set left motors backward and right motors forward
+                            # To turn left: Left motors backward, Right motors forward
                             set_motor_direction('M1', 'backward')  # Left Front
                             set_motor_direction('M2', 'forward')   # Right Front
                             set_motor_direction('M3', 'backward')  # Left Rear
@@ -252,7 +256,7 @@ def main(stdscr):
                         initial_yaw = get_current_yaw(bno, calibration_offset)
                         if initial_yaw is not None:
                             target_yaw = (initial_yaw + target_turn_angle) % 360
-                            # Example: To turn right, set left motors forward and right motors backward
+                            # To turn right: Left motors forward, Right motors backward
                             set_motor_direction('M1', 'forward')   # Left Front
                             set_motor_direction('M2', 'backward')  # Right Front
                             set_motor_direction('M3', 'forward')   # Left Rear
