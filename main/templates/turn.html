@@ -46,23 +46,7 @@
             padding: 10px;
             border-radius: 5px;
             font-size: 1.2em;
-        }
-        .imu-readings {
-            margin-top: 20px;
-            padding: 15px;
             background-color: #e9ecef;
-            border-radius: 8px;
-            text-align: left;
-        }
-        .imu-value {
-            font-family: monospace;
-            font-size: 1.1em;
-            margin: 10px 0;
-            padding: 5px;
-            background-color: white;
-            border-radius: 4px;
-            display: flex;
-            justify-content: space-between;
         }
         .error {
             color: red;
@@ -95,6 +79,11 @@
             font-style: italic;
             color: #666;
         }
+        #turnProgress {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #007bff;
+        }
     </style>
 </head>
 <body>
@@ -121,28 +110,9 @@
             <button id="turnButton" onclick="startTurn()">Start Turn</button>
         </div>
         
-        <div class="status" id="statusDisplay">
-            Status: Ready
-        </div>
-
-        <div class="imu-readings">
-            <h3>IMU Readings</h3>
-            <div class="imu-value">
-                <span>Roll:</span>
-                <span id="rollValue">0.00°</span>
-            </div>
-            <div class="imu-value">
-                <span>Pitch:</span>
-                <span id="pitchValue">0.00°</span>
-            </div>
-            <div class="imu-value">
-                <span>Yaw:</span>
-                <span id="yawValue">0.00°</span>
-            </div>
-            <div class="imu-value">
-                <span>Turn Progress:</span>
-                <span id="turnProgress">Not turning</span>
-            </div>
+        <div class="status">
+            <div id="statusDisplay">Status: Ready</div>
+            <div id="turnProgress">Not turning</div>
         </div>
         
         <div class="error" id="errorDisplay"></div>
@@ -151,23 +121,9 @@
     <script>
         let isRunning = false;
         let statusInterval;
-        let imuInterval;
 
         function validateAngle(angle) {
             return angle > -180 && angle < 180 && angle !== 0;
-        }
-
-        async function updateIMUReadings() {
-            try {
-                const response = await fetch('/imu_data');
-                const data = await response.json();
-                
-                document.getElementById('rollValue').textContent = `${data.roll.toFixed(2)}°`;
-                document.getElementById('pitchValue').textContent = `${data.pitch.toFixed(2)}°`;
-                document.getElementById('yawValue').textContent = `${data.yaw.toFixed(2)}°`;
-            } catch (error) {
-                console.error('Failed to update IMU readings:', error);
-            }
         }
 
         async function startTurn() {
@@ -238,10 +194,10 @@
                 if (status.is_turning) {
                     const direction = status.target_angle > 0 ? 'Right' : 'Left';
                     statusDisplay.textContent = `Status: Turning ${direction}`;
-                    turnProgress.textContent = `Target: ${status.target_angle}°, Current: ${status.current_angle.toFixed(1)}°`;
+                    turnProgress.textContent = `Current: ${status.current_angle.toFixed(1)}° / Target: ${status.target_angle}°`;
                 } else if (isRunning) {
                     statusDisplay.textContent = 'Status: Turn completed';
-                    turnProgress.textContent = `Completed at ${status.current_angle.toFixed(1)}°`;
+                    turnProgress.textContent = `Final angle: ${status.current_angle.toFixed(1)}°`;
                     clearInterval(statusInterval);
                     turnButton.disabled = false;
                     isRunning = false;
@@ -264,12 +220,8 @@
             }, 5000);
         }
 
-        // Start IMU updates when page loads
-        imuInterval = setInterval(updateIMUReadings, 100);
-
         // Cleanup when page is unloaded
         window.addEventListener('beforeunload', () => {
-            clearInterval(imuInterval);
             clearInterval(statusInterval);
         });
 
