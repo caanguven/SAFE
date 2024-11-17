@@ -396,14 +396,64 @@ turn_lock = Lock()
 
 @app.route('/turn')
 def turn_control():
-    """Route to serve the turn control page"""
-    return render_template('turn.html')
+    return render_template('turn_control.html')
 
-@app.route('/get_turn_status')
+@app.route('/start_turn', methods=['POST'])
+def start_turn():
+    global turn_status
+    
+    # Ensure we're receiving JSON data
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        angle = float(data.get('angle', 0))
+        
+        # Validate angle
+        if angle <= 0 or angle >= 180:
+            return jsonify({'error': 'Angle must be between 0 and 180 (exclusive)'}), 400
+        
+        # Check if already turning
+        with turn_lock:
+            if turn_status['is_turning']:
+                return jsonify({'error': 'Turn already in progress'}), 400
+        
+        # Start turn in background thread
+        thread = threading.Thread(target=run_turn_script, args=(angle,))
+        thread.daemon = True  # Make thread daemon so it exits when main program exits
+        thread.start()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Turn started',
+            'angle': angle
+        })
+    
+    except ValueError:
+        return jsonify({'error': 'Invalid angle value'}), 400
+    except Exception as e:
+        print(f"Turn error: {str(e)}")  # Log the error
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_turn_status', methods=['GET'])
 def get_turn_status():
-    """Route to get the current turn status"""
-    with turn_lock:
-        return jsonify(turn_status)
+    """Get the current status of the turn operation"""
+    try:
+        with turn_lock:
+            status_copy = turn_status.copy()  # Make a copy to avoid lock issues
+        return jsonify(status_copy)
+    except Exception as e:
+        print(f"Status error: {str(e)}")  # Log the error
+        return jsonify({
+            'is_turning': False,
+            'current_angle': 0,
+            'target_angle': 0,
+            'error': str(e)
+        })
 
 if __name__ == '__main__':
     threading.Thread(target=update_imu_data, daemon=True).start()
