@@ -9,6 +9,9 @@ from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 import math
 
+# First, clean up any existing GPIO settings
+GPIO.cleanup()
+
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
@@ -36,17 +39,15 @@ class IMUSensor:
             try:
                 print("Initializing IMU...")
                 i2c = busio.I2C(board.SCL, board.SDA)
-                time.sleep(0.1)  # Short delay before initialization
+                time.sleep(0.1)
                 
                 self.bno = BNO08X_I2C(i2c)
-                time.sleep(0.5)  # Give the sensor time to settle
+                time.sleep(0.5)
                 
-                # Enable the rotation vector feature
                 print("Enabling rotation vector...")
                 self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-                time.sleep(0.1)  # Wait for feature to be enabled
+                time.sleep(0.1)
                 
-                # Test reading
                 print("Testing IMU reading...")
                 self.get_yaw()
                 
@@ -57,7 +58,7 @@ class IMUSensor:
             except Exception as e:
                 retry_count += 1
                 print(f"IMU initialization attempt {retry_count} failed: {str(e)}")
-                time.sleep(1)  # Wait before retrying
+                time.sleep(1)
                 
                 if retry_count >= MAX_RETRIES:
                     print("Failed to initialize IMU after maximum retries")
@@ -75,11 +76,9 @@ class IMUSensor:
                 
             quat_i, quat_j, quat_k, quat_real = quat
             
-            # Convert quaternion to Euler angles
             yaw = math.degrees(math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
                                         1 - 2 * (quat_j * quat_j + quat_k * quat_k)))
             
-            # Normalize yaw to 0-360 range
             yaw = (yaw + 360) % 360
             self.last_yaw = yaw
             return yaw
@@ -142,7 +141,7 @@ def turn_to_angle(motors, imu_sensor, target_angle):
     
     # Calculate motor speed based on error magnitude
     base_speed = 40
-    speed = min(max(abs(error) * 1.5, base_speed), 70)  # Scale speed with error
+    speed = min(max(abs(error) * 1.5, base_speed), 70)
     
     # Set motor directions based on turn direction
     if error > 0:  # Turn right
@@ -164,6 +163,20 @@ def turn_to_angle(motors, imu_sensor, target_angle):
     
     return False
 
+def setup_gpio():
+    """Setup GPIO with proper error handling."""
+    try:
+        # First cleanup any existing settings
+        GPIO.cleanup()
+        
+        # Set GPIO mode
+        GPIO.setmode(GPIO.BOARD)
+        
+        return True
+    except Exception as e:
+        print(f"Error setting up GPIO: {str(e)}")
+        return False
+
 def main():
     # Check command line arguments
     if len(sys.argv) != 2:
@@ -178,21 +191,29 @@ def main():
         sys.exit(1)
     
     # Initialize GPIO
-    GPIO.setmode(GPIO.BOARD)
+    if not setup_gpio():
+        print("Failed to setup GPIO. Exiting.")
+        sys.exit(1)
     
     # Initialize IMU
     imu_sensor = IMUSensor()
     if not imu_sensor.initialize():
         print("Failed to initialize IMU. Exiting.")
+        GPIO.cleanup()
         sys.exit(1)
     
     # Initialize motors
-    motors = {
-        'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
-        'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
-        'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
-        'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
-    }
+    try:
+        motors = {
+            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
+            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
+            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
+            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
+        }
+    except Exception as e:
+        print(f"Error initializing motors: {str(e)}")
+        GPIO.cleanup()
+        sys.exit(1)
     
     print(f"Starting turn to {target_angle}°")
     print("Press Ctrl+C to stop")
@@ -200,7 +221,7 @@ def main():
     try:
         # Keep turning until target is reached
         while not turn_to_angle(motors, imu_sensor, target_angle):
-            time.sleep(0.1)  # Small delay between adjustments
+            time.sleep(0.1)
         
         # Stop all motors when target is reached
         for motor in motors.values():
@@ -209,12 +230,15 @@ def main():
     except KeyboardInterrupt:
         print("\nTurn interrupted by user")
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error during operation: {str(e)}")
     finally:
         # Cleanup
         print("Cleaning up...")
-        for motor in motors.values():
-            motor.stop()
+        try:
+            for motor in motors.values():
+                motor.stop()
+        except:
+            pass
         GPIO.cleanup()
 
 if __name__ == "__main__":
