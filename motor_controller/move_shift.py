@@ -340,7 +340,7 @@ def main():
     calibration_offset = calibrate_imu(bno)
 
     # Thresholds for yaw deviation (degrees)
-    YAW_THRESHOLD = 30.0
+    YAW_THRESHOLD = 15.0
     # Maximum phase offset to apply for correction (degrees)
     MAX_PHASE_OFFSET = 5.0  # Reduced from 10.0 for smoother corrections
 
