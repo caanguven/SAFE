@@ -403,7 +403,6 @@ def turn_control():
 def start_turn():
     global turn_status
     
-    # Ensure we're receiving JSON data
     if not request.is_json:
         return jsonify({'error': 'Content-Type must be application/json'}), 400
     
@@ -414,9 +413,9 @@ def start_turn():
             
         angle = float(data.get('angle', 0))
         
-        # Validate angle
-        if angle <= 0 or angle >= 180:
-            return jsonify({'error': 'Angle must be between 0 and 180 (exclusive)'}), 400
+        # Validate angle (-180 to 180, excluding both -180 and 180)
+        if angle >= 180 or angle <= -180 or angle == 0:
+            return jsonify({'error': 'Angle must be between -180° and 180° (exclusive) and not 0°'}), 400
         
         # Check if already turning
         with turn_lock:
@@ -425,19 +424,19 @@ def start_turn():
         
         # Start turn in background thread
         thread = threading.Thread(target=run_turn_script, args=(angle,))
-        thread.daemon = True  # Make thread daemon so it exits when main program exits
+        thread.daemon = True
         thread.start()
         
         return jsonify({
             'status': 'success',
-            'message': 'Turn started',
+            'message': f"Starting {'right' if angle > 0 else 'left'} turn of {abs(angle)}°",
             'angle': angle
         })
     
     except ValueError:
         return jsonify({'error': 'Invalid angle value'}), 400
     except Exception as e:
-        print(f"Turn error: {str(e)}")  # Log the error
+        print(f"Turn error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/get_turn_status', methods=['GET'])

@@ -90,6 +90,11 @@
             background-color: #007bff;
             color: white;
         }
+        .direction-info {
+            margin: 10px 0;
+            font-style: italic;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -105,8 +110,13 @@
     <div class="container">
         <h1>IMU-Based Turn Control</h1>
         
+        <div class="direction-info">
+            Enter angle between -180° and 180° (exclusive)<br>
+            Negative = Turn Left | Positive = Turn Right
+        </div>
+        
         <div class="input-group">
-            <input type="number" id="angleInput" min="0.1" max="179.9" step="0.1" value="90" 
+            <input type="number" id="angleInput" min="-179.9" max="179.9" step="0.1" value="90" 
                    placeholder="Enter angle">
             <button id="turnButton" onclick="startTurn()">Start Turn</button>
         </div>
@@ -144,7 +154,7 @@
         let imuInterval;
 
         function validateAngle(angle) {
-            return angle > 0 && angle < 180;
+            return angle > -180 && angle < 180 && angle !== 0;
         }
 
         async function updateIMUReadings() {
@@ -165,7 +175,7 @@
             const angle = parseFloat(angleInput.value);
             
             if (!validateAngle(angle)) {
-                showError('Angle must be between 0 and 180 (exclusive)');
+                showError('Angle must be between -180° and 180° (exclusive) and not 0°');
                 return;
             }
             
@@ -226,7 +236,8 @@
                 }
                 
                 if (status.is_turning) {
-                    statusDisplay.textContent = 'Status: Turning';
+                    const direction = status.target_angle > 0 ? 'Right' : 'Left';
+                    statusDisplay.textContent = `Status: Turning ${direction}`;
                     turnProgress.textContent = `Target: ${status.target_angle}°, Current: ${status.current_angle.toFixed(1)}°`;
                 } else if (isRunning) {
                     statusDisplay.textContent = 'Status: Turn completed';
@@ -266,7 +277,7 @@
         document.getElementById('angleInput').addEventListener('input', function(e) {
             const angle = parseFloat(e.target.value);
             if (!validateAngle(angle)) {
-                showError('Angle must be between 0 and 180 (exclusive)');
+                showError('Angle must be between -180° and 180° (exclusive) and not 0°');
             }
         });
     </script>
