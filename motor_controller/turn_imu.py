@@ -41,38 +41,6 @@ MOTOR4_IN2 = 13
 MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
 
-# GPIO setup
-current_mode = GPIO.getmode()
-if current_mode is None:
-    GPIO.setmode(GPIO.BOARD)
-elif current_mode != GPIO.BOARD:
-    raise ValueError(f"GPIO mode already set to {current_mode}, expected GPIO.BOARD.")
-GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
-
-# Set up PWM for motor speed control
-motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
-motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(0)
-motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-motor3_pwm.start(0)
-motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor4_pwm.start(0)
-
-# Set up MCP3008
-mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
-
 # Initialize I2C and IMU
 i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
 bno = BNO08X_I2C(i2c)
@@ -104,7 +72,7 @@ def get_current_yaw(calibration_offsets):
     quat_i, quat_j, quat_k, quat_real = quat
     roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
     yaw_deg = math.degrees(yaw) - calibration_offsets['yaw']
-    # Ensure yaw is in [0, 360)
+    # Normalize yaw to [0, 360)
     yaw_deg = yaw_deg % 360
     return yaw_deg
 
@@ -308,10 +276,18 @@ def configure_motor_groups(direction, motors):
     return [group1, group2]
 
 def main(stdscr):
+    # Initialize curses
     curses.cbreak()
     curses.noecho()
     stdscr.nodelay(True)
     stdscr.keypad(True)
+
+    # Check and set GPIO mode
+    current_mode = GPIO.getmode()
+    if current_mode is None:
+        GPIO.setmode(GPIO.BOARD)
+    elif current_mode != GPIO.BOARD:
+        raise ValueError(f"GPIO mode already set to {current_mode}, expected GPIO.BOARD.")
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
@@ -340,6 +316,7 @@ def main(stdscr):
     # Initialize IMU and calibrate
     calibration_offsets = calibrate_imu()
 
+    # Variables for turning
     turning = False
     turn_direction = None
     target_yaw = None
@@ -489,24 +466,12 @@ def main(stdscr):
             stdscr.refresh()
             time.sleep(0.02)  # Reduced sleep for better responsiveness
 
-    except Exception as e:
-        stdscr.addstr(14, 0, f"Error: {str(e)}")
-        stdscr.refresh()
-        time.sleep(2)
-    finally:
-        for motor in motors.values():
-            motor.stop_motor()
-
-        motor1_pwm.stop()
-        motor2_pwm.stop()
-        motor3_pwm.stop()
-        motor4_pwm.stop()
-        GPIO.cleanup()
-
-        curses.nocbreak()
-        stdscr.keypad(False)
-        curses.echo()
-        curses.endwin()
-
-if __name__ == "__main__":
-    curses.wrapper(main)
+    if __name__ == "__main__":
+        try:
+            curses.wrapper(main)
+        except ValueError as ve:
+            print(f"GPIO Mode Error: {ve}")
+            GPIO.cleanup()
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            GPIO.cleanup()
