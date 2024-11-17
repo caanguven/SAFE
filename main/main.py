@@ -1,345 +1,389 @@
-import warnings
-# Suppress specific I2C frequency warning
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="adafruit_blinka.microcontroller.generic_linux.i2c")
-
-import RPi.GPIO as GPIO
+from flask import Flask, Response, request, render_template, jsonify, stream_with_context
+from picamera2 import Picamera2
+import cv2
+import numpy as np
+from pupil_apriltags import Detector
+import subprocess
+import threading
 import time
-import Adafruit_GPIO.SPI as SPI
-import Adafruit_MCP3008
+import math
 import busio
 import board
-import adafruit_bno08x  # Import the module for accessing constants
 from adafruit_bno08x.i2c import BNO08X_I2C
-import curses
-import sys
-import logging
-import math
-import signal
+from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("turn_based_on_yaw.log"),
-        logging.StreamHandler()
-    ]
-)
 
-# Suppress GPIO warnings
-GPIO.setwarnings(False)
 
-# Function to handle SIGINT (Ctrl+C) gracefully
-def signal_handler(sig, frame):
-    logging.info("Interrupt received. Cleaning up GPIO and exiting.")
-    stop_all_motors()
-    for pwm in motor_pwms.values():
-        pwm.stop()
-    GPIO.cleanup()
-    curses.endwin()
-    sys.exit(0)
 
-signal.signal(signal.SIGINT, signal_handler)
+app = Flask(__name__)
 
-# Constants for SPI and ADC
-SPI_PORT = 0
-SPI_DEVICE = 0
-ADC_MAX = 1023
-MIN_ANGLE = 0
-MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 2  # Period in seconds
+# Specify the path to the Haar cascade XML file
+haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml'
 
-# GPIO Pins for Motor Control (Using BCM numbering)
-MOTOR1_IN1 = 4    # BCM Pin 4 (Originally BOARD pin 7)
-MOTOR1_IN2 = 7    # BCM Pin 7 (Originally BOARD pin 26)
-MOTOR1_SPD = 24   # BCM Pin 24 (Originally BOARD pin 18)
-MOTOR1_ADC_CHANNEL = 0
+# Load the Haar cascade for face detection
+face_cascade = cv2.CascadeClassifier(haar_cascade_path)
+motor_process = None  # Initialize motor_process as None
 
-MOTOR2_IN1 = 5    # BCM Pin 5 (Originally BOARD pin 29)
-MOTOR2_IN2 = 25   # BCM Pin 25 (Originally BOARD pin 22)
-MOTOR2_SPD = 6    # BCM Pin 6 (Originally BOARD pin 31)
-MOTOR2_ADC_CHANNEL = 1
+# Check if the cascade loaded successfully
+if face_cascade.empty():
+    print('Failed to load cascade classifier')
+else:
+    print('Cascade classifier loaded successfully')
 
-MOTOR3_IN1 = 17   # BCM Pin 17 (Originally BOARD pin 11)
-MOTOR3_IN2 = 12   # BCM Pin 12 (Originally BOARD pin 32)
-MOTOR3_SPD = 13   # BCM Pin 13 (Originally BOARD pin 33)
-MOTOR3_ADC_CHANNEL = 2
+# Initialize BNO08x IMU
+i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
+bno = BNO08X_I2C(i2c)
+bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
 
-MOTOR4_IN1 = 18   # BCM Pin 18 (Originally BOARD pin 12)
-MOTOR4_IN2 = 27   # BCM Pin 27 (Originally BOARD pin 13)
-MOTOR4_SPD = 19   # BCM Pin 19 (Originally BOARD pin 35)
-MOTOR4_ADC_CHANNEL = 3
+# Global variable for IMU data
+imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
+calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
+calibrated = False
 
-# Function to set GPIO mode safely
-def safe_setmode(mode):
-    current_mode = GPIO.getmode()
-    if current_mode is None:
-        GPIO.setmode(mode)
-        logging.info(f"GPIO mode set to {mode}.")
-    elif current_mode == mode:
-        logging.info(f"GPIO mode already set to {mode}.")
-    else:
-        logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
-        GPIO.cleanup()
-        try:
-            GPIO.setmode(mode)
-            logging.info(f"GPIO mode reset to {mode}.")
-        except ValueError as ve:
-            logging.error(f"Failed to set GPIO mode to {mode}: {ve}")
-            sys.exit(1)
+imu_data_lock = threading.Lock()
 
-# Set GPIO mode safely to BCM
-safe_setmode(GPIO.BCM)
 
-# Setup GPIO pins
-motor_pins = [
-    (MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
-    (MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
-    (MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
-    (MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
-]
+# Initialize the AprilTag libraries
+at_detector = Detector(families='tag36h11 tag52h13',
+                       nthreads=1,
+                       quad_decimate=1.0,
+                       quad_sigma=0.0,
+                       refine_edges=1,
+                       decode_sharpening=0.25,
+                       debug=0)
 
-for in1, in2, spd in motor_pins:
+screen_center = (320, 240)
+screen_center_x = 320  # Assuming a 640x480 resolution
+
+# Singleton pattern for Picamera2 instance
+class Camera:
+    instance = None
+
+    @staticmethod
+    def get_instance():
+        if Camera.instance is None:
+            print("Initializing camera...")
+            Camera.instance = Picamera2()
+            Camera.instance.configure(Camera.instance.create_preview_configuration(main={"size": (640, 480)}))
+            Camera.instance.start()
+        else:
+            print("Camera already initialized.")
+        return Camera.instance
+
+    @staticmethod
+    def release_instance():
+        if Camera.instance is not None:
+            print("Releasing camera...")
+            Camera.instance.stop()
+            Camera.instance.close()
+            Camera.instance = None
+
+def gen(camera):
+    """Video streaming generator function with AprilTag detection."""
+    while True:
+        frame = camera.capture_array()
+
+        # Converts to gray
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        tags = at_detector.detect(gray, estimate_tag_pose=False, camera_params=None, tag_size=None)
+
+        # Process
+        for tag in tags:
+            # Corner points
+            bottom_left = (int(tag.corners[0][0]), int(tag.corners[0][1]))
+            top_right = (int(tag.corners[2][0]), int(tag.corners[2][1]))
+
+            # Draw the rectangle
+            cv2.rectangle(frame, bottom_left, top_right, (0, 255, 0), 2)
+
+            # Draw the tag ID
+            center = (int(tag.center[0]), int(tag.center[1]))
+            cv2.putText(frame, f"ID {tag.tag_id}", center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+            # Pose of the tag
+            relative_position = (center[0] - screen_center[0], -(center[1] - screen_center[1]))
+
+            # Show relative pose
+            cv2.putText(frame, f"Rel Pos: {relative_position}", (center[0] + 10, center[1] + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+        # Get the image per frame
+        _, jpeg_frame = cv2.imencode('.jpg', frame)
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + jpeg_frame.tobytes() + b'\r\n')
+
+def detect_april_tag_direction(camera):
+    """Detect AprilTag and determine if it's on the left or right side of the screen."""
+    while True:
+        frame = camera.capture_array()
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        tags = at_detector.detect(gray, estimate_tag_pose=False, camera_params=None, tag_size=None)
+
+        direction = "None"
+        magnitude = 0
+
+        for tag in tags:
+            tag_x_position = int(tag.center[0])
+
+            # Calculate the magnitude from the center
+            distance_from_center = tag_x_position - screen_center_x
+            magnitude = (abs(distance_from_center) / screen_center_x) * 10
+
+            if distance_from_center < 0:
+                direction = f"Left: Magnitude {magnitude:.2f}"
+            else:
+                direction = f"Right: Magnitude {magnitude:.2f}"
+
+        yield f"data: {direction}\n\n"
+
+@app.route('/')
+def main_page():
+    return render_template('main.html')
+
+@app.route('/control_motor', methods=['POST'])
+def control_motor():
+    global motor_process
+
     try:
-        GPIO.setup(in1, GPIO.OUT)
-        GPIO.setup(in2, GPIO.OUT)
-        GPIO.setup(spd, GPIO.OUT)
-        logging.debug(f"Set up GPIO pins: IN1={in1}, IN2={in2}, SPD={spd}")
+        data = request.get_json()
+        print(f"Received data from frontend: {data}")  # Log the received data
+
+        direction = data.get('direction')
+        print(f"Received direction: {direction}")  # Log the direction
+
+        # If there's an existing motor process, terminate it
+        if motor_process and motor_process.poll() is None:
+            print("Stopping previous motor process")
+            motor_process.terminate()
+            motor_process = None
+
+        # Depending on the direction, start a new motor control process
+        if direction == 'forward':
+            print("Moving forward")
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'forward'])
+
+        elif direction == 'backward':
+            print("Moving backward")
+            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'reverse'])
+
+        elif direction == 'stop':
+            print("Stopping motor")
+            if motor_process:
+                motor_process.terminate()
+                motor_process = None
+
+        return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
+
     except Exception as e:
-        logging.exception(f"Error setting up GPIO pins {in1}, {in2}, {spd}:")
-        GPIO.cleanup()
-        sys.exit(1)
+        print(f"Error in control_motor route: {str(e)}")  # Log any errors
+        return jsonify({'status': 'error', 'message': str(e)})
 
-# Initialize PWM for all motors
-motor_pwms = {}
-for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
-    try:
-        pwm = GPIO.PWM(spd, 1000)  # 1kHz frequency
-        pwm.start(0)
-        motor_pwms[f"M{i}"] = pwm
-        logging.debug(f"Initialized PWM for Motor M{i} on pin {spd}.")
-    except Exception as e:
-        logging.exception(f"Error initializing PWM for Motor M{i}:")
-        GPIO.cleanup()
-        sys.exit(1)
 
-# Initialize MCP3008
-try:
-    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
-    logging.info("MCP3008 ADC initialized.")
-except Exception as e:
-    logging.exception("Error initializing MCP3008:")
-    GPIO.cleanup()
-    sys.exit(1)
 
-# Initialize IMU
+
+# Route to start motor control using follow_pid.py
+@app.route('/motor_control')
+def motor_control():
+    return render_template('motor_control.html')
+
+@app.route('/click')
+def click():
+    Camera.release_instance()
+    return render_template('index.html')
+
+@app.route('/click_position', methods=['POST'])
+def click_position():
+    data = request.get_json()
+    x = int(data['x'])  # Ensure x is an integer
+    y = int(data['y'])  # Ensure y is an integer
+    frame_width = 640  # Assuming a 640x480 resolution
+    max_turn_angle = 27  # Maximum turn angle in degrees
+
+    # Calculate the turn angle based on the x-coordinate
+    center_x = frame_width / 2
+    deviation = x - center_x
+    normalized_deviation = deviation / center_x  # Range: -1 to 1
+    turn_angle = normalized_deviation * max_turn_angle
+    turn_direction = "Right" if turn_angle > 0 else "Left"
+
+    print(f"Click position: X: {x}, Y: {y}, Turn: {turn_direction} {turn_angle:.2f} degrees")
+
+    # Capture the current frame from the camera
+    picam2 = Camera.get_instance()
+    frame = picam2.capture_array()
+
+    # Draw a red circle at the click position
+    cv2.circle(frame, (x, y), 10, (0, 0, 255), 3)
+
+    # Save the marked image
+    marked_image_path = "static/clicked_image.jpg"
+    cv2.imwrite(marked_image_path, frame)
+
+    # Send the turn angle and image path back to the client
+    return jsonify({
+        "status": "success", 
+        "x": x, 
+        "y": data['y'], 
+        "turn_angle": f"{turn_direction} {abs(round(turn_angle, 2))}",
+        "image_path": marked_image_path
+    })
+
+
+
+
+@app.route('/video_feed')
+def video_feed():
+    Camera.release_instance()
+    return render_template('video_feed.html')
+
+@app.route('/video_feed_stream')
+def video_feed_stream():
+    picam2 = Camera.get_instance()
+    return Response(gen(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/autonoms_drive')
+def autonoms_drive():
+    return render_template('autonoms_drive.html')
+
+@app.route('/autonoms_drive_stream')
+def autonoms_drive_stream():
+    picam2 = Camera.get_instance()
+    return Response(stream_with_context(detect_april_tag_direction(picam2)), mimetype='text/event-stream')
+
+@app.route('/manual_drive')
+def manual_drive():
+    Camera.release_instance()
+    return render_template('manual_drive.html')
+
+@app.route('/manual_drive_action', methods=['POST'])
+def manual_drive_action():
+    data = request.get_json()
+    direction = data['direction']
+
+    # Process the direction (e.g., control motors, log, etc.)
+    print(f"Direction: {direction}")
+
+    return jsonify({"status": "success"})
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++ GYRO++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
-    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k),
-                     1 - 2 * (quat_i**2 + quat_j**2))
+    """
+    Convert quaternion to Euler angles.
+    """
+    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 1 - 2 * (quat_i**2 + quat_j**2))
     pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
-    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
-                    1 - 2 * (quat_j**2 + quat_k**2))
-    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
+    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
+    return roll, pitch, yaw
 
-def setup_imu():
-    try:
-        i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
-        bno = BNO08X_I2C(i2c)
-        bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)  # Corrected attribute
-        logging.info("IMU initialized and rotation vector reporting enabled.")
-        return bno
-    except Exception as e:
-        logging.exception("Failed to initialize IMU:")
-        GPIO.cleanup()
-        sys.exit(1)
 
-bno = setup_imu()
-
-def calibrate_imu(bno):
+def calibrate_imu():
     """
     Capture the initial IMU readings to use as calibration offsets.
-    Assumes the robot starts in a calibrated state.
     """
-    try:
-        logging.info("Calibrating IMU (capturing initial orientation)...")
-        quat = bno.quaternion
-        if quat is not None:
+    global calibration_offsets, calibrated
+    quat_i, quat_j, quat_k, quat_real = bno.quaternion
+    roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+    calibration_offsets['roll'] = math.degrees(roll)
+    calibration_offsets['pitch'] = math.degrees(pitch)
+    calibration_offsets['yaw'] = math.degrees(yaw)
+    calibrated = True
+
+def update_imu_data():
+    global calibrated
+    error_count = 0
+    max_errors = 10  # Maximum consecutive errors before taking action
+    while True:
+        try:
+            if not calibrated:
+                calibrate_imu()
+            quat = bno.quaternion
+            if quat is None:
+                raise ValueError("Quaternion data is None")
             quat_i, quat_j, quat_k, quat_real = quat
+            
+            # Check for invalid data (e.g., all 0xFF indicates an error)
+            if any(b == 0xFF for b in [quat_i, quat_j, quat_k, quat_real]):
+                raise ValueError("Received invalid quaternion data containing 0xFF")
+            
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-            calibration_offset = yaw
-            logging.info(f"IMU calibrated. Calibration Yaw Offset: {calibration_offset:.2f}°")
-            return calibration_offset
+            
+            with imu_data_lock:
+                imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
+                imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
+                imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+            
+            # Reset error count on successful read
+            error_count = 0
+        except Exception as e:
+            error_count += 1
+            if error_count <= max_errors:
+                print(f"Exception in update_imu_data: {e}")
+            elif error_count == max_errors + 1:
+                print("Max IMU errors reached. Attempting to reset IMU.")
+            elif error_count > max_errors:
+                # Attempt to reset the IMU
+                try:
+                    bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
+                    bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                    print("IMU has been reset and reinitialized.")
+                    calibrated = False  # Trigger recalibration
+                    error_count = 0  # Reset error count after reset
+                except Exception as reset_e:
+                    print(f"Failed to reset IMU: {reset_e}")
+                    # Optional: Sleep longer before retrying to prevent rapid failures
+                    time.sleep(2)
+        # Adjust sleep based on error state
+        if error_count > max_errors:
+            time.sleep(2)  # Longer sleep after attempting a reset
         else:
-            logging.error("No quaternion data available for calibration.")
-            GPIO.cleanup()
-            sys.exit(1)
-    except Exception as e:
-        logging.exception("Error during IMU calibration:")
-        GPIO.cleanup()
-        sys.exit(1)
+            time.sleep(0.05)  # Regular sleep interval
 
-# Perform manual calibration
-calibration_offset = calibrate_imu(bno)
 
-def get_current_yaw(bno, calibration_offset):
-    try:
-        quat = bno.quaternion
-        if quat is not None:
-            _, _, yaw = quaternion_to_euler(*quat)
-            adjusted_yaw = (yaw - calibration_offset) % 360
-            logging.debug(f"Current Yaw: {adjusted_yaw:.2f}°")
-            return adjusted_yaw
-        else:
-            logging.warning("No quaternion data available.")
-            return None
-    except Exception as e:
-        logging.exception("Error getting current yaw:")
-        return None
+# Route to serve the gyro.html page
+@app.route('/gyro')
+def gyro():
+    # Start the IMU data update thread
+    return render_template('gyro.html')
 
-# Define motor control functions
-def set_motor_direction(motor, direction):
-    in1, in2, _ = motor_pins[int(motor[1])-1]
-    if direction == 'forward':
-        GPIO.output(in1, GPIO.HIGH)
-        GPIO.output(in2, GPIO.LOW)
-    elif direction == 'backward':
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.HIGH)
-    else:  # stop
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.LOW)
-    logging.debug(f"Motor {motor} direction set to {direction}.")
+# Route to fetch IMU data
+@app.route('/imu_data')
+def get_imu_data():
+    with imu_data_lock:
+        data = imu_data.copy()
+    return jsonify(data)
 
-def set_motor_speed(motor, speed):
-    motor_pwms[motor].ChangeDutyCycle(speed)
-    logging.debug(f"Motor {motor} speed set to {speed}%.")
 
-def stop_all_motors():
-    for motor in motor_pwms:
-        set_motor_direction(motor, 'stop')
-        set_motor_speed(motor, 0)
-    logging.info("All motors stopped.")
 
-# Initialize curses for keyboard input
-def main(stdscr):
-    logging.info("Curses main function initiated.")
+def gen_face_detection(camera):
+    """Video streaming generator function with face detection."""
+    while True:
+        try:
+            frame = camera.capture_array()
 
-    curses.cbreak()
-    curses.noecho()
-    stdscr.nodelay(True)
-    stdscr.keypad(True)
+            # Convert to grayscale for face detection
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
-    stdscr.addstr(0, 0, "Yaw-Based Turning Control")
-    stdscr.addstr(2, 0, "Controls:")
-    stdscr.addstr(3, 2, "Left Arrow  : Turn Left")
-    stdscr.addstr(4, 2, "Right Arrow : Turn Right")
-    stdscr.addstr(5, 2, "Space       : Stop")
-    stdscr.addstr(6, 2, "Q           : Quit")
-    stdscr.refresh()
+            # Draw rectangles around the detected faces
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
 
-    target_turn_angle = 30  # degrees
-    turning = False
-    turn_direction = None
-    initial_yaw = None
-    target_yaw = None
+            # Encode the frame as JPEG
+            _, jpeg_frame = cv2.imencode('.jpg', frame)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg_frame.tobytes() + b'\r\n')
+        except Exception as e:
+            print(f"Error in gen_face_detection: {e}")
+            break
 
-    try:
-        while True:
-            key = stdscr.getch()
+@app.route('/face_detection')
+def face_detection():
+    return render_template('face_detection.html')
 
-            if key != -1:
-                if key == curses.KEY_LEFT:
-                    if not turning:
-                        turning = True
-                        turn_direction = 'left'
-                        initial_yaw = get_current_yaw(bno, calibration_offset)
-                        if initial_yaw is not None:
-                            target_yaw = (initial_yaw - target_turn_angle) % 360
-                            # To turn left: Left motors backward, Right motors forward
-                            set_motor_direction('M1', 'backward')  # Left Front
-                            set_motor_direction('M2', 'forward')   # Right Front
-                            set_motor_direction('M3', 'backward')  # Left Rear
-                            set_motor_direction('M4', 'forward')   # Right Rear
-                            set_motor_speed('M1', 50)
-                            set_motor_speed('M2', 50)
-                            set_motor_speed('M3', 50)
-                            set_motor_speed('M4', 50)
-                            logging.info(f"Initiating left turn to {target_yaw}° from {initial_yaw}°")
-                elif key == curses.KEY_RIGHT:
-                    if not turning:
-                        turning = True
-                        turn_direction = 'right'
-                        initial_yaw = get_current_yaw(bno, calibration_offset)
-                        if initial_yaw is not None:
-                            target_yaw = (initial_yaw + target_turn_angle) % 360
-                            # To turn right: Left motors forward, Right motors backward
-                            set_motor_direction('M1', 'forward')   # Left Front
-                            set_motor_direction('M2', 'backward')  # Right Front
-                            set_motor_direction('M3', 'forward')   # Left Rear
-                            set_motor_direction('M4', 'backward')  # Right Rear
-                            set_motor_speed('M1', 50)
-                            set_motor_speed('M2', 50)
-                            set_motor_speed('M3', 50)
-                            set_motor_speed('M4', 50)
-                            logging.info(f"Initiating right turn to {target_yaw}° from {initial_yaw}°")
-                elif key == ord(' '):
-                    turning = False
-                    turn_direction = None
-                    stop_all_motors()
-                    logging.info("Manual stop command received.")
-                elif key in [ord('q'), ord('Q')]:
-                    logging.info("Quit command received.")
-                    break
+@app.route('/face_detection_stream')
+def face_detection_stream():
+    picam2 = Camera.get_instance()
+    return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-            if turning and initial_yaw is not None and target_yaw is not None:
-                current_yaw = get_current_yaw(bno, calibration_offset)
-                if current_yaw is not None:
-                    if turn_direction == 'left':
-                        # Calculate the smallest angular difference
-                        diff = (initial_yaw - current_yaw) % 360
-                        if diff >= target_turn_angle:
-                            turning = False
-                            stop_all_motors()
-                            logging.info(f"Left turn completed. Current Yaw: {current_yaw}°")
-                    elif turn_direction == 'right':
-                        diff = (current_yaw - initial_yaw) % 360
-                        if diff >= target_turn_angle:
-                            turning = False
-                            stop_all_motors()
-                            logging.info(f"Right turn completed. Current Yaw: {current_yaw}°")
-
-            # Update display
-            yaw = get_current_yaw(bno, calibration_offset)
-            if yaw is not None:
-                stdscr.addstr(8, 0, f"Current Yaw: {yaw:.2f}°")
-            else:
-                stdscr.addstr(8, 0, "Current Yaw: N/A")
-            stdscr.addstr(10, 0, f"Turning: {'Yes' if turning else 'No'} Direction: {turn_direction if turn_direction else 'N/A'}")
-            stdscr.refresh()
-            time.sleep(0.1)
-
-    except Exception as e:
-        logging.exception("An error occurred in the main loop:")
-    finally:
-        logging.info("Entering cleanup phase.")
-        stop_all_motors()
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
-        curses.nocbreak()
-        stdscr.keypad(False)
-        curses.echo()
-        curses.endwin()
-        logging.info("GPIO cleanup completed.")
-
-if __name__ == "__main__":
-    try:
-        logging.info("Script started.")
-        curses.wrapper(main)
-    except Exception as e:
-        logging.exception("An unexpected error occurred:")
-        stop_all_motors()
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
-        sys.exit(1)
+if __name__ == '__main__':
+    threading.Thread(target=update_imu_data, daemon=True).start()
+    app.run(host='0.0.0.0', port=5000, debug=True)
