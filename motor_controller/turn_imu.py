@@ -31,6 +31,7 @@ GPIO.setwarnings(False)
 
 # Function to handle SIGINT (Ctrl+C) gracefully
 def signal_handler(sig, frame):
+    print("Interrupt received. Cleaning up GPIO and exiting.")
     logging.info("Interrupt received. Cleaning up GPIO and exiting.")
     stop_all_motors()
     for pwm in motor_pwms.values():
@@ -76,16 +77,21 @@ def safe_setmode(mode):
     if current_mode is None:
         GPIO.setmode(mode)
         logging.info(f"GPIO mode set to {mode}.")
+        print(f"GPIO mode set to {mode}.")
     elif current_mode == mode:
         logging.info(f"GPIO mode already set to {mode}.")
+        print(f"GPIO mode already set to {mode}.")
     else:
         logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
+        print(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
         GPIO.cleanup()
         try:
             GPIO.setmode(mode)
             logging.info(f"GPIO mode reset to {mode}.")
+            print(f"GPIO mode reset to {mode}.")
         except ValueError as ve:
             logging.error(f"Failed to set GPIO mode to {mode}: {ve}")
+            print(f"Failed to set GPIO mode to {mode}: {ve}")
             sys.exit(1)
 
 # Set GPIO mode safely to BCM
@@ -105,8 +111,10 @@ for in1, in2, spd in motor_pins:
         GPIO.setup(in2, GPIO.OUT)
         GPIO.setup(spd, GPIO.OUT)
         logging.debug(f"Set up GPIO pins: IN1={in1}, IN2={in2}, SPD={spd}")
+        print(f"Set up GPIO pins: IN1={in1}, IN2={in2}, SPD={spd}")
     except Exception as e:
         logging.exception(f"Error setting up GPIO pins {in1}, {in2}, {spd}:")
+        print(f"Error setting up GPIO pins {in1}, {in2}, {spd}: {e}")
         GPIO.cleanup()
         sys.exit(1)
 
@@ -118,8 +126,10 @@ for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
         pwm.start(0)
         motor_pwms[f"M{i}"] = pwm
         logging.debug(f"Initialized PWM for Motor M{i} on pin {spd}.")
+        print(f"Initialized PWM for Motor M{i} on pin {spd}.")
     except Exception as e:
         logging.exception(f"Error initializing PWM for Motor M{i}:")
+        print(f"Error initializing PWM for Motor M{i}: {e}")
         GPIO.cleanup()
         sys.exit(1)
 
@@ -127,8 +137,10 @@ for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
 try:
     mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
     logging.info("MCP3008 ADC initialized.")
+    print("MCP3008 ADC initialized.")
 except Exception as e:
     logging.exception("Error initializing MCP3008:")
+    print(f"Error initializing MCP3008: {e}")
     GPIO.cleanup()
     sys.exit(1)
 
@@ -147,9 +159,11 @@ def setup_imu():
         bno = BNO08X_I2C(i2c)
         bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)  # Corrected attribute
         logging.info("IMU initialized and rotation vector reporting enabled.")
+        print("IMU initialized and rotation vector reporting enabled.")
         return bno
     except Exception as e:
         logging.exception("Failed to initialize IMU:")
+        print(f"Failed to initialize IMU: {e}")
         GPIO.cleanup()
         sys.exit(1)
 
@@ -162,19 +176,23 @@ def calibrate_imu(bno):
     """
     try:
         logging.info("Calibrating IMU (capturing initial orientation)...")
+        print("Calibrating IMU (capturing initial orientation)...")
         quat = bno.quaternion
         if quat is not None:
             quat_i, quat_j, quat_k, quat_real = quat
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
             calibration_offset = yaw
             logging.info(f"IMU calibrated. Calibration Yaw Offset: {calibration_offset:.2f}°")
+            print(f"IMU calibrated. Calibration Yaw Offset: {calibration_offset:.2f}°")
             return calibration_offset
         else:
             logging.error("No quaternion data available for calibration.")
+            print("No quaternion data available for calibration.")
             GPIO.cleanup()
             sys.exit(1)
     except Exception as e:
         logging.exception("Error during IMU calibration:")
+        print(f"Error during IMU calibration: {e}")
         GPIO.cleanup()
         sys.exit(1)
 
@@ -188,12 +206,15 @@ def get_current_yaw(bno, calibration_offset):
             _, _, yaw = quaternion_to_euler(*quat)
             adjusted_yaw = (yaw - calibration_offset) % 360
             logging.debug(f"Current Yaw: {adjusted_yaw:.2f}°")
+            print(f"Current Yaw: {adjusted_yaw:.2f}°")
             return adjusted_yaw
         else:
             logging.warning("No quaternion data available.")
+            print("No quaternion data available.")
             return None
     except Exception as e:
         logging.exception("Error getting current yaw:")
+        print(f"Error getting current yaw: {e}")
         return None
 
 # Define motor control functions
@@ -209,20 +230,24 @@ def set_motor_direction(motor, direction):
         GPIO.output(in1, GPIO.LOW)
         GPIO.output(in2, GPIO.LOW)
     logging.debug(f"Motor {motor} direction set to {direction}.")
+    print(f"Motor {motor} direction set to {direction}.")
 
 def set_motor_speed(motor, speed):
     motor_pwms[motor].ChangeDutyCycle(speed)
     logging.debug(f"Motor {motor} speed set to {speed}%.")
-    
+    print(f"Motor {motor} speed set to {speed}%.")
+
 def stop_all_motors():
     for motor in motor_pwms:
         set_motor_direction(motor, 'stop')
         set_motor_speed(motor, 0)
     logging.info("All motors stopped.")
+    print("All motors stopped.")
 
 # Initialize curses for keyboard input
 def main(stdscr):
     logging.info("Curses main function initiated.")
+    print("Curses main function initiated.")
 
     curses.cbreak()
     curses.noecho()
@@ -265,6 +290,7 @@ def main(stdscr):
                             set_motor_speed('M3', 50)
                             set_motor_speed('M4', 50)
                             logging.info(f"Initiating left turn to {target_yaw}° from {initial_yaw}°")
+                            print(f"Initiating left turn to {target_yaw}° from {initial_yaw}°")
                 elif key == curses.KEY_RIGHT:
                     if not turning:
                         turning = True
@@ -282,13 +308,16 @@ def main(stdscr):
                             set_motor_speed('M3', 50)
                             set_motor_speed('M4', 50)
                             logging.info(f"Initiating right turn to {target_yaw}° from {initial_yaw}°")
+                            print(f"Initiating right turn to {target_yaw}° from {initial_yaw}°")
                 elif key == ord(' '):
                     turning = False
                     turn_direction = None
                     stop_all_motors()
                     logging.info("Manual stop command received.")
+                    print("Manual stop command received.")
                 elif key in [ord('q'), ord('Q')]:
                     logging.info("Quit command received.")
+                    print("Quit command received.")
                     break
 
             if turning and initial_yaw is not None and target_yaw is not None:
@@ -301,27 +330,31 @@ def main(stdscr):
                             turning = False
                             stop_all_motors()
                             logging.info(f"Left turn completed. Current Yaw: {current_yaw}°")
+                            print(f"Left turn completed. Current Yaw: {current_yaw}°")
                     elif turn_direction == 'right':
                         diff = (current_yaw - initial_yaw) % 360
                         if diff >= target_turn_angle:
                             turning = False
                             stop_all_motors()
                             logging.info(f"Right turn completed. Current Yaw: {current_yaw}°")
+                            print(f"Right turn completed. Current Yaw: {current_yaw}°")
 
             # Update display
             yaw = get_current_yaw(bno, calibration_offset)
             if yaw is not None:
-                stdscr.addstr(8, 0, f"Current Yaw: {yaw:.2f}°")
+                stdscr.addstr(8, 0, f"Current Yaw: {yaw:.2f}°  ")
             else:
-                stdscr.addstr(8, 0, "Current Yaw: N/A")
-            stdscr.addstr(10, 0, f"Turning: {'Yes' if turning else 'No'} Direction: {turn_direction if turn_direction else 'N/A'}")
+                stdscr.addstr(8, 0, "Current Yaw: N/A  ")
+            stdscr.addstr(10, 0, f"Turning: {'Yes' if turning else 'No'} Direction: {turn_direction if turn_direction else 'N/A'}  ")
             stdscr.refresh()
             time.sleep(0.1)
 
     except Exception as e:
         logging.exception("An error occurred in the main loop:")
+        print(f"An error occurred in the main loop: {e}")
     finally:
         logging.info("Entering cleanup phase.")
+        print("Entering cleanup phase.")
         stop_all_motors()
         for pwm in motor_pwms.values():
             pwm.stop()
@@ -331,13 +364,16 @@ def main(stdscr):
         curses.echo()
         curses.endwin()
         logging.info("GPIO cleanup completed.")
+        print("GPIO cleanup completed.")
 
 if __name__ == "__main__":
     try:
         logging.info("Script started.")
+        print("Script started.")
         curses.wrapper(main)
     except Exception as e:
         logging.exception("An unexpected error occurred:")
+        print(f"An unexpected error occurred: {e}")
         stop_all_motors()
         for pwm in motor_pwms.values():
             pwm.stop()
