@@ -213,7 +213,7 @@ def set_motor_direction(motor, direction):
 def set_motor_speed(motor, speed):
     motor_pwms[motor].ChangeDutyCycle(speed)
     logging.debug(f"Motor {motor} speed set to {speed}%.")
-
+    
 def stop_all_motors():
     for motor in motor_pwms:
         set_motor_direction(motor, 'stop')
