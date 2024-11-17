@@ -9,8 +9,16 @@ import adafruit_bno08x
 from adafruit_bno08x.i2c import BNO08X_I2C
 import math
 import sys
+import logging
 
-# Configure GPIO warnings
+# Configure basic logging to suppress adafruit debug messages
+logging.basicConfig(
+    level=logging.ERROR,  # Set to ERROR to suppress DEBUG messages
+    format='%(message)s',
+    handlers=[logging.StreamHandler()]
+)
+
+# Suppress GPIO warnings
 GPIO.setwarnings(False)
 
 # Constants for SPI and ADC
@@ -105,13 +113,17 @@ def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
 
 def setup_imu():
     """Initialize the IMU sensor."""
-    i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
-    time.sleep(0.5)
-    bno = BNO08X_I2C(i2c)
-    time.sleep(1)
-    bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-    time.sleep(0.5)
-    return bno
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
+        time.sleep(0.5)
+        bno = BNO08X_I2C(i2c)
+        time.sleep(1)
+        bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+        time.sleep(0.5)
+        return bno
+    except Exception as e:
+        print(f"Failed to initialize IMU: {e}")
+        sys.exit(1)
 
 def calibrate_imu(bno):
     """Calibrate IMU to set the initial yaw reference."""
@@ -123,20 +135,31 @@ def calibrate_imu(bno):
             _, _, yaw = quaternion_to_euler(*quat)
             samples.append(yaw)
         time.sleep(0.1)
+    if not samples:
+        print("Calibration failed: No valid yaw samples collected.")
+        sys.exit(1)
     calibration_offset = sum(samples) / len(samples)
     print(f"Calibration complete. Reference yaw: {calibration_offset:.2f}°")
     return calibration_offset
 
 def get_current_yaw(bno, calibration_offset):
     """Get the current yaw angle relative to the calibration offset."""
-    quat = bno.quaternion
-    if quat is not None:
-        _, _, yaw = quaternion_to_euler(*quat)
-        yaw_adjusted = (yaw - calibration_offset + 360) % 360
-        if yaw_adjusted > 180:
-            yaw_adjusted -= 360  # Convert to range [-180, 180]
-        return yaw_adjusted
-    else:
+    try:
+        quat = bno.quaternion
+        if quat is not None:
+            _, _, yaw = quaternion_to_euler(*quat)
+            yaw_adjusted = (yaw - calibration_offset + 360) % 360
+            if yaw_adjusted > 180:
+                yaw_adjusted -= 360  # Convert to range [-180, 180]
+            return yaw_adjusted
+        else:
+            return None
+    except KeyError:
+        # Handle unknown report type gracefully
+        print("Warning: Received unknown report type from IMU. Ignoring packet.")
+        return None
+    except Exception as e:
+        print(f"Error reading yaw: {e}")
         return None
 
 class SpikeFilter:
@@ -219,9 +242,12 @@ class MotorController:
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
-        else:
+        elif direction == 'backward':
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
+        else:  # stop
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.LOW)
 
     def move_to_position(self, target):
         current_position = self.read_position()
@@ -244,8 +270,7 @@ class MotorController:
         return False
 
     def stop_motor(self):
-        GPIO.output(self.in1, GPIO.LOW)
-        GPIO.output(self.in2, GPIO.LOW)
+        self.set_motor_direction('stop')
         self.pwm.ChangeDutyCycle(0)
 
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
@@ -285,19 +310,23 @@ def configure_motor_groups(motors):
     )
     return [group1, group2]
 
+def stop_all_motors(motors):
+    for motor in motors.values():
+        motor.stop_motor()
+
 def main():
     parser = argparse.ArgumentParser(description='Robot Movement Script with IMU Feedback')
     args = parser.parse_args()
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
-                            MOTOR1_ADC_CHANNEL, encoder_flipped=False)
+                             MOTOR1_ADC_CHANNEL, encoder_flipped=False)
     motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
-                            MOTOR2_ADC_CHANNEL, encoder_flipped=True)
+                             MOTOR2_ADC_CHANNEL, encoder_flipped=True)
     motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
-                            MOTOR3_ADC_CHANNEL, encoder_flipped=False)
+                             MOTOR3_ADC_CHANNEL, encoder_flipped=False)
     motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
-                            MOTOR4_ADC_CHANNEL, encoder_flipped=True)
+                             MOTOR4_ADC_CHANNEL, encoder_flipped=True)
 
     motors = {
         'M1': motor1,
@@ -313,7 +342,7 @@ def main():
     # Thresholds for yaw deviation (degrees)
     YAW_THRESHOLD = 30.0
     # Maximum phase offset to apply for correction (degrees)
-    MAX_PHASE_OFFSET = 10.0
+    MAX_PHASE_OFFSET = 5.0  # Reduced from 10.0 for smoother corrections
 
     # Initialize phase offsets
     phase_offsets = {}
@@ -324,35 +353,31 @@ def main():
             # Read current yaw angle
             current_yaw = get_current_yaw(bno, calibration_offset)
             if current_yaw is None:
-                print("IMU reading failed.")
-                continue
-
-            # Determine corrective action based on yaw deviation
-            if current_yaw > YAW_THRESHOLD:
-                # Robot is turning left unintentionally; apply corrective right turn
-                correction = -MAX_PHASE_OFFSET
-                print(f"Yaw deviation: {current_yaw:.2f}°, correcting right")
-            elif current_yaw < -YAW_THRESHOLD:
-                # Robot is turning right unintentionally; apply corrective left turn
-                correction = MAX_PHASE_OFFSET
-                print(f"Yaw deviation: {current_yaw:.2f}°, correcting left")
-            else:
+                print("Yaw reading failed. Skipping correction.")
                 correction = 0.0
-                print(f"Yaw deviation: {current_yaw:.2f}°, moving straight")
+            else:
+                # Determine corrective action based on yaw deviation
+                if current_yaw > YAW_THRESHOLD:
+                    # Robot is turning left unintentionally; apply corrective right turn
+                    correction = -MAX_PHASE_OFFSET
+                    print(f"Yaw deviation: {current_yaw:.2f}°, correcting right")
+                elif current_yaw < -YAW_THRESHOLD:
+                    # Robot is turning right unintentionally; apply corrective left turn
+                    correction = MAX_PHASE_OFFSET
+                    print(f"Yaw deviation: {current_yaw:.2f}°, correcting left")
+                else:
+                    correction = 0.0
+                    print(f"Yaw deviation: {current_yaw:.2f}°, moving straight")
 
             # Apply correction to phase offsets
             if correction != 0.0:
-                # Adjust phase offsets proportionally to the yaw deviation
-                correction_ratio = min(abs(current_yaw) / 45.0, 1.0)
-                adjusted_correction = correction * correction_ratio
-
                 # Adjust phase offsets accordingly
-                if adjusted_correction > 0:
-                    # Correcting left turn
-                    phase_offsets = {'M2': adjusted_correction, 'M3': adjusted_correction}
+                if correction > 0:
+                    # Correcting left turn: apply to left motors (M2, M3)
+                    phase_offsets = {'M2': correction, 'M3': correction}
                 else:
-                    # Correcting right turn
-                    phase_offsets = {'M1': -adjusted_correction, 'M4': -adjusted_correction}
+                    # Correcting right turn: apply to right motors (M1, M4)
+                    phase_offsets = {'M1': correction, 'M4': correction}
             else:
                 phase_offsets = {}
 
@@ -377,10 +402,10 @@ def main():
     except KeyboardInterrupt:
         # Allow the user to stop the script with Ctrl+C
         print("\nOperation cancelled by user.")
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
     finally:
-        for motor in motors.values():
-            motor.stop_motor()
-
+        stop_all_motors(motors)
         motor1_pwm.stop()
         motor2_pwm.stop()
         motor3_pwm.stop()
