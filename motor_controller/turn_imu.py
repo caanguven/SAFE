@@ -36,13 +36,22 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-# Constants for SPI and ADC
-SPI_PORT = 0
-SPI_DEVICE = 0
-ADC_MAX = 1023
-MIN_ANGLE = 0
-MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 2  # Period in seconds
+# Function to set GPIO mode safely
+def safe_setmode(mode):
+    current_mode = GPIO.getmode()
+    if current_mode is None:
+        GPIO.setmode(mode)
+        logging.info(f"GPIO mode set to {mode}.")
+    elif current_mode == mode:
+        logging.info(f"GPIO mode already set to {mode}.")
+    else:
+        logging.warning(f"GPIO mode already set to {current_mode}. Cleaning up and resetting to {mode}.")
+        GPIO.cleanup()
+        GPIO.setmode(mode)
+        logging.info(f"GPIO mode reset to {mode}.")
+
+# Set GPIO mode safely
+safe_setmode(GPIO.BOARD)
 
 # GPIO Pins for Motor Control (Replace with your actual pin numbers)
 MOTOR1_IN1 = 7
@@ -64,27 +73,6 @@ MOTOR4_IN1 = 12
 MOTOR4_IN2 = 13
 MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
-
-# Cleanup before setting up GPIO
-try:
-    GPIO.cleanup()
-    logging.info("GPIO cleanup completed before setting mode.")
-except Exception as e:
-    logging.warning(f"GPIO cleanup encountered an issue: {e}")
-
-# Set GPIO mode
-try:
-    GPIO.setmode(GPIO.BOARD)
-    logging.info("GPIO mode set to BOARD.")
-except ValueError as ve:
-    logging.error(f"GPIO mode conflict: {ve}")
-    GPIO.cleanup()
-    GPIO.setmode(GPIO.BOARD)
-    logging.info("GPIO mode reset to BOARD after cleanup.")
-except Exception as e:
-    logging.exception("Unexpected error while setting GPIO mode:")
-    GPIO.cleanup()
-    sys.exit(1)
 
 # Setup GPIO pins
 motor_pins = [
