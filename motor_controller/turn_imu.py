@@ -159,84 +159,16 @@ class MotorController:
         self.pwm.ChangeDutyCycle(0)
 
 class TurnController:
-    def __init__(self, motors, tolerance=6.0):
+    def __init__(self, motors):
         self.motors = motors
-        self.tolerance = tolerance
-        self.base_speed = 40
-        self.min_speed = 30
-        self.max_speed = 70
-        self.last_error = 0
-        self.integral = 0
-        
-    def calculate_speed(self, error):
-        """Calculate motor speed using PID control."""
-        Kp = 1.5  # Proportional gain
-        Ki = 0.01  # Integral gain
-        Kd = 0.5  # Derivative gain
-        
-        # Calculate PID terms
-        self.integral += error
-        derivative = error - self.last_error
-        self.last_error = error
-        
-        # Calculate control signal
-        control = (Kp * error) + (Ki * self.integral) + (Kd * derivative)
-        
-        # Calculate final speed
-        speed = self.base_speed + control
-        
-        # Constrain speed between min and max values
-        return min(max(abs(speed), self.min_speed), self.max_speed)
-    
+
     def turn(self, current_yaw, target_yaw):
-        """Execute turn based on current and target yaw angles."""
-        # Calculate error (shortest path)
-        error = target_yaw - current_yaw
-        if error > 180:
-            error -= 360
-        elif error < -180:
-            error += 360
-            
-        print(f"Current Yaw: {current_yaw:6.1f}°  Target: {target_yaw:6.1f}°  Error: {error:6.1f}°")
-        
-        # Check if within tolerance
-        if abs(error) <= self.tolerance:
-            print("Target reached!")
-            self.stop_all_motors()
-            return True
-            
-        # Calculate turn speed
-        speed = self.calculate_speed(error)
-        
-        # Execute turn
-        if error > 0:  # Turn right
-            print(f"Turning right at {speed:.1f}% power")
-            self.turn_right(speed)
-        else:  # Turn left
-            print(f"Turning left at {speed:.1f}% power")
-            self.turn_left(speed)
-            
-        return False
-    
-    def turn_right(self, speed):
-        self.motors['M1'].set_direction('forward')
-        self.motors['M2'].set_direction('backward')
-        self.motors['M3'].set_direction('forward')
-        self.motors['M4'].set_direction('backward')
-        for motor in self.motors.values():
-            motor.set_speed(speed)
-    
-    def turn_left(self, speed):
-        self.motors['M1'].set_direction('backward')
-        self.motors['M2'].set_direction('forward')
-        self.motors['M3'].set_direction('backward')
-        self.motors['M4'].set_direction('forward')
-        for motor in self.motors.values():
-            motor.set_speed(speed)
-    
+        # Implement the turning logic here
+        pass
+
     def stop_all_motors(self):
-        for motor in self.motors.values():
-            motor.stop()
+        # Implement motor stop logic here
+        pass
 
 def main():
     try:
