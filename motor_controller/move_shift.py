@@ -3,6 +3,12 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import argparse
+import busio
+import board
+import adafruit_bno08x
+from adafruit_bno08x.i2c import BNO08X_I2C
+import math
+import sys
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -63,6 +69,71 @@ motor4_pwm.start(0)
 
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+
+# IMU setup
+def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles (roll, pitch, yaw)
+    """
+    # Roll (x-axis rotation)
+    sinr_cosp = 2 * (quat_real * quat_i + quat_j * quat_k)
+    cosr_cosp = 1 - 2 * (quat_i * quat_i + quat_j * quat_j)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    # Pitch (y-axis rotation)
+    sinp = 2 * (quat_real * quat_j - quat_k * quat_i)
+    if abs(sinp) >= 1:
+        pitch = math.copysign(math.pi / 2, sinp)  # Use 90 degrees if out of range
+    else:
+        pitch = math.asin(sinp)
+
+    # Yaw (z-axis rotation)
+    siny_cosp = 2 * (quat_real * quat_k + quat_i * quat_j)
+    cosy_cosp = 1 - 2 * (quat_j * quat_j + quat_k * quat_k)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+
+    # Convert to degrees
+    roll_deg = math.degrees(roll)
+    pitch_deg = math.degrees(pitch)
+    yaw_deg = math.degrees(yaw)
+
+    return roll_deg, pitch_deg, yaw_deg
+
+def setup_imu():
+    """Initialize the IMU sensor."""
+    i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
+    time.sleep(0.5)
+    bno = BNO08X_I2C(i2c)
+    time.sleep(1)
+    bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+    time.sleep(0.5)
+    return bno
+
+def calibrate_imu(bno):
+    """Calibrate IMU to set the initial yaw reference."""
+    print("Calibrating IMU... Please keep the robot still.")
+    samples = []
+    for _ in range(50):
+        quat = bno.quaternion
+        if quat is not None:
+            _, _, yaw = quaternion_to_euler(*quat)
+            samples.append(yaw)
+        time.sleep(0.1)
+    calibration_offset = sum(samples) / len(samples)
+    print(f"Calibration complete. Reference yaw: {calibration_offset:.2f}°")
+    return calibration_offset
+
+def get_current_yaw(bno, calibration_offset):
+    """Get the current yaw angle relative to the calibration offset."""
+    quat = bno.quaternion
+    if quat is not None:
+        _, _, yaw = quaternion_to_euler(*quat)
+        yaw_adjusted = (yaw - calibration_offset + 360) % 360
+        if yaw_adjusted > 180:
+            yaw_adjusted -= 360  # Convert to range [-180, 180]
+        return yaw_adjusted
+    else:
+        return None
 
 class SpikeFilter:
     def __init__(self, name):
@@ -127,15 +198,15 @@ class MotorController:
 
     def read_position(self):
         raw_value = mcp.read_adc(self.adc_channel)
-        
+
         if self.encoder_flipped:
             raw_value = ADC_MAX - raw_value
-            
+
         filtered_value = self.spike_filter.filter(raw_value)
-        
+
         if filtered_value is None:
             return self.last_valid_position if self.last_valid_position is not None else 0
-            
+
         degrees = (filtered_value / ADC_MAX) * 330.0
         self.last_valid_position = degrees
         return degrees
@@ -211,11 +282,8 @@ def configure_motor_groups(motors):
     return [group1, group2]
 
 def main():
-    parser = argparse.ArgumentParser(description='Robot Movement Script')
-    parser.add_argument('direction', choices=['left', 'right', 'forward'], nargs='?', default='forward', help='Direction to shift the robot')
+    parser = argparse.ArgumentParser(description='Robot Movement Script with IMU Feedback')
     args = parser.parse_args()
-
-    direction = args.direction
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
@@ -234,20 +302,57 @@ def main():
         'M4': motor4
     }
 
-    # Phase offset in degrees
-    phase_offset_degrees = 5  # Adjust this value to change the amount of shift
+    # Initialize IMU
+    bno = setup_imu()
+    calibration_offset = calibrate_imu(bno)
 
-    # Set phase offsets based on direction
-    if direction == 'left':
-        phase_offsets = {'M2': phase_offset_degrees, 'M4': phase_offset_degrees}
-    elif direction == 'right':
-        phase_offsets = {'M1': phase_offset_degrees, 'M3': phase_offset_degrees}
-    else:
-        phase_offsets = {}
+    # Thresholds for yaw deviation (degrees)
+    YAW_THRESHOLD = 10.0
+    # Maximum phase offset to apply for correction (degrees)
+    MAX_PHASE_OFFSET = 10.0
+
+    # Initialize phase offsets
+    phase_offsets = {}
 
     start_time = time.time()
     try:
         while True:
+            # Read current yaw angle
+            current_yaw = get_current_yaw(bno, calibration_offset)
+            if current_yaw is None:
+                print("IMU reading failed.")
+                continue
+
+            # Determine corrective action based on yaw deviation
+            if current_yaw > YAW_THRESHOLD:
+                # Robot is turning left unintentionally; apply corrective right turn
+                correction = -MAX_PHASE_OFFSET
+                print(f"Yaw deviation: {current_yaw:.2f}°, correcting right")
+            elif current_yaw < -YAW_THRESHOLD:
+                # Robot is turning right unintentionally; apply corrective left turn
+                correction = MAX_PHASE_OFFSET
+                print(f"Yaw deviation: {current_yaw:.2f}°, correcting left")
+            else:
+                correction = 0.0
+                print(f"Yaw deviation: {current_yaw:.2f}°, moving straight")
+
+            # Apply correction to phase offsets
+            if correction != 0.0:
+                # Adjust phase offsets proportionally to the yaw deviation
+                correction_ratio = min(abs(current_yaw) / 45.0, 1.0)
+                adjusted_correction = correction * correction_ratio
+
+                # Adjust phase offsets accordingly
+                if adjusted_correction > 0:
+                    # Correcting left turn
+                    phase_offsets = {'M2': adjusted_correction, 'M4': adjusted_correction}
+                else:
+                    # Correcting right turn
+                    phase_offsets = {'M1': -adjusted_correction, 'M3': -adjusted_correction}
+            else:
+                phase_offsets = {}
+
+            # Generate target positions and move motors
             motor_groups = configure_motor_groups(motors)
             group1, group2 = motor_groups
 
@@ -267,7 +372,7 @@ def main():
 
     except KeyboardInterrupt:
         # Allow the user to stop the script with Ctrl+C
-        pass
+        print("\nOperation cancelled by user.")
     finally:
         for motor in motors.values():
             motor.stop_motor()
