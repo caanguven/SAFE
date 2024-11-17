@@ -277,4 +277,40 @@ def main(stdscr):
                         if diff >= target_turn_angle:
                             turning = False
                             stop_all_motors()
-                            logging.info(f"Right turn complete
+                            logging.info(f"Right turn completed. Current Yaw: {current_yaw}°")
+
+            # Update display
+            yaw = get_current_yaw(bno, calibration_offset)
+            if yaw is not None:
+                stdscr.addstr(8, 0, f"Current Yaw: {yaw:.2f}°")
+            else:
+                stdscr.addstr(8, 0, "Current Yaw: N/A")
+            stdscr.addstr(10, 0, f"Turning: {'Yes' if turning else 'No'} Direction: {turn_direction if turn_direction else 'N/A'}")
+            stdscr.refresh()
+            time.sleep(0.1)
+
+    except Exception as e:
+        logging.exception("An error occurred in the main loop:")
+    finally:
+        logging.info("Entering cleanup phase.")
+        stop_all_motors()
+        for pwm in motor_pwms.values():
+            pwm.stop()
+        GPIO.cleanup()
+        curses.nocbreak()
+        stdscr.keypad(False)
+        curses.echo()
+        curses.endwin()
+        logging.info("GPIO cleanup completed.")
+
+if __name__ == "__main__":
+    try:
+        logging.info("Script started.")
+        curses.wrapper(main)
+    except Exception as e:
+        logging.exception("An unexpected error occurred:")
+        stop_all_motors()
+        for pwm in motor_pwms.values():
+            pwm.stop()
+        GPIO.cleanup()
+        sys.exit(1)
