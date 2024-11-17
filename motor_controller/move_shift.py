@@ -10,6 +10,9 @@ from adafruit_bno08x.i2c import BNO08X_I2C
 import math
 import sys
 
+# Configure GPIO warnings
+GPIO.setwarnings(False)
+
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
@@ -18,32 +21,33 @@ MIN_ANGLE = 0
 MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
-# GPIO Pins for Motor 1
-MOTOR1_IN1 = 7
-MOTOR1_IN2 = 26
-MOTOR1_SPD = 18
+# GPIO Pins configuration (using BCM numbering)
+# Motor 1 (Left Front)
+MOTOR1_IN1 = 4
+MOTOR1_IN2 = 7
+MOTOR1_SPD = 24
 MOTOR1_ADC_CHANNEL = 0
 
-# GPIO Pins for Motor 2
-MOTOR2_IN1 = 29
-MOTOR2_IN2 = 22
-MOTOR2_SPD = 31
+# Motor 2 (Right Front)
+MOTOR2_IN1 = 5
+MOTOR2_IN2 = 25
+MOTOR2_SPD = 6
 MOTOR2_ADC_CHANNEL = 1
 
-# GPIO Pins for Motor 3
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
+# Motor 3 (Left Rear)
+MOTOR3_IN1 = 17
+MOTOR3_IN2 = 12
+MOTOR3_SPD = 13
 MOTOR3_ADC_CHANNEL = 2
 
-# GPIO Pins for Motor 4
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
+# Motor 4 (Right Rear)
+MOTOR4_IN1 = 18
+MOTOR4_IN2 = 27
+MOTOR4_SPD = 19
 MOTOR4_ADC_CHANNEL = 3
 
 # GPIO setup
-GPIO.setmode(GPIO.BOARD)
+GPIO.setmode(GPIO.BCM)
 GPIO.setup(MOTOR1_IN1, GPIO.OUT)
 GPIO.setup(MOTOR1_IN2, GPIO.OUT)
 GPIO.setup(MOTOR1_SPD, GPIO.OUT)
@@ -70,7 +74,7 @@ motor4_pwm.start(0)
 # Set up MCP3008
 mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-# IMU setup
+# IMU setup functions
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
     """
     Convert quaternion to Euler angles (roll, pitch, yaw)
@@ -345,10 +349,10 @@ def main():
                 # Adjust phase offsets accordingly
                 if adjusted_correction > 0:
                     # Correcting left turn
-                    phase_offsets = {'M2': adjusted_correction, 'M4': adjusted_correction}
+                    phase_offsets = {'M2': adjusted_correction, 'M3': adjusted_correction}
                 else:
                     # Correcting right turn
-                    phase_offsets = {'M1': -adjusted_correction, 'M3': -adjusted_correction}
+                    phase_offsets = {'M1': -adjusted_correction, 'M4': -adjusted_correction}
             else:
                 phase_offsets = {}
 
