@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import math
+import os
 import busio
 import board
 from threading import Lock
