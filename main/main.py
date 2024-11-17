@@ -386,7 +386,6 @@ def face_detection_stream():
     return Response(gen_face_detection(picam2), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 ################# TURN ##################
-
 turn_status = {
     'is_turning': False,
     'current_angle': 0,
@@ -395,80 +394,16 @@ turn_status = {
 }
 turn_lock = Lock()
 
-def run_turn_script(angle):
-    global turn_status
+@app.route('/turn')
+def turn_control():
+    """Route to serve the turn control page"""
+    return render_template('turn.html')
+
+@app.route('/get_turn_status')
+def get_turn_status():
+    """Route to get the current turn status"""
     with turn_lock:
-        turn_status['is_turning'] = True
-        turn_status['error'] = None
-        turn_status['target_angle'] = angle
-        turn_status['current_angle'] = 0
-
-    try:
-        # Run the turn script as a subprocess
-        script_path = os.path.join(os.path.dirname(__file__), 'turn_imu.py')
-        process = subprocess.Popen(['python3', script_path, str(angle)], 
-                                 stdout=subprocess.PIPE, 
-                                 stderr=subprocess.PIPE,
-                                 universal_newlines=True)
-        
-        # Read output in real-time
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                # Parse the output to update current angle
-                if "Current angle:" in output:
-                    try:
-                        current = float(output.split("Current angle:")[1].split("°")[0])
-                        with turn_lock:
-                            turn_status['current_angle'] = current
-                    except:
-                        pass
-
-        # Get the return code and any error output
-        return_code = process.poll()
-        if return_code != 0:
-            error_output = process.stderr.read()
-            with turn_lock:
-                turn_status['error'] = f"Error: {error_output}"
-    
-    except Exception as e:
-        with turn_lock:
-            turn_status['error'] = f"Error: {str(e)}"
-    
-    finally:
-        with turn_lock:
-            turn_status['is_turning'] = False
-
-
-@app.route('/start_turn', methods=['POST'])
-def start_turn():
-    global turn_status
-    
-    try:
-        angle = float(request.json.get('angle', 0))
-        
-        # Validate angle
-        if angle <= 0 or angle >= 180:
-            return jsonify({'error': 'Angle must be between 0 and 180 (exclusive)'}), 400
-        
-        # Check if already turning
-        with turn_lock:
-            if turn_status['is_turning']:
-                return jsonify({'error': 'Turn already in progress'}), 400
-        
-        # Start turn in background thread
-        thread = threading.Thread(target=run_turn_script, args=(angle,))
-        thread.start()
-        
-        return jsonify({'status': 'Turn started'})
-    
-    except ValueError:
-        return jsonify({'error': 'Invalid angle value'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        return jsonify(turn_status)
 
 if __name__ == '__main__':
     threading.Thread(target=update_imu_data, daemon=True).start()
