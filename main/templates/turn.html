@@ -101,7 +101,7 @@
         
         <div class="direction-info">
             Enter angle between -180° and 180° (exclusive)<br>
-            Negative = Turn Left | Positive = Turn Right
+            Positive = Point Turn Left | Negative = Point Turn Right
         </div>
         
         <div class="input-group">
@@ -197,7 +197,6 @@
                     turnProgress.textContent = `Current: ${status.current_angle.toFixed(1)}° / Target: ${status.target_angle}°`;
                 } else if (isRunning) {
                     statusDisplay.textContent = 'Status: Turn completed';
-                    turnProgress.textContent = `Final angle: ${status.current_angle.toFixed(1)}°`;
                     clearInterval(statusInterval);
                     turnButton.disabled = false;
                     isRunning = false;
@@ -228,9 +227,6 @@
         // Input validation
         document.getElementById('angleInput').addEventListener('input', function(e) {
             const angle = parseFloat(e.target.value);
-            if (!validateAngle(angle)) {
-                showError('Angle must be between -180° and 180° (exclusive) and not 0°');
-            }
         });
     </script>
 </body>
