@@ -4,6 +4,17 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import curses
 import sys
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("turn_imu.log"),
+        logging.StreamHandler()
+    ]
+)
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -37,36 +48,62 @@ MOTOR4_IN2 = 13
 MOTOR4_SPD = 35
 MOTOR4_ADC_CHANNEL = 3
 
-# Suppress GPIO warnings (optional)
+# Suppress GPIO warnings
 GPIO.setwarnings(False)
 
 # GPIO setup
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+try:
+    GPIO.setmode(GPIO.BOARD)
+    logging.info("GPIO mode set to BOARD.")
+
+    GPIO.setup(MOTOR1_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR1_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR3_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+    logging.info("GPIO pins set as outputs.")
+except Exception as e:
+    logging.exception("Error during GPIO setup:")
+    GPIO.cleanup()
+    sys.exit(1)
 
 # Set up PWM for motor speed control
-motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
-motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(0)
-motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-motor3_pwm.start(0)
-motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor4_pwm.start(0)
+try:
+    motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
+    motor1_pwm.start(0)
+    logging.info("Motor1 PWM started at 1000 Hz.")
+
+    motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+    motor2_pwm.start(0)
+    logging.info("Motor2 PWM started at 1000 Hz.")
+
+    motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+    motor3_pwm.start(0)
+    logging.info("Motor3 PWM started at 1000 Hz.")
+
+    motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
+    motor4_pwm.start(0)
+    logging.info("Motor4 PWM started at 1000 Hz.")
+except Exception as e:
+    logging.exception("Error during PWM setup:")
+    GPIO.cleanup()
+    sys.exit(1)
 
 # Set up MCP3008
-mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+try:
+    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+    logging.info("MCP3008 ADC initialized.")
+except Exception as e:
+    logging.exception("Error initializing MCP3008:")
+    GPIO.cleanup()
+    sys.exit(1)
 
 class SpikeFilter:
     def __init__(self, name):
@@ -77,17 +114,21 @@ class SpikeFilter:
     def filter(self, new_value):
         if self.filter_active:
             if 150 <= new_value <= 700:
+                logging.debug(f"{self.name} SpikeFilter: Ignoring value {new_value}")
                 return None
             else:
                 self.filter_active = False
                 self.last_valid_reading = new_value
+                logging.debug(f"{self.name} SpikeFilter: Accepting value {new_value}")
                 return new_value
         else:
             if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
                 self.filter_active = True
+                logging.debug(f"{self.name} SpikeFilter: Potential spike detected with value {new_value}")
                 return None
             else:
                 self.last_valid_reading = new_value
+                logging.debug(f"{self.name} SpikeFilter: Accepting value {new_value}")
                 return new_value
 
 class PIDController:
@@ -114,6 +155,7 @@ class PIDController:
         self.previous_error = error
         self.last_time = current_time
 
+        logging.debug(f"PID Compute -> Error: {error}, P: {proportional}, I: {integral}, D: {derivative}, Control Signal: {control_signal}")
         return control_signal
 
 class MotorController:
@@ -130,35 +172,50 @@ class MotorController:
         self.spike_filter = SpikeFilter(name)
 
     def read_position(self):
-        raw_value = mcp.read_adc(self.adc_channel)
-        
-        if self.encoder_flipped:
-            raw_value = ADC_MAX - raw_value
-            
-        filtered_value = self.spike_filter.filter(raw_value)
-        
-        if filtered_value is None:
+        try:
+            raw_value = mcp.read_adc(self.adc_channel)
+            logging.debug(f"{self.name} Read ADC Channel {self.adc_channel}: Raw Value = {raw_value}")
+
+            if self.encoder_flipped:
+                raw_value = ADC_MAX - raw_value
+                logging.debug(f"{self.name} Encoder flipped. Adjusted Raw Value = {raw_value}")
+
+            filtered_value = self.spike_filter.filter(raw_value)
+
+            if filtered_value is None:
+                logging.debug(f"{self.name} Position: Returning last valid position {self.last_valid_position}")
+                return self.last_valid_position if self.last_valid_position is not None else 0
+
+            degrees = (filtered_value / ADC_MAX) * 330.0
+            self.last_valid_position = degrees
+            logging.debug(f"{self.name} Position: {degrees} degrees")
+            return degrees
+        except Exception as e:
+            logging.exception(f"Error reading position for {self.name}:")
             return self.last_valid_position if self.last_valid_position is not None else 0
-            
-        degrees = (filtered_value / ADC_MAX) * 330.0
-        self.last_valid_position = degrees
-        return degrees
 
     def set_motor_direction(self, direction):
-        if direction == 'forward':
-            GPIO.output(self.in1, GPIO.HIGH)
-            GPIO.output(self.in2, GPIO.LOW)
-        elif direction == 'backward':
-            GPIO.output(self.in1, GPIO.LOW)
-            GPIO.output(self.in2, GPIO.HIGH)
-        else:
-            GPIO.output(self.in1, GPIO.LOW)
-            GPIO.output(self.in2, GPIO.LOW)
+        try:
+            if direction == 'forward':
+                GPIO.output(self.in1, GPIO.HIGH)
+                GPIO.output(self.in2, GPIO.LOW)
+                logging.debug(f"{self.name} Direction set to FORWARD.")
+            elif direction == 'backward':
+                GPIO.output(self.in1, GPIO.LOW)
+                GPIO.output(self.in2, GPIO.HIGH)
+                logging.debug(f"{self.name} Direction set to BACKWARD.")
+            else:
+                GPIO.output(self.in1, GPIO.LOW)
+                GPIO.output(self.in2, GPIO.LOW)
+                logging.debug(f"{self.name} Motor STOPPED.")
+        except Exception as e:
+            logging.exception(f"Error setting direction for {self.name}:")
 
     def move_to_position(self, target):
         current_position = self.read_position()
         error = target - current_position
 
+        # Adjust error for wrap-around
         if error > 165:
             error -= 330
         elif error < -165:
@@ -168,23 +225,30 @@ class MotorController:
 
         if abs(error) <= 2:
             self.stop_motor()
+            logging.info(f"{self.name} reached target position: {target} degrees.")
             return True
 
         direction = 'forward' if control_signal > 0 else 'backward'
         self.set_motor_direction(direction)
         speed = min(100, max(30, abs(control_signal)))
         self.pwm.ChangeDutyCycle(speed)
+        logging.debug(f"{self.name} moving {direction} at speed {speed}%.")
         return False
 
     def stop_motor(self):
-        GPIO.output(self.in1, GPIO.LOW)
-        GPIO.output(self.in2, GPIO.LOW)
-        self.pwm.ChangeDutyCycle(0)
+        try:
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.LOW)
+            self.pwm.ChangeDutyCycle(0)
+            logging.debug(f"{self.name} Motor STOPPED.")
+        except Exception as e:
+            logging.exception(f"Error stopping {self.name}:")
 
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
     position = (position_in_cycle * max_angle) % max_angle
+    logging.debug(f"Generated sawtooth position: {position} degrees.")
     return position
 
 class MotorGroup:
@@ -200,6 +264,7 @@ class MotorGroup:
             if self.direction == 'backward':
                 position = (MAX_ANGLE - position) % MAX_ANGLE
             target_positions.append(position)
+        logging.debug(f"MotorGroup ({self.direction}) target positions: {target_positions}")
         return target_positions
 
 def is_opposite_direction(current, new):
@@ -258,13 +323,11 @@ def configure_motor_groups(direction, motors):
         )
     else:
         raise ValueError("Invalid direction")
+    logging.info(f"Configured motor groups for direction: {direction}")
     return [group1, group2]
 
 def main(stdscr):
-    curses.cbreak()
-    curses.noecho()
-    stdscr.nodelay(True)
-    stdscr.keypad(True)
+    logging.info("Curses main function initiated.")
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
@@ -300,6 +363,7 @@ def main(stdscr):
     stdscr.addstr(7, 2, "Space      : Stop")
     stdscr.addstr(8, 2, "Q          : Quit")
     stdscr.refresh()
+    logging.info("Displayed control instructions.")
 
     try:
         while True:
@@ -307,24 +371,31 @@ def main(stdscr):
             current_time = time.time()
 
             if key != -1:  # If a key was pressed
+                logging.debug(f"Key pressed: {key}")
                 # Debounce input
                 if current_time - last_direction_change < DEBOUNCE_TIME:
-                    # Ignore the input if within debounce interval
+                    logging.debug("Input ignored due to debounce.")
                     pass
                 else:
                     new_direction = current_direction  # Default to current
 
                     if key == curses.KEY_UP:
                         new_direction = 'forward'
+                        logging.info("Received command: Forward")
                     elif key == curses.KEY_DOWN:
                         new_direction = 'backward'
+                        logging.info("Received command: Backward")
                     elif key == curses.KEY_RIGHT:
                         new_direction = 'right'
+                        logging.info("Received command: Turn Right")
                     elif key == curses.KEY_LEFT:
                         new_direction = 'left'
+                        logging.info("Received command: Turn Left")
                     elif key == ord(' '):
                         new_direction = 'stable'
+                        logging.info("Received command: Stop")
                     elif key == ord('q') or key == ord('Q'):
+                        logging.info("Received command: Quit")
                         break
 
                     # Check for opposite direction
@@ -333,16 +404,19 @@ def main(stdscr):
                             current_direction = new_direction
                             last_direction_change = current_time
                             last_input_time = current_time
+                            logging.debug(f"Direction changed to {current_direction}")
                     else:
                         # Provide feedback that the direction is not allowed
                         stdscr.addstr(9, 0, f"Cannot switch to {new_direction.capitalize()} while moving {current_direction.capitalize()}.")
                         stdscr.clrtoeol()
                         stdscr.refresh()
+                        logging.warning(f"Attempted to switch to {new_direction} while moving {current_direction}")
 
             elif current_time - last_input_time > INPUT_TIMEOUT:
                 # Auto-stop if no input received within timeout period
                 if current_direction != 'stable':
                     current_direction = 'stable'
+                    logging.info("Auto-stop activated due to input timeout.")
 
             # Clear previous feedback message
             stdscr.move(9, 0)
@@ -359,10 +433,12 @@ def main(stdscr):
                 group2_targets = group2.generate_target_positions(base_position)
 
                 for motor, target in zip(group1.motors, group1_targets):
-                    motor.move_to_position(target)
+                    result = motor.move_to_position(target)
+                    logging.debug(f"{motor.name} move_to_position result: {result}")
 
                 for motor, target in zip(group2.motors, group2_targets):
-                    motor.move_to_position(target)
+                    result = motor.move_to_position(target)
+                    logging.debug(f"{motor.name} move_to_position result: {result}")
             else:
                 for motor in motors.values():
                     motor.stop_motor()
@@ -393,10 +469,12 @@ def main(stdscr):
             time.sleep(0.02)  # Reduced sleep for better responsiveness
 
     except Exception as e:
+        logging.exception("An error occurred in the main loop:")
         stdscr.addstr(14, 0, f"Error: {str(e)}")
         stdscr.refresh()
         time.sleep(2)
     finally:
+        logging.info("Entering cleanup phase.")
         for motor in motors.values():
             motor.stop_motor()
 
@@ -405,8 +483,18 @@ def main(stdscr):
         motor3_pwm.stop()
         motor4_pwm.stop()
         GPIO.cleanup()
+        logging.info("GPIO cleanup completed.")
 
         curses.nocbreak()
         stdscr.keypad(False)
         curses.echo()
         curses.endwin()
+
+if __name__ == "__main__":
+    try:
+        logging.info("Script started.")
+        curses.wrapper(main)
+    except Exception as e:
+        logging.exception("An unexpected error occurred:")
+        GPIO.cleanup()
+        sys.exit(1)
