@@ -322,11 +322,11 @@ def stop_all_motors(motors):
     for motor in motors.values():
         motor.stop_motor()
 
-def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calibration_offset):
+def perform_point_turn(motors, motor_pins, turn_direction, angle, bno, calibration_offset):
     """
     Perform a point turn to correct the robot's direction.
 
-    :param motor_pwms: Dictionary of motor PWMs.
+    :param motors: Dictionary of MotorController instances.
     :param motor_pins: List of motor pin tuples.
     :param turn_direction: 'left' or 'right'.
     :param angle: Angle to turn in degrees.
@@ -338,20 +338,20 @@ def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calib
     # Configure motors for point turn
     if turn_direction == 'right':
         # Right point turn: Left motors forward, Right motors backward
-        set_motor_direction(motor_pins, 'M1', 'forward')
-        set_motor_direction(motor_pins, 'M2', 'backward')
-        set_motor_direction(motor_pins, 'M3', 'forward')
-        set_motor_direction(motor_pins, 'M4', 'backward')
+        motors['M1'].set_motor_direction('forward')
+        motors['M2'].set_motor_direction('backward')
+        motors['M3'].set_motor_direction('forward')
+        motors['M4'].set_motor_direction('backward')
     else:
         # Left point turn: Left motors backward, Right motors forward
-        set_motor_direction(motor_pins, 'M1', 'backward')
-        set_motor_direction(motor_pins, 'M2', 'forward')
-        set_motor_direction(motor_pins, 'M3', 'backward')
-        set_motor_direction(motor_pins, 'M4', 'forward')
+        motors['M1'].set_motor_direction('backward')
+        motors['M2'].set_motor_direction('forward')
+        motors['M3'].set_motor_direction('backward')
+        motors['M4'].set_motor_direction('forward')
 
     # Set motor speeds
-    for motor in motor_pwms:
-        set_motor_speed(motor_pwms, motor, motor_speed)
+    for motor in motors.values():
+        motor.set_motor_speed(motor_speed)
 
     print(f"\nStarting {turn_direction} point turn of {angle}°")
 
@@ -396,25 +396,12 @@ def perform_point_turn(motor_pwms, motor_pins, turn_direction, angle, bno, calib
         time.sleep(0.05)
 
     # Stop motors after point turn
-    stop_all_motors(motor_pwms)
+    stop_all_motors(motors)
     time.sleep(0.5)  # Brief pause after turn
 
-def set_motor_direction(motor_pins, motor, direction):
-    """Set the direction of a specified motor."""
-    in1, in2, _ = motor_pins[int(motor[1])-1]  # Assuming motor names are 'M1', 'M2', etc.
-    if direction == 'forward':
-        GPIO.output(in1, GPIO.HIGH)
-        GPIO.output(in2, GPIO.LOW)
-    elif direction == 'backward':
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.HIGH)
-    else:  # stop
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.LOW)
-
-def set_motor_speed(motor_pwms, motor, speed):
+def set_motor_speed(motor, speed):
     """Set the speed of a specified motor."""
-    motor_pwms[motor].ChangeDutyCycle(speed)
+    motor.pwm.ChangeDutyCycle(speed)
 
 def main():
     parser = argparse.ArgumentParser(description='Robot Movement Script with IMU Feedback')
@@ -461,12 +448,12 @@ def main():
                     # Robot is turning left unintentionally; perform corrective right point turn
                     correction_direction = 'right'
                     print(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
-                    perform_point_turn(motor_pwms, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
+                    perform_point_turn(motors, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
                 elif current_yaw < -YAW_THRESHOLD:
                     # Robot is turning right unintentionally; perform corrective left point turn
                     correction_direction = 'left'
                     print(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
-                    perform_point_turn(motor_pwms, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
+                    perform_point_turn(motors, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
                 else:
                     print(f"Yaw deviation: {current_yaw:.2f}°, moving straight")
 
