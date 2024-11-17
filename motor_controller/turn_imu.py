@@ -2,6 +2,10 @@
 import RPi.GPIO as GPIO
 import time
 
+MOTOR1_IN1 = 4
+MOTOR1_IN2 = 7
+MOTOR1_SPD = 24
+
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(MOTOR1_IN1, GPIO.OUT)
 GPIO.setup(MOTOR1_IN2, GPIO.OUT)
