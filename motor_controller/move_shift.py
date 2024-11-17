@@ -237,9 +237,9 @@ def main():
 
     # Set speed multipliers based on direction
     if direction == 'left':
-        speed_multipliers = {'M1': 1.0, 'M3': 1.0, 'M2': 1.05, 'M4': 1.05}
+        speed_multipliers = {'M1': 1.1, 'M3': 1.1, 'M2': 1.0, 'M4': 1.0}
     elif direction == 'right':
-        speed_multipliers = {'M1': 1.05, 'M3': 1.05, 'M2': 1.0, 'M4': 1.0}
+        speed_multipliers = {'M1': 1.0, 'M3': 1.0, 'M2': 1.1, 'M4': 1.1}
     else:
         speed_multipliers = {'M1': 1.0, 'M2': 1.0, 'M3': 1.0, 'M4': 1.0}
 
