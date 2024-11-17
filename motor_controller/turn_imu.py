@@ -9,6 +9,28 @@ from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 import math
 
+# First, cleanup any existing GPIO configuration
+try:
+    GPIO.cleanup()
+except:
+    pass
+
+try:
+    # Try to get current mode
+    current_mode = GPIO.getmode()
+    if current_mode != GPIO.BOARD:
+        # If mode is different or not set, cleanup and set to BOARD
+        GPIO.cleanup()
+        GPIO.setmode(GPIO.BOARD)
+except:
+    # If any error occurs during mode check/set, cleanup and set mode
+    try:
+        GPIO.cleanup()
+        GPIO.setmode(GPIO.BOARD)
+    except:
+        print("Error: Could not set GPIO mode. Try running with sudo.")
+        sys.exit(1)
+
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
@@ -21,36 +43,43 @@ MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD = 29, 22, 31
 MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD = 11, 32, 33
 MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD = 12, 13, 35
 
-# GPIO setup at module level
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-GPIO.setup(MOTOR4_SPD, GPIO.OUT)
+# GPIO setup
+try:
+    GPIO.setup(MOTOR1_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR1_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR3_SPD, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN1, GPIO.OUT)
+    GPIO.setup(MOTOR4_IN2, GPIO.OUT)
+    GPIO.setup(MOTOR4_SPD, GPIO.OUT)
 
-# Set up PWM at module level
-motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-motor1_pwm.start(0)
-motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-motor2_pwm.start(0)
-motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-motor3_pwm.start(0)
-motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-motor4_pwm.start(0)
+    # Set up PWM
+    motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
+    motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+    motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+    motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
+
+    motor1_pwm.start(0)
+    motor2_pwm.start(0)
+    motor3_pwm.start(0)
+    motor4_pwm.start(0)
+    
+except Exception as e:
+    print(f"Error setting up GPIO: {str(e)}")
+    GPIO.cleanup()
+    sys.exit(1)
 
 class IMUSensor:
     def __init__(self):
         self.bno = None
         self.initialized = False
         self.last_yaw = 0
+        self.calibration_offset = 0
         
     def initialize(self):
         """Initialize the IMU with error handling and retries."""
@@ -70,8 +99,10 @@ class IMUSensor:
                 self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
                 time.sleep(0.1)
                 
-                print("Testing IMU reading...")
-                self.get_yaw()
+                # Calibrate by taking initial reading
+                print("Calibrating IMU...")
+                self.calibration_offset = self._read_raw_yaw()
+                print(f"Calibration offset: {self.calibration_offset:.1f}°")
                 
                 self.initialized = True
                 print("IMU initialization successful!")
@@ -86,11 +117,8 @@ class IMUSensor:
                     print("Failed to initialize IMU after maximum retries")
                     return False
     
-    def get_yaw(self):
-        """Get current yaw angle from IMU with error handling."""
-        if not self.initialized:
-            return self.last_yaw
-            
+    def _read_raw_yaw(self):
+        """Read raw yaw value from IMU."""
         try:
             quat = self.bno.quaternion
             if quat is None:
@@ -99,9 +127,22 @@ class IMUSensor:
             quat_i, quat_j, quat_k, quat_real = quat
             yaw = math.degrees(math.atan2(2 * (quat_real * quat_k + quat_i * quat_j),
                                         1 - 2 * (quat_j * quat_j + quat_k * quat_k)))
-            yaw = (yaw + 360) % 360
-            self.last_yaw = yaw
             return yaw
+        except Exception as e:
+            print(f"Error reading raw yaw: {str(e)}")
+            return self.last_yaw
+    
+    def get_yaw(self):
+        """Get calibrated yaw angle from IMU."""
+        if not self.initialized:
+            return self.last_yaw
+            
+        try:
+            raw_yaw = self._read_raw_yaw()
+            # Apply calibration offset and normalize to 0-360
+            calibrated_yaw = (raw_yaw - self.calibration_offset) % 360
+            self.last_yaw = calibrated_yaw
+            return calibrated_yaw
             
         except Exception as e:
             print(f"Error reading IMU: {str(e)}")
@@ -132,69 +173,111 @@ class MotorController:
         self.set_direction('stop')
         self.pwm.ChangeDutyCycle(0)
 
-def turn_to_angle(motors, imu_sensor, target_angle):
-    """Turn the robot to reach the target angle based on IMU readings."""
-    current_yaw = imu_sensor.get_yaw()
+class TurnController:
+    def __init__(self, motors, tolerance=6.0):
+        self.motors = motors
+        self.tolerance = tolerance
+        self.base_speed = 40
+        self.min_speed = 30
+        self.max_speed = 70
+        self.last_error = 0
+        self.integral = 0
+        
+    def calculate_speed(self, error):
+        """Calculate motor speed using PID control."""
+        Kp = 1.5  # Proportional gain
+        Ki = 0.01  # Integral gain
+        Kd = 0.5  # Derivative gain
+        
+        # Calculate PID terms
+        self.integral += error
+        derivative = error - self.last_error
+        self.last_error = error
+        
+        # Calculate control signal
+        control = (Kp * error) + (Ki * self.integral) + (Kd * derivative)
+        
+        # Calculate final speed
+        speed = self.base_speed + control
+        
+        # Constrain speed between min and max values
+        return min(max(abs(speed), self.min_speed), self.max_speed)
     
-    # Calculate error (shortest path to target)
-    error = target_angle - current_yaw
-    if error > 180:
-        error -= 360
-    elif error < -180:
-        error += 360
+    def turn(self, current_yaw, target_yaw):
+        """Execute turn based on current and target yaw angles."""
+        # Calculate error (shortest path)
+        error = target_yaw - current_yaw
+        if error > 180:
+            error -= 360
+        elif error < -180:
+            error += 360
+            
+        print(f"Current Yaw: {current_yaw:6.1f}°  Target: {target_yaw:6.1f}°  Error: {error:6.1f}°")
+        
+        # Check if within tolerance
+        if abs(error) <= self.tolerance:
+            print("Target reached!")
+            self.stop_all_motors()
+            return True
+            
+        # Calculate turn speed
+        speed = self.calculate_speed(error)
+        
+        # Execute turn
+        if error > 0:  # Turn right
+            print(f"Turning right at {speed:.1f}% power")
+            self.turn_right(speed)
+        else:  # Turn left
+            print(f"Turning left at {speed:.1f}% power")
+            self.turn_left(speed)
+            
+        return False
     
-    print(f"Current Yaw: {current_yaw:6.1f}°  Target: {target_angle:6.1f}°  Error: {error:6.1f}°")
+    def turn_right(self, speed):
+        self.motors['M1'].set_direction('forward')
+        self.motors['M2'].set_direction('backward')
+        self.motors['M3'].set_direction('forward')
+        self.motors['M4'].set_direction('backward')
+        for motor in self.motors.values():
+            motor.set_speed(speed)
     
-    # Check if we're within tolerance
-    if abs(error) <= TOLERANCE:
-        print("Target reached!")
-        return True
+    def turn_left(self, speed):
+        self.motors['M1'].set_direction('backward')
+        self.motors['M2'].set_direction('forward')
+        self.motors['M3'].set_direction('backward')
+        self.motors['M4'].set_direction('forward')
+        for motor in self.motors.values():
+            motor.set_speed(speed)
     
-    # Calculate motor speed based on error magnitude
-    base_speed = 40
-    speed = min(max(abs(error) * 1.5, base_speed), 70)
-    
-    # Set motor directions based on turn direction
-    if error > 0:  # Turn right
-        print(f"Turning right at {speed:.1f}% power")
-        motors['M1'].set_direction('forward')
-        motors['M2'].set_direction('backward')
-        motors['M3'].set_direction('forward')
-        motors['M4'].set_direction('backward')
-    else:  # Turn left
-        print(f"Turning left at {speed:.1f}% power")
-        motors['M1'].set_direction('backward')
-        motors['M2'].set_direction('forward')
-        motors['M3'].set_direction('backward')
-        motors['M4'].set_direction('forward')
-    
-    # Set speed for all motors
-    for motor in motors.values():
-        motor.set_speed(speed)
-    
-    return False
+    def stop_all_motors(self):
+        for motor in self.motors.values():
+            motor.stop()
 
 def main():
-    # Check command line arguments
     if len(sys.argv) != 2:
-        print("Usage: python3 turn.py <target_angle>")
-        print("Example: python3 turn.py 30")
+        print("Usage: python3 turn_imu.py <target_angle>")
+        print("Example: python3 turn_imu.py 30")
         sys.exit(1)
     
     try:
         target_angle = float(sys.argv[1])
+        if target_angle < 0 or target_angle >= 360:
+            print("Error: Target angle must be between 0 and 360 degrees")
+            sys.exit(1)
     except ValueError:
         print("Error: Target angle must be a number")
         sys.exit(1)
     
     # Initialize IMU
+    print("\nInitializing IMU...")
     imu_sensor = IMUSensor()
     if not imu_sensor.initialize():
         print("Failed to initialize IMU. Exiting.")
         GPIO.cleanup()
         sys.exit(1)
     
-    # Initialize motors using the already set up PWM objects
+    # Initialize motors
+    print("\nInitializing motors...")
     motors = {
         'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm),
         'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm),
@@ -202,30 +285,27 @@ def main():
         'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm)
     }
     
-    print(f"Starting turn to {target_angle}°")
+    # Initialize turn controller
+    turn_controller = TurnController(motors)
+    
+    print(f"\nStarting turn to {target_angle}°")
     print("Press Ctrl+C to stop")
     
     try:
         # Keep turning until target is reached
-        while not turn_to_angle(motors, imu_sensor, target_angle):
+        while not turn_controller.turn(imu_sensor.get_yaw(), target_angle):
             time.sleep(0.1)
         
-        # Stop all motors when target is reached
-        for motor in motors.values():
-            motor.stop()
+        print("\nTurn complete!")
             
     except KeyboardInterrupt:
         print("\nTurn interrupted by user")
     except Exception as e:
-        print(f"Error during operation: {str(e)}")
+        print(f"\nError during operation: {str(e)}")
     finally:
         # Cleanup
-        print("Cleaning up...")
-        try:
-            for motor in motors.values():
-                motor.stop()
-        except:
-            pass
+        print("\nCleaning up...")
+        turn_controller.stop_all_motors()
         GPIO.cleanup()
 
 if __name__ == "__main__":
