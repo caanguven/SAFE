@@ -530,7 +530,7 @@ def main():
 
     # Variables for distance measurement
     distance_to_tag = None
-    distance_threshold = 0.3  # Meters
+    distance_threshold = 0.4  # Meters
 
     # Event to signal when to stop the robot
     stop_event = threading.Event()
