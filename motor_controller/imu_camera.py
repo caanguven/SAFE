@@ -536,106 +536,106 @@ def main():
     stop_event = threading.Event()
 
     # Thread for image capture and AprilTag detection
-def image_processing_thread():
-    nonlocal distance_to_tag
-    print("Starting image processing thread...")
-    
-    import zipfile
-    from datetime import datetime
-    import io
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_filename = f"captured_frames_{timestamp}.zip"
-    
-    last_valid_distance = None
-    consecutive_detections = 0
-    frame_count = 0
-    start_time = time.time()
-    last_save_time = time.time()
-    save_interval = 1.0  # Save one frame every second when no tags detected
-    
-    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        while not stop_event.is_set():
-            try:
-                frame = picam2.capture_array()
-                
-                # Calculate FPS
-                frame_count += 1
-                if frame_count % 60 == 0:
-                    elapsed = time.time() - start_time
-                    fps = frame_count / elapsed
-                    print(f"Actual FPS: {fps:.2f}")
-                
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                
-                tags = at_detector.detect(
-                    gray,
-                    estimate_tag_pose=True,
-                    camera_params=CAMERA_PARAMS,
-                    tag_size=TAG_SIZE
-                )
-                
-                # Determine if we should save this frame
-                should_save = False
-                if tags:
-                    # Always save frames with detected tags
-                    should_save = True
-                elif time.time() - last_save_time >= save_interval:
-                    # Save periodic frames when no tags detected
-                    should_save = True
-                    last_save_time = time.time()
-                
-                # Save frame if needed
-                if should_save:
-                    success, buffer = cv2.imencode('.jpg', frame)
-                    if success:
-                        frame_timestamp = datetime.now().strftime("%H%M%S_%f")
-                        if tags:
-                            best_tag = max(tags, key=lambda x: x.decision_margin)
-                            frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m.jpg"
-                        else:
-                            frame_filename = f"frame_{frame_timestamp}_notag.jpg"
+    def image_processing_thread():
+        nonlocal distance_to_tag
+        print("Starting image processing thread...")
+        
+        import zipfile
+        from datetime import datetime
+        import io
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"captured_frames_{timestamp}.zip"
+        
+        last_valid_distance = None
+        consecutive_detections = 0
+        frame_count = 0
+        start_time = time.time()
+        last_save_time = time.time()
+        save_interval = 1.0  # Save one frame every second when no tags detected
+        
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            while not stop_event.is_set():
+                try:
+                    frame = picam2.capture_array()
+                    
+                    # Calculate FPS
+                    frame_count += 1
+                    if frame_count % 60 == 0:
+                        elapsed = time.time() - start_time
+                        fps = frame_count / elapsed
+                        print(f"Actual FPS: {fps:.2f}")
+                    
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    
+                    tags = at_detector.detect(
+                        gray,
+                        estimate_tag_pose=True,
+                        camera_params=CAMERA_PARAMS,
+                        tag_size=TAG_SIZE
+                    )
+                    
+                    # Determine if we should save this frame
+                    should_save = False
+                    if tags:
+                        # Always save frames with detected tags
+                        should_save = True
+                    elif time.time() - last_save_time >= save_interval:
+                        # Save periodic frames when no tags detected
+                        should_save = True
+                        last_save_time = time.time()
+                    
+                    # Save frame if needed
+                    if should_save:
+                        success, buffer = cv2.imencode('.jpg', frame)
+                        if success:
+                            frame_timestamp = datetime.now().strftime("%H%M%S_%f")
+                            if tags:
+                                best_tag = max(tags, key=lambda x: x.decision_margin)
+                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m.jpg"
+                            else:
+                                frame_filename = f"frame_{frame_timestamp}_notag.jpg"
+                            
+                            zipf.writestr(frame_filename, buffer.tobytes())
+                    
+                    # Rest of the tag detection and distance calculation code...
+                    if tags:
+                        best_tag = max(tags, key=lambda x: x.decision_margin)
+                        translation = best_tag.pose_t
+                        current_distance = float(translation[2])
                         
-                        zipf.writestr(frame_filename, buffer.tobytes())
-                
-                # Rest of the tag detection and distance calculation code...
-                if tags:
-                    best_tag = max(tags, key=lambda x: x.decision_margin)
-                    translation = best_tag.pose_t
-                    current_distance = float(translation[2])
-                    
-                    if last_valid_distance is not None:
-                        current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
-                    
-                    last_valid_distance = current_distance
-                    consecutive_detections += 1
-                    
-                    if consecutive_detections >= 2:
-                        distance_to_tag = current_distance
-                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m "
-                              f"(margin: {best_tag.decision_margin:.1f})")
+                        if last_valid_distance is not None:
+                            current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
                         
-                        if current_distance <= distance_threshold:
-                            # Save final frame before stopping
-                            success, buffer = cv2.imencode('.jpg', frame)
-                            if success:
-                                frame_timestamp = datetime.now().strftime("%H%M%S_%f")
-                                frame_filename = f"frame_{frame_timestamp}_final_tag{best_tag.tag_id}_dist{current_distance:.2f}m.jpg"
-                                zipf.writestr(frame_filename, buffer.tobytes())
-                            stop_event.set()
-                            break
-                else:
-                    consecutive_detections = 0
-                    if frame_count % 10 == 0:
-                        print("No AprilTag detected")
-                
-                time.sleep(0.016)
-                
-            except Exception as e:
-                print(f"Error in image processing: {e}")
-                time.sleep(0.1)
-    
-    print(f"Image processing thread stopped. Images saved to {zip_filename}")
+                        last_valid_distance = current_distance
+                        consecutive_detections += 1
+                        
+                        if consecutive_detections >= 2:
+                            distance_to_tag = current_distance
+                            print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m "
+                                f"(margin: {best_tag.decision_margin:.1f})")
+                            
+                            if current_distance <= distance_threshold:
+                                # Save final frame before stopping
+                                success, buffer = cv2.imencode('.jpg', frame)
+                                if success:
+                                    frame_timestamp = datetime.now().strftime("%H%M%S_%f")
+                                    frame_filename = f"frame_{frame_timestamp}_final_tag{best_tag.tag_id}_dist{current_distance:.2f}m.jpg"
+                                    zipf.writestr(frame_filename, buffer.tobytes())
+                                stop_event.set()
+                                break
+                    else:
+                        consecutive_detections = 0
+                        if frame_count % 10 == 0:
+                            print("No AprilTag detected")
+                    
+                    time.sleep(0.016)
+                    
+                except Exception as e:
+                    print(f"Error in image processing: {e}")
+                    time.sleep(0.1)
+        
+        print(f"Image processing thread stopped. Images saved to {zip_filename}")
 
     # Start the image processing thread
     threading.Thread(target=image_processing_thread, daemon=True).start()
