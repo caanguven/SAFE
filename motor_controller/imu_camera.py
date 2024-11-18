@@ -458,7 +458,7 @@ def stop_all_motors(motor_pins, motor_pwms):
         motor_pwms[motor].ChangeDutyCycle(0)
 
 def main():
-    parser = argparse.ArgumentParser(description='Quadruped Robot Controller with AprilTag Distance Measurement')
+    parser = argparse.ArgumentParser(description='Quadruped Robot Controller with AprilTag Detection and IMU Correction')
     parser.add_argument('--manual_turn', type=float, default=0.0,
                         help='Manual turn angle in degrees (positive for right, negative for left)')
     args = parser.parse_args()
@@ -499,108 +499,63 @@ def main():
     # Initialize GaitGenerator
     gait = GaitGenerator(motors, mcp)
 
-    # Initialize AprilTag detector with optimized parameters
-    num_threads = os.cpu_count() or 1  # Use available CPU cores
-    at_detector = Detector(
-        families='tag36h11',  # Specify the tag family you're using
-        nthreads=num_threads,  # Utilize multiple threads
-        quad_decimate=1.5,  # Increase decimation to speed up detection
-        quad_sigma=0.0,
-        refine_edges=1,
-        decode_sharpening=0.25,
-        debug=0
-    )
-
-    # Initialize camera with reduced resolution
+    # Initialize camera and AprilTag detector
     picam2 = Picamera2()
     camera_config = picam2.create_still_configuration(
-        main={"size": (2304, 1296)},  # Higher resolution for better tag detection
+        main={"size": (1920, 1080)},
         controls={
-            "FrameDurationLimits": (16666, 16666),  # ~60fps (1/0.06 microseconds)
-            "ExposureTime": 8000,     # Longer exposure time
-            "AnalogueGain": 2.0,       # Increased gain
-            "Brightness": 0.5,         # Adjusted brightness
-            "Contrast": 1.2,           # Slightly increased contrast
-            "Sharpness": 2.0           # Increased sharpness
+            "FrameDurationLimits": (16666, 16666),  # ~60fps
+            "ExposureTime": 8000,
+            "AnalogueGain": 2.5,
+            "Brightness": 0.5,
+            "Contrast": 1.2,
+            "Sharpness": 2.0
         }
     )
     picam2.configure(camera_config)
     picam2.start()
 
+    # Initialize AprilTag detector
+    at_detector = Detector(
+        families='tag36h11',
+        nthreads=os.cpu_count() or 1,
+        quad_decimate=2.0,
+        quad_sigma=0.8,
+        refine_edges=True,
+        decode_sharpening=0.5,
+        debug=0
+    )
 
-    # Variables for distance measurement
+    # Control parameters
+    YAW_THRESHOLD = 15.0  # degrees
+    CORRECTION_ANGLE = 15.0  # degrees
+    distance_threshold = 0.3  # meters
     distance_to_tag = None
-    distance_threshold = 0.4  # Meters
-
-    # Event to signal when to stop the robot
     stop_event = threading.Event()
 
-    # Thread for image capture and AprilTag detection
+    # Start image processing thread
     def image_processing_thread():
         nonlocal distance_to_tag
         print("Starting image processing thread...")
         
-        import zipfile
-        from datetime import datetime
-        import io
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_filename = f"captured_frames_{timestamp}.zip"
-        
         last_valid_distance = None
         consecutive_detections = 0
-        frame_count = 0
-        start_time = time.time()
-        last_save_time = time.time()
-        save_interval = 1.0  # Save one frame every second when no tags detected
         
-        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            while not stop_event.is_set():
-                try:
-                    frame = picam2.capture_array()
-                    
-                    # Calculate FPS
-                    frame_count += 1
-                    if frame_count % 60 == 0:
-                        elapsed = time.time() - start_time
-                        fps = frame_count / elapsed
-                        print(f"Actual FPS: {fps:.2f}")
-                    
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    
-                    tags = at_detector.detect(
-                        gray,
-                        estimate_tag_pose=True,
-                        camera_params=CAMERA_PARAMS,
-                        tag_size=TAG_SIZE
-                    )
-                    
-                    # Determine if we should save this frame
-                    should_save = False
-                    if tags:
-                        # Always save frames with detected tags
-                        should_save = True
-                    elif time.time() - last_save_time >= save_interval:
-                        # Save periodic frames when no tags detected
-                        should_save = True
-                        last_save_time = time.time()
-                    
-                    # Save frame if needed
-                    if should_save:
-                        success, buffer = cv2.imencode('.jpg', frame)
-                        if success:
-                            frame_timestamp = datetime.now().strftime("%H%M%S_%f")
-                            if tags:
-                                best_tag = max(tags, key=lambda x: x.decision_margin)
-                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m.jpg"
-                            else:
-                                frame_filename = f"frame_{frame_timestamp}_notag.jpg"
-                            
-                            zipf.writestr(frame_filename, buffer.tobytes())
-                    
-                    # Rest of the tag detection and distance calculation code...
-                    if tags:
-                        best_tag = max(tags, key=lambda x: x.decision_margin)
+        while not stop_event.is_set():
+            try:
+                frame = picam2.capture_array()
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                
+                tags = at_detector.detect(
+                    gray,
+                    estimate_tag_pose=True,
+                    camera_params=CAMERA_PARAMS,
+                    tag_size=TAG_SIZE
+                )
+                
+                if tags:
+                    best_tag = max(tags, key=lambda x: x.decision_margin)
+                    if best_tag.decision_margin > 50:
                         translation = best_tag.pose_t
                         current_distance = float(translation[2])
                         
@@ -612,30 +567,19 @@ def main():
                         
                         if consecutive_detections >= 2:
                             distance_to_tag = current_distance
-                            print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m "
-                                f"(margin: {best_tag.decision_margin:.1f})")
+                            print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
                             
                             if current_distance <= distance_threshold:
-                                # Save final frame before stopping
-                                success, buffer = cv2.imencode('.jpg', frame)
-                                if success:
-                                    frame_timestamp = datetime.now().strftime("%H%M%S_%f")
-                                    frame_filename = f"frame_{frame_timestamp}_final_tag{best_tag.tag_id}_dist{current_distance:.2f}m.jpg"
-                                    zipf.writestr(frame_filename, buffer.tobytes())
                                 stop_event.set()
                                 break
-                    else:
-                        consecutive_detections = 0
-                        if frame_count % 10 == 0:
-                            print("No AprilTag detected")
-                    
-                    time.sleep(0.016)
-                    
-                except Exception as e:
-                    print(f"Error in image processing: {e}")
-                    time.sleep(0.1)
-        
-        print(f"Image processing thread stopped. Images saved to {zip_filename}")
+                else:
+                    consecutive_detections = 0
+                
+                time.sleep(0.016)
+                
+            except Exception as e:
+                print(f"Error in image processing: {e}")
+                time.sleep(0.1)
 
     # Start the image processing thread
     threading.Thread(target=image_processing_thread, daemon=True).start()
@@ -651,31 +595,46 @@ def main():
         GPIO.cleanup()
         sys.exit(0)
 
-    # Register the cleanup function for SIGINT (Ctrl+C)
+    # Register cleanup for SIGINT
     signal.signal(signal.SIGINT, cleanup)
 
-    print("\nStarting gait movement with AprilTag distance measurement...")
+    print("\nStarting combined gait movement with AprilTag detection and IMU correction...")
 
     try:
-        # If a manual turn angle is provided, perform the turn first
+        # Perform initial manual turn if specified
         if args.manual_turn != 0.0:
             turn_direction = 'right' if args.manual_turn > 0 else 'left'
             target_angle = abs(args.manual_turn)
             perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
 
+        last_correction_time = time.time()
+        correction_cooldown = 1.0  # Minimum time between corrections
+
         while not stop_event.is_set():
             # Update gait
             gait.update_gait()
 
-            # Sleep for a short duration to prevent excessive CPU usage
+            # Check IMU for straight-line correction
+            current_time = time.time()
+            if current_time - last_correction_time >= correction_cooldown:
+                current_yaw = get_current_yaw(bno, calibration_offset)
+                
+                if current_yaw is not None:
+                    if current_yaw > YAW_THRESHOLD:
+                        print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                        perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                        last_correction_time = current_time
+                    elif current_yaw < -YAW_THRESHOLD:
+                        print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                        perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                        last_correction_time = current_time
+
             time.sleep(0.02)
 
-        # Stop the robot since the distance threshold has been reached
-        print("\nDistance threshold reached. Stopping robot and performing 90-degree turn.")
+        # Handle stop condition (AprilTag reached)
+        print("\nTarget distance reached. Stopping and turning...")
         stop_all_motors(motor_pins, motor_pwms)
-        time.sleep(1)  # Small delay before turning
-
-        # Perform a 90-degree turn
+        time.sleep(1)
         perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
 
     except Exception as e:
