@@ -528,122 +528,122 @@ def main():
     stop_event = threading.Event()
 
     # Thread for image capture and AprilTag detection
-def image_processing_thread():
-    nonlocal distance_to_tag
-    print("Starting image processing thread...")
-    
-    # Initialize frame processing variables
-    frame_buffer = []
-    max_buffer_size = 3  # Keep last 3 frames for motion compensation
-    min_consecutive_detections = 2  # Require at least 2 consecutive detections
-    consecutive_detections = 0
-    last_valid_distance = None
-    
-    # Parameters for image enhancement
-    kernel_size = 5
-    exposure_compensation = 0
-    
-    # Configure camera settings for better motion capture
-    picam2.set_controls({
-        "FrameDurationLimits": (16666, 16666),  # Cap at ~60fps
-        "AnalogueGain": 1.0,  # Adjust gain
-        "ExposureTime": 8000,  # Shorter exposure time to reduce motion blur
-        "Sharpness": 1.5  # Increase sharpness
-    })
-    
-    while not stop_event.is_set():
-        start_time = time.time()
+    def image_processing_thread():
+        nonlocal distance_to_tag
+        print("Starting image processing thread...")
         
-        # Capture frame with modified settings
-        frame = picam2.capture_array()
+        # Initialize frame processing variables
+        frame_buffer = []
+        max_buffer_size = 3  # Keep last 3 frames for motion compensation
+        min_consecutive_detections = 2  # Require at least 2 consecutive detections
+        consecutive_detections = 0
+        last_valid_distance = None
         
-        # Add current frame to buffer
-        frame_buffer.append(frame)
-        if len(frame_buffer) > max_buffer_size:
-            frame_buffer.pop(0)
+        # Parameters for image enhancement
+        kernel_size = 5
+        exposure_compensation = 0
         
-        # Image enhancement pipeline
-        # 1. Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Configure camera settings for better motion capture
+        picam2.set_controls({
+            "FrameDurationLimits": (16666, 16666),  # Cap at ~60fps
+            "AnalogueGain": 1.0,  # Adjust gain
+            "ExposureTime": 8000,  # Shorter exposure time to reduce motion blur
+            "Sharpness": 1.5  # Increase sharpness
+        })
         
-        # 2. Apply adaptive histogram equalization
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
-        
-        # 3. Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(enhanced, (kernel_size, kernel_size), 0)
-        
-        # 4. Apply sharpening
-        sharpening_kernel = np.array([[-1,-1,-1],
-                                    [-1, 9,-1],
-                                    [-1,-1,-1]])
-        sharpened = cv2.filter2D(blurred, -1, sharpening_kernel)
-        
-        # Detect AprilTags with modified parameters for moving targets
-        tags = at_detector.detect(
-            sharpened,
-            estimate_tag_pose=True,
-            camera_params=CAMERA_PARAMS,
-            tag_size=TAG_SIZE
-        )
-        
-        if tags:
-            # Process all detected tags and use the most confident detection
-            valid_tags = []
-            for tag in tags:
-                # Calculate detection confidence based on decision margin
-                if tag.decision_margin > 50:  # Adjust threshold as needed
-                    valid_tags.append(tag)
+        while not stop_event.is_set():
+            start_time = time.time()
             
-            if valid_tags:
-                # Sort by decision margin to get most confident detection
-                best_tag = max(valid_tags, key=lambda x: x.decision_margin)
+            # Capture frame with modified settings
+            frame = picam2.capture_array()
+            
+            # Add current frame to buffer
+            frame_buffer.append(frame)
+            if len(frame_buffer) > max_buffer_size:
+                frame_buffer.pop(0)
+            
+            # Image enhancement pipeline
+            # 1. Convert to grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # 2. Apply adaptive histogram equalization
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(gray)
+            
+            # 3. Apply Gaussian blur to reduce noise
+            blurred = cv2.GaussianBlur(enhanced, (kernel_size, kernel_size), 0)
+            
+            # 4. Apply sharpening
+            sharpening_kernel = np.array([[-1,-1,-1],
+                                        [-1, 9,-1],
+                                        [-1,-1,-1]])
+            sharpened = cv2.filter2D(blurred, -1, sharpening_kernel)
+            
+            # Detect AprilTags with modified parameters for moving targets
+            tags = at_detector.detect(
+                sharpened,
+                estimate_tag_pose=True,
+                camera_params=CAMERA_PARAMS,
+                tag_size=TAG_SIZE
+            )
+            
+            if tags:
+                # Process all detected tags and use the most confident detection
+                valid_tags = []
+                for tag in tags:
+                    # Calculate detection confidence based on decision margin
+                    if tag.decision_margin > 50:  # Adjust threshold as needed
+                        valid_tags.append(tag)
                 
-                # Extract and filter the distance
-                translation = best_tag.pose_t
-                current_distance = float(translation[2])
-                
-                # Apply moving average filter if we have previous measurements
-                if last_valid_distance is not None:
-                    alpha = 0.7  # Smoothing factor
-                    filtered_distance = alpha * current_distance + (1 - alpha) * last_valid_distance
-                else:
-                    filtered_distance = current_distance
-                
-                last_valid_distance = filtered_distance
-                consecutive_detections += 1
-                
-                # Only update distance if we have consistent detections
-                if consecutive_detections >= min_consecutive_detections:
-                    distance_to_tag = filtered_distance
-                    print(f"Detected tag ID {best_tag.tag_id} at distance: {filtered_distance:.2f} meters "
-                          f"(confidence: {best_tag.decision_margin:.1f})")
+                if valid_tags:
+                    # Sort by decision margin to get most confident detection
+                    best_tag = max(valid_tags, key=lambda x: x.decision_margin)
                     
-                    # Check distance threshold
-                    if filtered_distance <= distance_threshold:
-                        stop_event.set()
-                        break
+                    # Extract and filter the distance
+                    translation = best_tag.pose_t
+                    current_distance = float(translation[2])
+                    
+                    # Apply moving average filter if we have previous measurements
+                    if last_valid_distance is not None:
+                        alpha = 0.7  # Smoothing factor
+                        filtered_distance = alpha * current_distance + (1 - alpha) * last_valid_distance
+                    else:
+                        filtered_distance = current_distance
+                    
+                    last_valid_distance = filtered_distance
+                    consecutive_detections += 1
+                    
+                    # Only update distance if we have consistent detections
+                    if consecutive_detections >= min_consecutive_detections:
+                        distance_to_tag = filtered_distance
+                        print(f"Detected tag ID {best_tag.tag_id} at distance: {filtered_distance:.2f} meters "
+                            f"(confidence: {best_tag.decision_margin:.1f})")
+                        
+                        # Check distance threshold
+                        if filtered_distance <= distance_threshold:
+                            stop_event.set()
+                            break
+                else:
+                    consecutive_detections = 0
             else:
                 consecutive_detections = 0
-        else:
-            consecutive_detections = 0
-            print("No AprilTag detected.")
+                print("No AprilTag detected.")
+            
+            # Dynamic exposure adjustment based on detection success
+            if consecutive_detections == 0:
+                exposure_compensation = min(exposure_compensation + 1000, 10000)
+                picam2.set_controls({"ExposureTime": 8000 + exposure_compensation})
+            else:
+                exposure_compensation = max(exposure_compensation - 1000, 0)
+                picam2.set_controls({"ExposureTime": 8000 + exposure_compensation})
+            
+            # Maintain desired frame rate
+            elapsed_time = time.time() - start_time
+            desired_interval = 0.016  # Target ~60 FPS
+            sleep_time = max(0, desired_interval - elapsed_time)
+            time.sleep(sleep_time)
         
-        # Dynamic exposure adjustment based on detection success
-        if consecutive_detections == 0:
-            exposure_compensation = min(exposure_compensation + 1000, 10000)
-            picam2.set_controls({"ExposureTime": 8000 + exposure_compensation})
-        else:
-            exposure_compensation = max(exposure_compensation - 1000, 0)
-            picam2.set_controls({"ExposureTime": 8000 + exposure_compensation})
-        
-        # Maintain desired frame rate
-        elapsed_time = time.time() - start_time
-        desired_interval = 0.016  # Target ~60 FPS
-        sleep_time = max(0, desired_interval - elapsed_time)
-        time.sleep(sleep_time)
-    
-    print("Image processing thread stopped.")
+        print("Image processing thread stopped.")
 
     # Start the image processing thread
     threading.Thread(target=image_processing_thread, daemon=True).start()
