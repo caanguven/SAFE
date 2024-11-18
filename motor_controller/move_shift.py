@@ -263,7 +263,7 @@ def setup_imu():
                 
             print("IMU initialized successfully")
             return bno
-            
+                
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {str(e)}")
             if attempt < max_retries - 1:
@@ -338,21 +338,21 @@ class GaitGenerator:
     def update_gait(self):
         """Update motor positions based on gait."""
         base_position = self.generate_sawtooth_position()
-        # Example gait: alternate motor groups with a phase difference
+        # Synchronize Motor Groups
         group1 = ['M1', 'M3']  # Left Front and Left Rear
         group2 = ['M2', 'M4']  # Right Front and Right Rear
 
-        # Calculate target positions
-        target1 = (base_position) % 360
-        target2 = (base_position + 180) % 360
+        # Calculate target positions with 180-degree phase difference
+        target_group1 = base_position % 360
+        target_group2 = (base_position + 180) % 360
 
         # Move motors in group1
         for motor in group1:
-            self.motors[motor].move_to_position(target1, self.mcp)
+            self.motors[motor].move_to_position(target_group1, self.mcp)
 
         # Move motors in group2
         for motor in group2:
-            self.motors[motor].move_to_position(target2, self.mcp)
+            self.motors[motor].move_to_position(target_group2, self.mcp)
 
 def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     """
@@ -435,13 +435,11 @@ def stop_all_motors(motor_pins, motor_pwms):
     """Stop all motors."""
     for i, _ in enumerate(motor_pins, 1):
         motor = f"M{i}"
-        # Assuming we have access to MotorController instances
-        # If not, ensure that motors dictionary is accessible here or pass it as a parameter
-        # Here, we assume motors are passed via global or accessible scope
-        # For simplicity, we'll set direction to 'stop' and speed to 0 directly
+        # Stop motor direction
         in1, in2, _ = motor_pins[i-1]
         GPIO.output(in1, GPIO.LOW)
         GPIO.output(in2, GPIO.LOW)
+        # Stop motor speed
         motor_pwms[motor].ChangeDutyCycle(0)
 
 def main():
