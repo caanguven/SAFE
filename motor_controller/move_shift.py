@@ -231,6 +231,10 @@ class MotorController:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.LOW)
 
+    def set_motor_speed(self, speed):
+        """Set the speed of the motor using PWM."""
+        self.pwm.ChangeDutyCycle(speed)
+
     def move_to_position(self, target):
         current_position = self.read_position()
         error = target - current_position
@@ -248,12 +252,12 @@ class MotorController:
 
         self.set_motor_direction('forward' if control_signal > 0 else 'backward')
         speed = min(100, max(30, abs(control_signal)))
-        self.pwm.ChangeDutyCycle(speed)
+        self.set_motor_speed(speed)
         return False
 
     def stop_motor(self):
         self.set_motor_direction('stop')
-        self.pwm.ChangeDutyCycle(0)
+        self.set_motor_speed(0)
 
 def setup_motors():
     """Initialize GPIO pins and PWM for motors."""
@@ -398,10 +402,6 @@ def perform_point_turn(motors, motor_pins, turn_direction, angle, bno, calibrati
     # Stop motors after point turn
     stop_all_motors(motors)
     time.sleep(0.5)  # Brief pause after turn
-
-def set_motor_speed(motor, speed):
-    """Set the speed of a specified motor."""
-    motor.pwm.ChangeDutyCycle(speed)
 
 def main():
     parser = argparse.ArgumentParser(description='Robot Movement Script with IMU Feedback')
