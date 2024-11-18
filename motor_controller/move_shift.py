@@ -283,7 +283,7 @@ def calibrate_imu(bno):
     
     while len(samples) < max_samples and time.time() - start_time < timeout:
         try:
-            if len(samples) % 10 == 0:
+            if len(samples) % 10 == 0 and len(samples) != 0:
                 print(f"Collecting samples... {len(samples)}/{max_samples}", end='\r')
             quat = bno.quaternion
             
@@ -314,34 +314,13 @@ def get_current_yaw(bno, calibration_offset, retries=3):
             if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
                 _, _, yaw = quaternion_to_euler(*quat)
                 if yaw is not None:
-                    return (yaw - calibration_offset) % 360
+                    yaw_adjusted = (yaw - calibration_offset) % 360
+                    if yaw_adjusted > 180:
+                        yaw_adjusted -= 360  # Convert to range [-180, 180]
+                    return yaw_adjusted
         except Exception:
             time.sleep(0.1)
     return None
-
-def set_motor_direction(motor_pins, motor, direction):
-    """Set the direction of a specified motor."""
-    in1, in2, _ = motor_pins[int(motor[1])-1]  # Assuming motor names are 'M1', 'M2', etc.
-    if direction == 'forward':
-        GPIO.output(in1, GPIO.HIGH)
-        GPIO.output(in2, GPIO.LOW)
-    elif direction == 'backward':
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.HIGH)
-    else:  # stop
-        GPIO.output(in1, GPIO.LOW)
-        GPIO.output(in2, GPIO.LOW)
-
-def set_motor_speed(motor_pwms, motor, speed):
-    """Set the speed of a specified motor."""
-    motor_pwms[motor].ChangeDutyCycle(speed)
-
-def stop_all_motors(motor_pins, motor_pwms):
-    """Stop all motors."""
-    for i, _ in enumerate(motor_pins, 1):
-        motor = f"M{i}"
-        set_motor_direction(motor_pins, motor, 'stop')
-        set_motor_speed(motor_pwms, motor, 0)
 
 class GaitGenerator:
     def __init__(self, motors, mcp):
@@ -529,10 +508,10 @@ def main():
             # Check for yaw deviation
             if current_yaw > YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
-                perform_point_turn(motors, motor_pins, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
             elif current_yaw < -YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
-                perform_point_turn(motors, motor_pins, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
             else:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, maintaining straight path")
 
