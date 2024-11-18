@@ -508,10 +508,10 @@ def main():
             # Check for yaw deviation
             if current_yaw > YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
-                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
             elif current_yaw < -YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
-                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
             else:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, maintaining straight path")
 
