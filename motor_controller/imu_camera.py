@@ -457,38 +457,6 @@ def stop_all_motors(motor_pins, motor_pwms):
         # Stop motor speed
         motor_pwms[motor].ChangeDutyCycle(0)
 
-class GaitGenerator:
-    def __init__(self, motors, mcp):
-        self.motors = motors
-        self.mcp = mcp
-        self.start_time = time.time()
-
-    def generate_sawtooth_position(self, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
-        """Generate a sawtooth wave position for gait."""
-        elapsed_time = time.time() - self.start_time
-        position_in_cycle = (elapsed_time % period) / period
-        position = (position_in_cycle * max_angle) % max_angle
-        return position
-
-    def update_gait(self):
-        """Update motor positions based on gait."""
-        base_position = self.generate_sawtooth_position()
-        # Synchronize Motor Groups with 180-degree phase difference
-        group1 = ['M2', 'M3']  # Right Front and Left Rear
-        group2 = ['M1', 'M4']  # Left Front and Right Rear
-
-        # Calculate target positions
-        target_group1 = base_position % 360
-        target_group2 = (base_position + 180) % 360
-
-        # Move motors in group1
-        for motor in group1:
-            self.motors[motor].move_to_position(target_group1, self.mcp)
-
-        # Move motors in group2
-        for motor in group2:
-            self.motors[motor].move_to_position(target_group2, self.mcp)
-
 def main():
     parser = argparse.ArgumentParser(description='Quadruped Robot Controller with AprilTag Distance Measurement')
     parser.add_argument('--manual_turn', type=float, default=0.0,
@@ -531,20 +499,22 @@ def main():
     # Initialize GaitGenerator
     gait = GaitGenerator(motors, mcp)
 
-    # Initialize AprilTag detector
+    # Initialize AprilTag detector with optimized parameters
+    num_threads = os.cpu_count() or 1  # Use available CPU cores
     at_detector = Detector(
         families='tag36h11',  # Specify the tag family you're using
-        nthreads=1,
-        quad_decimate=1.0,
+        nthreads=num_threads,  # Utilize multiple threads
+        quad_decimate=1.5,  # Increase decimation to speed up detection
         quad_sigma=0.0,
         refine_edges=1,
         decode_sharpening=0.25,
         debug=0
     )
 
-    # Initialize camera
+    # Initialize camera with reduced resolution
     picam2 = Picamera2()
-    camera_config = picam2.create_preview_configuration(main={"size": (2592, 1944)})
+    # Reduced resolution to 1280x720 for faster processing
+    camera_config = picam2.create_preview_configuration(main={"size": (1280, 720)})
     picam2.configure(camera_config)
     picam2.start()
 
@@ -560,6 +530,7 @@ def main():
         nonlocal distance_to_tag
         print("Starting image processing thread...")
         while not stop_event.is_set():
+            start_time = time.time()
             # Capture a frame from the camera
             frame = picam2.capture_array()
             # Convert to grayscale as AprilTag detector expects grayscale images
@@ -591,8 +562,11 @@ def main():
                 distance_to_tag = None
                 print("No AprilTag detected.")
 
-            # Sleep for 0.5 seconds before capturing the next image
-            time.sleep(0.2)
+            # Calculate elapsed time and adjust sleep to achieve higher frame rate
+            elapsed_time = time.time() - start_time
+            desired_interval = 0.1  # Aim for 10 FPS
+            sleep_time = max(0, desired_interval - elapsed_time)
+            time.sleep(sleep_time)
 
         print("Image processing thread stopped.")
 
