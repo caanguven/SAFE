@@ -516,8 +516,8 @@ def main():
     camera_config = picam2.create_still_configuration(
         main={"size": (2304, 1296)},  # Higher resolution for better tag detection
         controls={
-            "FrameDurationLimits": (33333, 33333),  # ~30fps
-            "ExposureTime": 20000,     # Longer exposure time
+            "FrameDurationLimits": (16666, 16666),  # ~60fps (1/0.06 microseconds)
+            "ExposureTime": 8000,     # Longer exposure time
             "AnalogueGain": 2.0,       # Increased gain
             "Brightness": 0.5,         # Adjusted brightness
             "Contrast": 1.2,           # Slightly increased contrast
