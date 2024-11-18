@@ -7,6 +7,7 @@ import time
 import signal
 import threading
 import os
+import queue
 
 import cv2
 import numpy as np
@@ -502,19 +503,27 @@ def main():
     # Initialize AprilTag detector with optimized parameters
     num_threads = os.cpu_count() or 1  # Use available CPU cores
     at_detector = Detector(
-        families='tag36h11',  # Specify the tag family you're using
-        nthreads=num_threads,  # Utilize multiple threads
-        quad_decimate=1.5,  # Increase decimation to speed up detection
+        families='tag36h11',      # Specify the tag family you're using
+        nthreads=num_threads,     # Utilize multiple threads
+        quad_decimate=1.5,        # Increase decimation to speed up detection
         quad_sigma=0.0,
         refine_edges=1,
         decode_sharpening=0.25,
         debug=0
     )
 
-    # Initialize camera with reduced resolution
+    # Initialize camera with reduced resolution and optimized settings
     picam2 = Picamera2()
-    # Reduced resolution to 1280x720 for faster processing
-    camera_config = picam2.create_preview_configuration(main={"size": (1280, 720)})
+    # Reduced resolution to 1600x900 for better quality without sacrificing much speed
+    camera_config = picam2.create_preview_configuration(main={"size": (1600, 900), "format": "RGB888"})
+    
+    # Set camera controls for better image quality
+    camera_config["controls"] = {
+        "ExposureTime": 10000,    # Exposure time in microseconds (adjust as needed)
+        "AnalogueGain": 1.0,       # Gain value (adjust as needed)
+        "awb_mode": "auto"         # Automatic White Balance
+    }
+    
     picam2.configure(camera_config)
     picam2.start()
 
@@ -522,56 +531,76 @@ def main():
     distance_to_tag = None
     distance_threshold = 0.3  # Meters
 
+    # Initialize a queue for frames
+    frame_queue = queue.Queue(maxsize=10)  # Adjust maxsize based on memory constraints
+
     # Event to signal when to stop the robot
     stop_event = threading.Event()
 
-    # Thread for image capture and AprilTag detection
-    def image_processing_thread():
-        nonlocal distance_to_tag
-        print("Starting image processing thread...")
+    # Define image preprocessing function
+    def preprocess_image(frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.equalizeHist(gray)
+        # Optionally, apply adaptive thresholding if it improves detection
+        # gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        #                              cv2.THRESH_BINARY, 11, 2)
+        return gray
+
+    # Thread for capturing frames and adding to the queue
+    def frame_capture_thread():
+        print("Starting frame capture thread...")
         while not stop_event.is_set():
             start_time = time.time()
-            # Capture a frame from the camera
-            frame = picam2.capture_array()
-            # Convert to grayscale as AprilTag detector expects grayscale images
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            # Detect AprilTags in the image
-            tags = at_detector.detect(gray, estimate_tag_pose=True, camera_params=CAMERA_PARAMS, tag_size=TAG_SIZE)
-
-            if tags:
-                # Process the first detected tag
-                tag = tags[0]
-                # Extract the translation component from the pose estimation
-                translation = tag.pose_t
-
-                # The distance to the tag is the z-component of the translation vector
-                distance = float(translation[2])  # Ensure distance is a scalar float
-
-                # Update the shared variable
-                distance_to_tag = distance
-
-                print(f"Detected tag ID {tag.tag_id} at distance: {distance:.2f} meters")
-
-                # Check if the distance is less than or equal to the threshold
-                if distance <= distance_threshold:
-                    stop_event.set()
-                    break
-
-            else:
-                distance_to_tag = None
-                print("No AprilTag detected.")
-
-            # Calculate elapsed time and adjust sleep to achieve higher frame rate
+            try:
+                frame = picam2.capture_array()
+                if not frame_queue.full():
+                    frame_queue.put(frame)
+                else:
+                    # Drop frame if queue is full to maintain real-time processing
+                    pass
+            except Exception as e:
+                print(f"Frame capture error: {e}")
+            # Aim for 10 FPS
             elapsed_time = time.time() - start_time
-            desired_interval = 0.1  # Aim for 10 FPS
+            desired_interval = 0.1  # 10 FPS
             sleep_time = max(0, desired_interval - elapsed_time)
             time.sleep(sleep_time)
+        print("Frame capture thread stopped.")
 
-        print("Image processing thread stopped.")
+    # Thread for processing frames from the queue
+    def frame_processing_thread():
+        nonlocal distance_to_tag
+        print("Starting frame processing thread...")
+        while not stop_event.is_set() or not frame_queue.empty():
+            try:
+                frame = frame_queue.get(timeout=1)
+                processed_image = preprocess_image(frame)
+                tags = at_detector.detect(processed_image, estimate_tag_pose=True, camera_params=CAMERA_PARAMS, tag_size=TAG_SIZE)
 
-    # Start the image processing thread
-    threading.Thread(target=image_processing_thread, daemon=True).start()
+                if tags:
+                    tag = tags[0]
+                    translation = tag.pose_t
+                    distance = float(translation[2])
+                    distance_to_tag = distance
+                    print(f"Detected tag ID {tag.tag_id} at distance: {distance:.2f} meters")
+
+                    if distance <= distance_threshold:
+                        stop_event.set()
+                        break
+                else:
+                    distance_to_tag = None
+                    print("No AprilTag detected.")
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Frame processing error: {e}")
+        print("Frame processing thread stopped.")
+
+    # Start the frame capture and processing threads
+    threading.Thread(target=frame_capture_thread, daemon=True).start()
+    threading.Thread(target=frame_processing_thread, daemon=True).start()
 
     # Graceful shutdown handler
     def cleanup(signum, frame):
@@ -599,6 +628,12 @@ def main():
         while not stop_event.is_set():
             # Update gait
             gait.update_gait()
+
+            # Optional: Implement yaw monitoring and correction here if needed
+            # For example:
+            # current_yaw = get_current_yaw(bno, calibration_offset)
+            # if current_yaw is not None and abs(current_yaw) > YAW_THRESHOLD:
+            #     perform_correction_turn()
 
             # Sleep for a short duration to prevent excessive CPU usage
             time.sleep(0.02)
