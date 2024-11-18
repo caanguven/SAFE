@@ -1,19 +1,26 @@
-import RPi.GPIO as GPIO
-import time
-import Adafruit_GPIO.SPI as SPI
-import Adafruit_MCP3008
+import warnings
 import argparse
+import sys
+import logging
+import math
+import time
+import signal
+
+import RPi.GPIO as GPIO
 import busio
 import board
 import adafruit_bno08x
 from adafruit_bno08x.i2c import BNO08X_I2C
-import math
-import sys
-import logging
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
 
-# Configure basic logging to suppress adafruit debug messages
+# Suppress specific warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="adafruit_blinka.microcontroller.generic_linux.i2c")
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+# Configure basic logging
 logging.basicConfig(
-    level=logging.ERROR,  # Set to ERROR to suppress DEBUG messages
+    level=logging.INFO,  # Set to INFO to see informative messages
     format='%(message)s',
     handlers=[logging.StreamHandler()]
 )
@@ -54,95 +61,73 @@ MOTOR4_IN2 = 27
 MOTOR4_SPD = 19
 MOTOR4_ADC_CHANNEL = 3
 
-# Initialize MCP3008
-mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+class MotorController:
+    def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
+        self.name = name
+        self.in1 = in1
+        self.in2 = in2
+        self.pwm = pwm
+        self.adc_channel = adc_channel
+        self.encoder_flipped = encoder_flipped
+        self.position = 0
+        self.last_valid_position = None
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
+        self.spike_filter = SpikeFilter(name)
 
-# IMU setup functions
-def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
-    """
-    Convert quaternion to Euler angles (roll, pitch, yaw)
-    """
-    try:
-        # Roll (x-axis rotation)
-        sinr_cosp = 2 * (quat_real * quat_i + quat_j * quat_k)
-        cosr_cosp = 1 - 2 * (quat_i * quat_i + quat_j * quat_j)
-        roll = math.atan2(sinr_cosp, cosr_cosp)
+    def read_position(self, mcp):
+        raw_value = mcp.read_adc(self.adc_channel)
 
-        # Pitch (y-axis rotation)
-        sinp = 2 * (quat_real * quat_j - quat_k * quat_i)
-        if abs(sinp) >= 1:
-            pitch = math.copysign(math.pi / 2, sinp)  # Use 90 degrees if out of range
-        else:
-            pitch = math.asin(sinp)
+        if self.encoder_flipped:
+            raw_value = ADC_MAX - raw_value
 
-        # Yaw (z-axis rotation)
-        siny_cosp = 2 * (quat_real * quat_k + quat_i * quat_j)
-        cosy_cosp = 1 - 2 * (quat_j * quat_j + quat_k * quat_k)
-        yaw = math.atan2(siny_cosp, cosy_cosp)
+        filtered_value = self.spike_filter.filter(raw_value)
 
-        # Convert to degrees
-        roll_deg = math.degrees(roll)
-        pitch_deg = math.degrees(pitch)
-        yaw_deg = math.degrees(yaw)
+        if filtered_value is None:
+            return self.last_valid_position if self.last_valid_position is not None else 0
 
-        return roll_deg, pitch_deg, yaw_deg
+        degrees = (filtered_value / ADC_MAX) * 330.0
+        self.last_valid_position = degrees
+        return degrees
 
-    except Exception as e:
-        print(f"Error in quaternion conversion: {str(e)}")
-        return None, None, None
+    def set_motor_direction(self, direction):
+        if direction == 'forward':
+            GPIO.output(self.in1, GPIO.HIGH)
+            GPIO.output(self.in2, GPIO.LOW)
+        elif direction == 'backward':
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.HIGH)
+        else:  # stop
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.LOW)
 
-def setup_imu():
-    """Initialize the IMU sensor."""
-    try:
-        i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
-        time.sleep(0.5)
-        bno = BNO08X_I2C(i2c)
-        time.sleep(1)
-        bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-        time.sleep(0.5)
-        return bno
-    except Exception as e:
-        print(f"Failed to initialize IMU: {e}")
-        sys.exit(1)
+    def set_motor_speed(self, speed):
+        """Set the speed of the motor using PWM."""
+        self.pwm.ChangeDutyCycle(speed)
 
-def calibrate_imu(bno):
-    """Calibrate IMU to set the initial yaw reference."""
-    print("Calibrating IMU... Please keep the robot still.")
-    samples = []
-    max_samples = 50  # Increased number of samples for better calibration
-    for _ in range(max_samples):
-        quat = bno.quaternion
-        if quat is not None:
-            _, _, yaw = quaternion_to_euler(*quat)
-            if yaw is not None and not math.isnan(yaw):
-                samples.append(yaw)
-        time.sleep(0.1)
-    if not samples:
-        print("Calibration failed: No valid yaw samples collected.")
-        sys.exit(1)
-    calibration_offset = sum(samples) / len(samples)
-    print(f"Calibration complete. Reference yaw: {calibration_offset:.2f}°")
-    return calibration_offset
+    def move_to_position(self, target, mcp):
+        current_position = self.read_position(mcp)
+        error = target - current_position
 
-def get_current_yaw(bno, calibration_offset):
-    """Get the current yaw angle relative to the calibration offset."""
-    try:
-        quat = bno.quaternion
-        if quat is not None:
-            _, _, yaw = quaternion_to_euler(*quat)
-            yaw_adjusted = (yaw - calibration_offset + 360) % 360
-            if yaw_adjusted > 180:
-                yaw_adjusted -= 360  # Convert to range [-180, 180]
-            return yaw_adjusted
-        else:
-            return None
-    except KeyError:
-        # Handle unknown report type gracefully
-        print("Warning: Received unknown report type from IMU. Ignoring packet.")
-        return None
-    except Exception as e:
-        print(f"Error reading yaw: {e}")
-        return None
+        # Normalize error to range [-180, 180]
+        if error > 180:
+            error -= 360
+        elif error < -180:
+            error += 360
+
+        control_signal = self.pid.compute(error)
+
+        if abs(error) <= 2:
+            self.stop_motor()
+            return True
+
+        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
+        speed = min(100, max(30, abs(control_signal)))
+        self.set_motor_speed(speed)
+        return False
+
+    def stop_motor(self):
+        self.set_motor_direction('stop')
+        self.set_motor_speed(0)
 
 class SpikeFilter:
     def __init__(self, name):
@@ -179,7 +164,7 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001
+            delta_time = 0.0001  # Prevent division by zero
 
         proportional = self.Kp * error
         self.integral += error * delta_time
@@ -192,75 +177,42 @@ class PIDController:
 
         return control_signal
 
-class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
-        self.name = name
-        self.in1 = in1
-        self.in2 = in2
-        self.pwm = pwm
-        self.adc_channel = adc_channel
-        self.position = 0
-        self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
-        self.encoder_flipped = encoder_flipped
-        self.spike_filter = SpikeFilter(name)
+def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles (roll, pitch, yaw)
+    """
+    try:
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (quat_real * quat_i + quat_j * quat_k)
+        cosr_cosp = 1 - 2 * (quat_i * quat_i + quat_j * quat_j)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
 
-    def read_position(self):
-        raw_value = mcp.read_adc(self.adc_channel)
+        # Pitch (y-axis rotation)
+        sinp = 2 * (quat_real * quat_j - quat_k * quat_i)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)  # Use 90 degrees if out of range
+        else:
+            pitch = math.asin(sinp)
 
-        if self.encoder_flipped:
-            raw_value = ADC_MAX - raw_value
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (quat_real * quat_k + quat_i * quat_j)
+        cosy_cosp = 1 - 2 * (quat_j * quat_j + quat_k * quat_k)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
 
-        filtered_value = self.spike_filter.filter(raw_value)
+        # Convert to degrees
+        roll_deg = math.degrees(roll)
+        pitch_deg = math.degrees(pitch)
+        yaw_deg = math.degrees(yaw)
 
-        if filtered_value is None:
-            return self.last_valid_position if self.last_valid_position is not None else 0
+        return roll_deg, pitch_deg, yaw_deg
 
-        degrees = (filtered_value / ADC_MAX) * 330.0
-        self.last_valid_position = degrees
-        return degrees
-
-    def set_motor_direction(self, direction):
-        if direction == 'forward':
-            GPIO.output(self.in1, GPIO.HIGH)
-            GPIO.output(self.in2, GPIO.LOW)
-        elif direction == 'backward':
-            GPIO.output(self.in1, GPIO.LOW)
-            GPIO.output(self.in2, GPIO.HIGH)
-        else:  # stop
-            GPIO.output(self.in1, GPIO.LOW)
-            GPIO.output(self.in2, GPIO.LOW)
-
-    def set_motor_speed(self, speed):
-        """Set the speed of the motor using PWM."""
-        self.pwm.ChangeDutyCycle(speed)
-
-    def move_to_position(self, target):
-        current_position = self.read_position()
-        error = target - current_position
-
-        if error > 165:
-            error -= 330
-        elif error < -165:
-            error += 330
-
-        control_signal = self.pid.compute(error)
-
-        if abs(error) <= 2:
-            self.stop_motor()
-            return True
-
-        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
-        speed = min(100, max(30, abs(control_signal)))
-        self.set_motor_speed(speed)
-        return False
-
-    def stop_motor(self):
-        self.set_motor_direction('stop')
-        self.set_motor_speed(0)
+    except Exception as e:
+        print(f"Error in quaternion conversion: {str(e)}")
+        return None, None, None
 
 def setup_motors():
     """Initialize GPIO pins and PWM for motors."""
+    GPIO.setmode(GPIO.BCM)
     motor_pins = [
         (MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
         (MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
@@ -275,63 +227,159 @@ def setup_motors():
     
     motor_pwms = {}
     for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
-        pwm = GPIO.PWM(spd, 1000)
+        pwm = GPIO.PWM(spd, 100)  # 100 Hz frequency
         pwm.start(0)
         motor_pwms[f"M{i}"] = pwm
     
     return motor_pins, motor_pwms
 
-def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
-    """Generate a sawtooth wave position for gait."""
-    elapsed_time = time.time() - start_time
-    position_in_cycle = (elapsed_time % period) / period
-    position = (position_in_cycle * max_angle) % max_angle
-    return position
+def setup_imu():
+    """Initialize IMU with retry mechanism"""
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempting to initialize IMU (attempt {attempt + 1}/{max_retries})...")
+            
+            i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
+            time.sleep(0.5)
+            
+            bno = BNO08X_I2C(i2c)
+            time.sleep(1)
+            
+            bno.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+            time.sleep(0.5)
+            
+            # Verify sensor
+            quat = bno.quaternion
+            if quat is None:
+                raise RuntimeError("Unable to read quaternion data")
+            
+            # Test quaternion conversion
+            roll, pitch, yaw = quaternion_to_euler(*quat)
+            if any(x is None for x in [roll, pitch, yaw]):
+                raise RuntimeError("Invalid quaternion conversion")
+                
+            print("IMU initialized successfully")
+            return bno
+            
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print("IMU initialization failed after all attempts")
+                raise
 
-class MotorGroup:
-    def __init__(self, motors, group_phase_difference=0, direction=1):
-        self.motors = motors
-        self.group_phase_difference = group_phase_difference
-        self.direction = direction
+def calibrate_imu(bno):
+    """Calibrate IMU with improved error handling"""
+    print("\nCalibrating IMU (stay still)...")
+    samples = []
+    max_samples = 50
+    timeout = 30  # seconds
+    start_time = time.time()
+    
+    while len(samples) < max_samples and time.time() - start_time < timeout:
+        try:
+            if len(samples) % 10 == 0:
+                print(f"Collecting samples... {len(samples)}/{max_samples}", end='\r')
+            quat = bno.quaternion
+            
+            if quat is not None and len(quat) == 4:
+                _, _, yaw = quaternion_to_euler(*quat)
+                if yaw is not None and not math.isnan(yaw):
+                    samples.append(yaw)
+            else:
+                print("\nInvalid quaternion reading, retrying...")
+                time.sleep(0.5)
+                
+        except Exception as e:
+            print(f"\nError during calibration: {str(e)}")
+            time.sleep(0.5)
+    
+    if len(samples) >= max_samples / 2:
+        calibration_offset = sum(samples) / len(samples)
+        print(f"\nCalibration complete. Reference yaw: {calibration_offset:.2f}°")
+        return calibration_offset
+    else:
+        raise RuntimeError(f"Failed to collect enough valid samples (got {len(samples)} of {max_samples})")
 
-    def generate_target_positions(self, base_position, phase_offsets=None):
-        """Generate target positions for each motor in the group."""
-        target_positions = []
-        for motor in self.motors:
-            position = (base_position + self.group_phase_difference) % MAX_ANGLE
-            if self.direction == -1:
-                position = (MAX_ANGLE - position) % MAX_ANGLE
-            # Apply individual phase offset if provided
-            if phase_offsets and motor.name in phase_offsets:
-                position = (position + phase_offsets[motor.name]) % MAX_ANGLE
-            target_positions.append(position)
-        return target_positions
+def get_current_yaw(bno, calibration_offset, retries=3):
+    """Get current yaw with retry mechanism"""
+    for _ in range(retries):
+        try:
+            quat = bno.quaternion
+            if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
+                _, _, yaw = quaternion_to_euler(*quat)
+                if yaw is not None:
+                    return (yaw - calibration_offset) % 360
+        except Exception:
+            time.sleep(0.1)
+    return None
 
-def configure_motor_groups(motors):
-    """Configure motor groups for gait."""
-    group1 = MotorGroup(
-        motors=[motors['M2'], motors['M3']],
-        group_phase_difference=0,
-        direction=1
-    )
-    group2 = MotorGroup(
-        motors=[motors['M1'], motors['M4']],
-        group_phase_difference=180,
-        direction=1
-    )
-    return [group1, group2]
+def set_motor_direction(motor_pins, motor, direction):
+    """Set the direction of a specified motor."""
+    in1, in2, _ = motor_pins[int(motor[1])-1]  # Assuming motor names are 'M1', 'M2', etc.
+    if direction == 'forward':
+        GPIO.output(in1, GPIO.HIGH)
+        GPIO.output(in2, GPIO.LOW)
+    elif direction == 'backward':
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.HIGH)
+    else:  # stop
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.LOW)
 
-def stop_all_motors(motors):
+def set_motor_speed(motor_pwms, motor, speed):
+    """Set the speed of a specified motor."""
+    motor_pwms[motor].ChangeDutyCycle(speed)
+
+def stop_all_motors(motor_pins, motor_pwms):
     """Stop all motors."""
-    for motor in motors.values():
-        motor.stop_motor()
+    for i, _ in enumerate(motor_pins, 1):
+        motor = f"M{i}"
+        set_motor_direction(motor_pins, motor, 'stop')
+        set_motor_speed(motor_pwms, motor, 0)
 
-def perform_point_turn(motors, motor_pins, turn_direction, angle, bno, calibration_offset):
+class GaitGenerator:
+    def __init__(self, motors, mcp):
+        self.motors = motors
+        self.mcp = mcp
+        self.start_time = time.time()
+
+    def generate_sawtooth_position(self, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
+        """Generate a sawtooth wave position for gait."""
+        elapsed_time = time.time() - self.start_time
+        position_in_cycle = (elapsed_time % period) / period
+        position = (position_in_cycle * max_angle) % max_angle
+        return position
+
+    def update_gait(self):
+        """Update motor positions based on gait."""
+        base_position = self.generate_sawtooth_position()
+        # Example gait: alternate motor groups with a phase difference
+        group1 = ['M1', 'M3']  # Left Front and Left Rear
+        group2 = ['M2', 'M4']  # Right Front and Right Rear
+
+        # Calculate target positions
+        target1 = (base_position) % 360
+        target2 = (base_position + 180) % 360
+
+        # Move motors in group1
+        for motor in group1:
+            self.motors[motor].move_to_position(target1, self.mcp)
+
+        # Move motors in group2
+        for motor in group2:
+            self.motors[motor].move_to_position(target2, self.mcp)
+
+def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     """
     Perform a point turn to correct the robot's direction.
 
     :param motors: Dictionary of MotorController instances.
-    :param motor_pins: List of motor pin tuples.
     :param turn_direction: 'left' or 'right'.
     :param angle: Angle to turn in degrees.
     :param bno: IMU sensor object.
@@ -400,26 +448,20 @@ def perform_point_turn(motors, motor_pins, turn_direction, angle, bno, calibrati
         time.sleep(0.05)
 
     # Stop motors after point turn
-    stop_all_motors(motors)
+    for motor in motors.values():
+        motor.stop_motor()
     time.sleep(0.5)  # Brief pause after turn
 
 def main():
-    parser = argparse.ArgumentParser(description='Robot Movement Script with IMU Feedback')
+    parser = argparse.ArgumentParser(description='Quadruped Robot Controller with Gait and IMU-Based Corrections')
+    parser.add_argument('--manual_turn', type=float, default=0.0,
+                        help='Manual turn angle in degrees (positive for right, negative for left)')
     args = parser.parse_args()
 
     # Initialize motors
     motor_pins, motor_pwms = setup_motors()
 
-    # Initialize IMU
-    bno = setup_imu()
-    calibration_offset = calibrate_imu(bno)
-
-    # Thresholds for yaw deviation (degrees)
-    YAW_THRESHOLD = 10.0
-    # Point turn correction angle (degrees)
-    CORRECTION_ANGLE = 10.0  # Adjust as needed for desired correction
-
-    # Initialize motor controllers
+    # Initialize MotorController instances
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor_pwms['M1'], MOTOR1_ADC_CHANNEL, encoder_flipped=False)
     motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor_pwms['M2'], MOTOR2_ADC_CHANNEL, encoder_flipped=True)
     motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor_pwms['M3'], MOTOR3_ADC_CHANNEL, encoder_flipped=False)
@@ -432,64 +474,74 @@ def main():
         'M4': motor4
     }
 
-    # Start time for gait generation
-    start_time = time.time()
-
+    # Initialize IMU
     try:
-        while True:
-            # Read current yaw angle
-            current_yaw = get_current_yaw(bno, calibration_offset)
-            if current_yaw is None:
-                print("Yaw reading failed. Skipping correction.")
-                correction = 0.0
-            else:
-                # Determine corrective action based on yaw deviation
-                if current_yaw > YAW_THRESHOLD:
-                    # Robot is turning left unintentionally; perform corrective right point turn
-                    correction_direction = 'right'
-                    print(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
-                    perform_point_turn(motors, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
-                elif current_yaw < -YAW_THRESHOLD:
-                    # Robot is turning right unintentionally; perform corrective left point turn
-                    correction_direction = 'left'
-                    print(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
-                    perform_point_turn(motors, motor_pins, correction_direction, CORRECTION_ANGLE, bno, calibration_offset)
-                else:
-                    print(f"Yaw deviation: {current_yaw:.2f}°, moving straight")
-
-            # Generate target positions for gait
-            base_position = generate_sawtooth_position(start_time)
-
-            # No phase offsets needed during straight movement
-            phase_offsets = {}
-
-            # Generate motor target positions
-            motor_groups = configure_motor_groups(motors)
-            group1, group2 = motor_groups
-
-            group1_targets = group1.generate_target_positions(base_position, phase_offsets)
-            group2_targets = group2.generate_target_positions(base_position, phase_offsets)
-
-            # Move motors to target positions
-            for motor, target in zip(group1.motors, group1_targets):
-                motor.move_to_position(target)
-
-            for motor, target in zip(group2.motors, group2_targets):
-                motor.move_to_position(target)
-
-            # Sleep for a short time to prevent excessive CPU usage
-            time.sleep(0.02)
-
-    except KeyboardInterrupt:
-        # Allow the user to stop the script with Ctrl+C
-        print("\nOperation cancelled by user.")
+        bno = setup_imu()
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
-    finally:
-        stop_all_motors(motors)
+        print(f"IMU Initialization Error: {e}")
+        sys.exit(1)
+
+    # Calibrate IMU
+    try:
+        calibration_offset = calibrate_imu(bno)
+    except Exception as e:
+        print(f"IMU Calibration Error: {e}")
+        sys.exit(1)
+
+    # If a manual turn angle is provided, perform the turn first
+    if args.manual_turn != 0.0:
+        turn_direction = 'right' if args.manual_turn > 0 else 'left'
+        target_angle = abs(args.manual_turn)
+        perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
+
+    # Initialize GaitGenerator
+    gait = GaitGenerator(motors, mcp=Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE)))
+
+    # Yaw monitoring parameters
+    YAW_THRESHOLD = 10.0  # degrees
+    CORRECTION_ANGLE = 10.0  # degrees
+
+    # Graceful shutdown handler
+    def cleanup(signum, frame):
+        print("\nShutting down gracefully...")
+        stop_all_motors(motor_pins, motor_pwms)
         for pwm in motor_pwms.values():
             pwm.stop()
         GPIO.cleanup()
+        sys.exit(0)
+
+    # Register the cleanup function for SIGINT (Ctrl+C)
+    signal.signal(signal.SIGINT, cleanup)
+
+    print("\nStarting gait movement with IMU-based yaw monitoring...")
+
+    try:
+        while True:
+            # Update gait
+            gait.update_gait()
+
+            # Get current yaw
+            current_yaw = get_current_yaw(bno, calibration_offset)
+            if current_yaw is None:
+                logging.warning("Yaw reading failed. Skipping correction.")
+                continue
+
+            # Check for yaw deviation
+            if current_yaw > YAW_THRESHOLD:
+                logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
+                perform_point_turn(motors, motor_pins, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+            elif current_yaw < -YAW_THRESHOLD:
+                logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
+                perform_point_turn(motors, motor_pins, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+            else:
+                logging.info(f"Yaw deviation: {current_yaw:.2f}°, maintaining straight path")
+
+            time.sleep(0.02)  # Small delay to prevent excessive CPU usage
+
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+    finally:
+        cleanup(None, None)
 
 if __name__ == "__main__":
     main()
