@@ -3,6 +3,7 @@ import numpy as np
 from picamera2 import Picamera2
 from pupil_apriltags import Detector
 import math
+import os
 
 def main():
     # Initialize the camera
@@ -12,11 +13,6 @@ def main():
     picam2.start()
 
     # Define camera intrinsic parameters based on Arducam OV5647 specifications
-    # Calculated values:
-    # fx ≈ 1435 pixels
-    # fy ≈ 1440 pixels
-    # cx = 1296 pixels
-    # cy = 972 pixels
     fx = 1435.0  # Focal length in pixels along x-axis
     fy = 1440.0  # Focal length in pixels along y-axis
     cx = 1296.0  # Principal point x-coordinate
@@ -24,7 +20,7 @@ def main():
     camera_params = (fx, fy, cx, cy)
 
     # Define the real size of the AprilTag (in meters)
-    tag_size = 0.073  # 162 mm
+    tag_size = 0.162  # 162 mm
 
     # Initialize AprilTag detector with pose estimation enabled
     at_detector = Detector(
@@ -37,7 +33,7 @@ def main():
         debug=0
     )
 
-    print("Starting distance measurement. Press 'q' to exit.")
+    print("Starting distance measurement. Press 'Ctrl+C' to exit.")
 
     try:
         while True:
@@ -53,11 +49,10 @@ def main():
             # Process each detected tag
             for tag in tags:
                 # Extract the translation component from the pose estimation
-                # The translation vector is in meters
                 translation = tag.pose_t
 
                 # The distance to the tag is the z-component of the translation vector
-                distance = translation[2]
+                distance = float(translation[2])  # Ensure distance is a scalar float
 
                 # Draw the detected tag boundaries and ID on the frame
                 corners = tag.corners.astype(int)
@@ -71,20 +66,17 @@ def main():
                 # Print the distance to the console
                 print(f"Detected tag ID {tag.tag_id} at distance: {distance:.2f} meters")
 
-            # Display the frame with annotations
-            cv2.imshow('AprilTag Distance Measurement', frame)
-
-            # Exit on pressing 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            # Save the frame to disk (replace with imshow if GUI is enabled)
+            output_path = os.path.join("output", "frame.jpg")
+            os.makedirs("output", exist_ok=True)
+            cv2.imwrite(output_path, frame)
+            print(f"Frame saved to {output_path}")
 
     except KeyboardInterrupt:
         print("\nDistance measurement stopped by user.")
 
     finally:
-        # Release resources
         picam2.stop()
-        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
