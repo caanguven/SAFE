@@ -260,6 +260,7 @@ class MotorController:
         self.set_motor_speed(0)
 
 def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
+    """Generate a sawtooth wave position for gait."""
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % period) / period
     position = (position_in_cycle * max_angle) % max_angle
@@ -272,6 +273,7 @@ class MotorGroup:
         self.direction = direction
 
     def generate_target_positions(self, base_position):
+        """Generate target positions for each motor in the group."""
         target_positions = []
         for motor in self.motors:
             position = (base_position + self.group_phase_difference) % MAX_ANGLE
@@ -281,6 +283,7 @@ class MotorGroup:
         return target_positions
 
 def configure_motor_groups(direction, motors):
+    """Configure motor groups for gait based on direction."""
     if direction == 'forward':
         group1 = MotorGroup(
             motors=[motors['M2'], motors['M3']],
@@ -391,101 +394,22 @@ def stop_all_motors(motors):
 
 def setup_motors():
     """Initialize GPIO pins and PWM for motors."""
-    GPIO.setmode(GPIO.BOARD)
-    motor_pins = [
-        (MOTOR1_IN1, MOTOR1_IN2, MOTOR1_SPD),
-        (MOTOR2_IN1, MOTOR2_IN2, MOTOR2_SPD),
-        (MOTOR3_IN1, MOTOR3_IN2, MOTOR3_SPD),
-        (MOTOR4_IN1, MOTOR4_IN2, MOTOR4_SPD)
-    ]
-    
-    for in1, in2, spd in motor_pins:
-        GPIO.setup(in1, GPIO.OUT)
-        GPIO.setup(in2, GPIO.OUT)
-        GPIO.setup(spd, GPIO.OUT)
-    
+    # Note: GPIO.setmode(GPIO.BOARD) is already called at the top. Do NOT call it again here.
     motor_pwms = {}
-    for i, (in1, in2, spd) in enumerate(motor_pins, start=1):
-        pwm = GPIO.PWM(spd, 1000)  # 1000 Hz frequency
-        pwm.start(0)
-        motor_pwms[f"M{i}"] = pwm
-    
+    motor_pwms['M1'] = GPIO.PWM(MOTOR1_SPD, 1000)  # 1000 Hz frequency
+    motor_pwms['M1'].start(0)
+    motor_pwms['M2'] = GPIO.PWM(MOTOR2_SPD, 1000)
+    motor_pwms['M2'].start(0)
+    motor_pwms['M3'] = GPIO.PWM(MOTOR3_SPD, 1000)
+    motor_pwms['M3'].start(0)
+    motor_pwms['M4'] = GPIO.PWM(MOTOR4_SPD, 1000)
+    motor_pwms['M4'].start(0)
     return motor_pwms
 
-def generate_sawtooth_position(start_time, period=SAWTOOTH_PERIOD, max_angle=MAX_ANGLE):
-    """Generate a sawtooth wave position for gait."""
-    elapsed_time = time.time() - start_time
-    position_in_cycle = (elapsed_time % period) / period
-    position = (position_in_cycle * max_angle) % max_angle
-    return position
-
-class MotorGroup:
-    def __init__(self, motors, group_phase_difference=0, direction=1):
-        self.motors = motors
-        self.group_phase_difference = group_phase_difference
-        self.direction = direction
-
-    def generate_target_positions(self, base_position):
-        """Generate target positions for each motor in the group."""
-        target_positions = []
-        for motor in self.motors:
-            position = (base_position + self.group_phase_difference) % MAX_ANGLE
-            if self.direction == -1:
-                position = (MAX_ANGLE - position) % MAX_ANGLE
-            target_positions.append(position)
-        return target_positions
-
-def configure_motor_groups(direction, motors):
-    """Configure motor groups for gait based on direction."""
-    if direction == 'forward':
-        group1 = MotorGroup(
-            motors=[motors['M2'], motors['M3']],
-            group_phase_difference=0,
-            direction=1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
-            direction=1
-        )
-    elif direction == 'backward':
-        group1 = MotorGroup(
-            motors=[motors['M2'], motors['M3']],
-            group_phase_difference=0,
-            direction=-1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
-            direction=-1
-        )
-    elif direction == 'right':
-        group1 = MotorGroup(
-            motors=[motors['M1'], motors['M3']],
-            group_phase_difference=0,
-            direction=-1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M2'], motors['M4']],
-            group_phase_difference=180,
-            direction=1
-        )
-    elif direction == 'left':
-        group1 = MotorGroup(
-            motors=[motors['M1'], motors['M3']],
-            group_phase_difference=0,
-            direction=1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M2'], motors['M4']],
-            group_phase_difference=180,
-            direction=-1
-        )
-    else:
-        raise ValueError("Invalid direction")
-    return [group1, group2]
-
 def main():
+    # Initialize GPIO mode to BOARD (already set at the top)
+    # GPIO.setmode(GPIO.BOARD)  # Removed to prevent multiple mode settings
+
     # Initialize motors
     motor_pwms = setup_motors()
 
@@ -503,18 +427,10 @@ def main():
     }
 
     # Initialize IMU
-    try:
-        bno = setup_imu()
-    except Exception as e:
-        print(f"IMU Initialization Error: {e}")
-        sys.exit(1)
+    bno = setup_imu()
 
     # Calibrate IMU
-    try:
-        calibration_offset = calibrate_imu(bno)
-    except Exception as e:
-        print(f"IMU Calibration Error: {e}")
-        sys.exit(1)
+    calibration_offset = calibrate_imu(bno)
 
     # Initialize gait parameters
     start_time = time.time()
@@ -575,4 +491,6 @@ def main():
         cleanup(None, None)
 
 if __name__ == "__main__":
+    # Set GPIO mode to BOARD once at the start
+    GPIO.setmode(GPIO.BOARD)
     main()
