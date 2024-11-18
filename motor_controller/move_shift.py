@@ -407,9 +407,6 @@ def setup_motors():
     return motor_pwms
 
 def main():
-    # Initialize GPIO mode to BOARD (already set at the top)
-    # GPIO.setmode(GPIO.BOARD)  # Removed to prevent multiple mode settings
-
     # Initialize motors
     motor_pwms = setup_motors()
 
