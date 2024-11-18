@@ -592,7 +592,7 @@ def main():
                 print("No AprilTag detected.")
 
             # Sleep for 0.5 seconds before capturing the next image
-            time.sleep(0.5)
+            time.sleep(0.2)
 
         print("Image processing thread stopped.")
 
