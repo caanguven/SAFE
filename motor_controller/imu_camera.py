@@ -513,12 +513,20 @@ def main():
 
     # Initialize camera with reduced resolution
     picam2 = Picamera2()
-    # Reduced resolution to 1280x720 for faster processing
-    camera_config = picam2.create_preview_configuration(
-        main={"size": (1280, 720), "format": "RGB888"},
-        controls={"FrameDurationLimits": (16666, 16666)})
+    camera_config = picam2.create_still_configuration(
+        main={"size": (2304, 1296)},  # Higher resolution for better tag detection
+        controls={
+            "FrameDurationLimits": (33333, 33333),  # ~30fps
+            "ExposureTime": 20000,     # Longer exposure time
+            "AnalogueGain": 2.0,       # Increased gain
+            "Brightness": 0.5,         # Adjusted brightness
+            "Contrast": 1.2,           # Slightly increased contrast
+            "Sharpness": 2.0           # Increased sharpness
+        }
+    )
     picam2.configure(camera_config)
     picam2.start()
+
 
     # Variables for distance measurement
     distance_to_tag = None
