@@ -431,6 +431,19 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
         motor.stop_motor()
     time.sleep(0.5)  # Brief pause after turn
 
+def stop_all_motors(motor_pins, motor_pwms):
+    """Stop all motors."""
+    for i, _ in enumerate(motor_pins, 1):
+        motor = f"M{i}"
+        # Assuming we have access to MotorController instances
+        # If not, ensure that motors dictionary is accessible here or pass it as a parameter
+        # Here, we assume motors are passed via global or accessible scope
+        # For simplicity, we'll set direction to 'stop' and speed to 0 directly
+        in1, in2, _ = motor_pins[i-1]
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.LOW)
+        motor_pwms[motor].ChangeDutyCycle(0)
+
 def main():
     parser = argparse.ArgumentParser(description='Quadruped Robot Controller with Gait and IMU-Based Corrections')
     parser.add_argument('--manual_turn', type=float, default=0.0,
@@ -477,7 +490,7 @@ def main():
     gait = GaitGenerator(motors, mcp=Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE)))
 
     # Yaw monitoring parameters
-    YAW_THRESHOLD = 15.0  # degrees
+    YAW_THRESHOLD = 10.0  # degrees
     CORRECTION_ANGLE = 10.0  # degrees
 
     # Graceful shutdown handler
@@ -508,10 +521,10 @@ def main():
             # Check for yaw deviation
             if current_yaw > YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
-                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
             elif current_yaw < -YAW_THRESHOLD:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
-                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
             else:
                 logging.info(f"Yaw deviation: {current_yaw:.2f}°, maintaining straight path")
 
