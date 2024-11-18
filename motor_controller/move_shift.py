@@ -314,7 +314,7 @@ def get_current_yaw(bno, calibration_offset, retries=3):
             if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
                 _, _, yaw = quaternion_to_euler(*quat)
                 if yaw is not None:
-                    yaw_adjusted = (yaw - calibration_offset) % 360
+                    yaw_adjusted = (yaw - calibration_offset + 360) % 360
                     if yaw_adjusted > 180:
                         yaw_adjusted -= 360  # Convert to range [-180, 180]
                     return yaw_adjusted
@@ -338,11 +338,11 @@ class GaitGenerator:
     def update_gait(self):
         """Update motor positions based on gait."""
         base_position = self.generate_sawtooth_position()
-        # Synchronize Motor Groups
-        group1 = ['M1', 'M3']  # Left Front and Left Rear
-        group2 = ['M2', 'M4']  # Right Front and Right Rear
+        # Synchronize Motor Groups with 180-degree phase difference
+        group1 = ['M2', 'M3']  # Right Front and Left Rear
+        group2 = ['M1', 'M4']  # Left Front and Right Rear
 
-        # Calculate target positions with 180-degree phase difference
+        # Calculate target positions
         target_group1 = base_position % 360
         target_group2 = (base_position + 180) % 360
 
@@ -368,7 +368,7 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
 
     # Configure motors for point turn
     if turn_direction == 'right':
-        # Right point turn: Left motors forward, Right motors backward
+        # Right point turn: Right motors backward, Left motors forward
         motors['M1'].set_motor_direction('forward')
         motors['M2'].set_motor_direction('backward')
         motors['M3'].set_motor_direction('forward')
