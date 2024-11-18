@@ -20,7 +20,7 @@ def main():
     camera_params = (fx, fy, cx, cy)
 
     # Define the real size of the AprilTag (in meters)
-    tag_size = 0.073  # 162 mm
+    tag_size = 0.092  
 
     # Initialize AprilTag detector with pose estimation enabled
     at_detector = Detector(
