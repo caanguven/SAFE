@@ -3,7 +3,6 @@ from picamera2 import Picamera2
 import cv2
 import numpy as np
 from pupil_apriltags import Detector
-import subprocess
 import threading
 import time
 import math
@@ -11,8 +10,9 @@ import os
 import busio
 import board
 from threading import Lock
-from adafruit_bno08x.i2c import BNO08X_I2C
-from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
+import RPi.GPIO as GPIO
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
 
 app = Flask(__name__)
 
@@ -21,8 +21,6 @@ haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_def
 
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
-motor_process = None  # Initialize motor_process as None
-move_direction_process = None  # Global variable to track move_direction.py process
 
 # Check if the cascade loaded successfully
 if face_cascade.empty():
@@ -138,45 +136,273 @@ def detect_april_tag_direction(camera):
 def main_page():
     return render_template('main.html')
 
+# ------------------- Motor Control Integration -------------------
+
+# GPIO Pins and Setup
+MOTOR_PINS = {
+    'M1': {'IN1': 7, 'IN2': 26, 'SPD': 18, 'ADC_CHANNEL': 0, 'ENC_FLIPPED': False},
+    'M2': {'IN1': 29, 'IN2': 22, 'SPD': 31, 'ADC_CHANNEL': 1, 'ENC_FLIPPED': True},
+    'M3': {'IN1': 11, 'IN2': 32, 'SPD': 33, 'ADC_CHANNEL': 2, 'ENC_FLIPPED': False},
+    'M4': {'IN1': 12, 'IN2': 13, 'SPD': 35, 'ADC_CHANNEL': 3, 'ENC_FLIPPED': True}
+}
+
+GPIO.setmode(GPIO.BOARD)
+for motor, pins in MOTOR_PINS.items():
+    GPIO.setup(pins['IN1'], GPIO.OUT)
+    GPIO.setup(pins['IN2'], GPIO.OUT)
+    GPIO.setup(pins['SPD'], GPIO.OUT)
+
+# Set up PWM for motor speed control
+motor_pwms = {}
+for motor, pins in MOTOR_PINS.items():
+    pwm = GPIO.PWM(pins['SPD'], 1000)  # 1kHz frequency
+    pwm.start(0)
+    motor_pwms[motor] = pwm
+
+# Set up MCP3008
+mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(0, 0))
+
+class SpikeFilter:
+    def __init__(self, name):
+        self.filter_active = False
+        self.last_valid_reading = None
+        self.name = name
+
+    def filter(self, new_value):
+        if self.filter_active:
+            if 150 <= new_value <= 700:
+                return None
+            else:
+                self.filter_active = False
+                self.last_valid_reading = new_value
+                return new_value
+        else:
+            if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
+                self.filter_active = True
+                return None
+            else:
+                self.last_valid_reading = new_value
+                return new_value
+
+class PIDController:
+    def __init__(self, Kp, Ki, Kd):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.previous_error = 0
+        self.integral = 0
+        self.last_time = time.time()
+
+    def compute(self, error):
+        current_time = time.time()
+        delta_time = current_time - self.last_time
+        if delta_time <= 0.0:
+            delta_time = 0.0001
+
+        proportional = self.Kp * error
+        self.integral += error * delta_time
+        integral = self.Ki * self.integral
+        derivative = self.Kd * (error - self.previous_error) / delta_time
+
+        control_signal = proportional + integral + derivative
+        self.previous_error = error
+        self.last_time = current_time
+
+        return control_signal
+
+class MotorController:
+    def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
+        self.name = name
+        self.in1 = in1
+        self.in2 = in2
+        self.pwm = pwm
+        self.adc_channel = adc_channel
+        self.position = 0
+        self.last_valid_position = None
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05)
+        self.encoder_flipped = encoder_flipped
+        self.spike_filter = SpikeFilter(name)
+
+    def read_position(self):
+        raw_value = mcp.read_adc(self.adc_channel)
+        
+        if self.encoder_flipped:
+            raw_value = 1023 - raw_value  # ADC_MAX = 1023
+                
+        filtered_value = self.spike_filter.filter(raw_value)
+        
+        if filtered_value is None:
+            return self.last_valid_position if self.last_valid_position is not None else 0
+            
+        degrees = (filtered_value / 1023) * 330.0
+        self.last_valid_position = degrees
+        return degrees
+
+    def set_motor_direction(self, direction):
+        if direction == 'forward':
+            GPIO.output(self.in1, GPIO.HIGH)
+            GPIO.output(self.in2, GPIO.LOW)
+        else:
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.HIGH)
+
+    def move_to_position(self, target):
+        current_position = self.read_position()
+        error = target - current_position
+
+        if error > 165:
+            error -= 330
+        elif error < -165:
+            error += 330
+
+        control_signal = self.pid.compute(error)
+
+        if abs(error) <= 2:
+            self.stop_motor()
+            return True
+
+        self.set_motor_direction('forward' if control_signal > 0 else 'backward')
+        speed = min(100, max(30, abs(control_signal)))
+        self.pwm.ChangeDutyCycle(speed)
+        return False
+
+    def stop_motor(self):
+        GPIO.output(self.in1, GPIO.LOW)
+        GPIO.output(self.in2, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(0)
+
+def generate_sawtooth_position(start_time, period=2, max_angle=330):
+    elapsed_time = time.time() - start_time
+    position_in_cycle = (elapsed_time % period) / period
+    position = (position_in_cycle * max_angle) % max_angle
+    return position
+
+class MotorGroup:
+    def __init__(self, motors, group_phase_difference=0, direction=1):
+        self.motors = motors
+        self.group_phase_difference = group_phase_difference
+        self.direction = direction
+
+    def generate_target_positions(self, base_position):
+        target_positions = []
+        for motor in self.motors:
+            position = (base_position + self.group_phase_difference) % 330
+            if self.direction == -1:
+                position = (330 - position) % 330
+            target_positions.append(position)
+        return target_positions
+
+def configure_motor_groups(direction, motors):
+    if direction == 'forward':
+        group1 = MotorGroup(
+            motors=[motors['M2'], motors['M3']],
+            group_phase_difference=0,
+            direction=1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M1'], motors['M4']],
+            group_phase_difference=180,
+            direction=1
+        )
+    elif direction == 'backward':  # New backward direction
+        group1 = MotorGroup(
+            motors=[motors['M2'], motors['M3']],
+            group_phase_difference=0,
+            direction=-1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M1'], motors['M4']],
+            group_phase_difference=180,
+            direction=-1
+        )
+    elif direction == 'right':
+        group1 = MotorGroup(
+            motors=[motors['M1'], motors['M3']],
+            group_phase_difference=0,
+            direction=-1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M2'], motors['M4']],
+            group_phase_difference=180,
+            direction=1
+        )
+    elif direction == 'left':  # New left direction
+        group1 = MotorGroup(
+            motors=[motors['M1'], motors['M3']],
+            group_phase_difference=0,
+            direction=1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M2'], motors['M4']],
+            group_phase_difference=180,
+            direction=-1
+        )
+    else:
+        raise ValueError("Invalid direction")
+    return [group1, group2]
+
+# Initialize Motors
+motor1 = MotorController("M1", MOTOR_PINS['M1']['IN1'], MOTOR_PINS['M1']['IN2'], motor_pwms['M1'],
+                        MOTOR_PINS['M1']['ADC_CHANNEL'], encoder_flipped=MOTOR_PINS['M1']['ENC_FLIPPED'])
+motor2 = MotorController("M2", MOTOR_PINS['M2']['IN1'], MOTOR_PINS['M2']['IN2'], motor_pwms['M2'],
+                        MOTOR_PINS['M2']['ADC_CHANNEL'], encoder_flipped=MOTOR_PINS['M2']['ENC_FLIPPED'])
+motor3 = MotorController("M3", MOTOR_PINS['M3']['IN1'], MOTOR_PINS['M3']['IN2'], motor_pwms['M3'],
+                        MOTOR_PINS['M3']['ADC_CHANNEL'], encoder_flipped=MOTOR_PINS['M3']['ENC_FLIPPED'])
+motor4 = MotorController("M4", MOTOR_PINS['M4']['IN1'], MOTOR_PINS['M4']['IN2'], motor_pwms['M4'],
+                        MOTOR_PINS['M4']['ADC_CHANNEL'], encoder_flipped=MOTOR_PINS['M4']['ENC_FLIPPED'])
+
+motors = {
+    'M1': motor1,
+    'M2': motor2,
+    'M3': motor3,
+    'M4': motor4
+}
+
+# ------------------- Motor Control Routes -------------------
+
 @app.route('/control_motor', methods=['POST'])
 def control_motor():
-    global motor_process
+    data = request.get_json()
+    direction = data.get('direction')
+    gait = data.get('gait', 'walk')  # Default gait is 'walk'
 
+    if direction not in ['forward', 'backward', 'left', 'right', 'stop']:
+        return jsonify({'status': 'error', 'message': 'Invalid direction'}), 400
+
+    if direction == 'stop':
+        for motor in motors.values():
+            motor.stop_motor()
+        return jsonify({'status': 'success', 'message': 'Motors stopped'})
+    
+    # Configure motor groups based on direction and gait if needed
+    # For simplicity, gait is not used here, but you can implement different gait patterns
     try:
-        data = request.get_json()
-        print(f"Received data from frontend: {data}")  # Log the received data
+        motor_groups = configure_motor_groups(direction, motors)
+        group1, group2 = motor_groups
 
-        direction = data.get('direction')
-        print(f"Received direction: {direction}")  # Log the direction
+        # Base position can be adjusted based on gait
+        start_time = time.time()
 
-        # If there's an existing motor process, terminate it
-        if motor_process and motor_process.poll() is None:
-            print("Stopping previous motor process")
-            motor_process.terminate()
-            motor_process = None
+        # This example uses a single step; for continuous movement, consider threading or asynchronous execution
+        base_position = generate_sawtooth_position(start_time)
 
-        # Depending on the direction, start a new motor control process
-        if direction == 'forward':
-            print("Moving forward")
-            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'forward'])
+        group1_targets = group1.generate_target_positions(base_position)
+        group2_targets = group2.generate_target_positions(base_position)
 
-        elif direction == 'backward':
-            print("Moving backward")
-            motor_process = subprocess.Popen(['sudo', '-E', 'python', 'motor_controller/main.py', 'reverse'])
+        for motor, target in zip(group1.motors, group1_targets):
+            motor.move_to_position(target)
 
-        elif direction == 'stop':
-            print("Stopping motor")
-            if motor_process:
-                motor_process.terminate()
-                motor_process = None
+        for motor, target in zip(group2.motors, group2_targets):
+            motor.move_to_position(target)
 
-        return jsonify({'status': 'success', 'message': f'Motor moving {direction}'})
+        return jsonify({'status': 'success', 'message': f'Motors moving {direction}'})
 
     except Exception as e:
-        print(f"Error in control_motor route: {str(e)}")  # Log any errors
-        return jsonify({'status': 'error', 'message': str(e)})
+        print(f"Error in control_motor route: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Route to start motor control using follow_pid.py
+# ------------------- Existing Routes -------------------
+
 @app.route('/motor_control')
 def motor_control():
     return render_template('motor_control.html')
@@ -455,70 +681,151 @@ def run_turn_script(angle):
         turn_status['current_angle'] = 0
 
     try:
-        script_path = os.path.join(os.path.dirname(__file__), 'turn_imu.py')
-        process = subprocess.Popen(['python3', script_path, str(angle)], 
-                                 stdout=subprocess.PIPE, 
-                                 stderr=subprocess.PIPE,
-                                 universal_newlines=True)
-        
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                if "Current angle:" in output:
-                    try:
-                        current = float(output.split("Current angle:")[1].split("°")[0])
-                        with turn_lock:
-                            turn_status['current_angle'] = current
-                    except:
-                        pass
+        # Here, integrate your turning logic directly instead of calling an external script
+        # Example: Implement turning based on angle
+        # This is a placeholder for your actual motor control logic
+        # Replace this with your specific turning implementation
 
-        return_code = process.poll()
-        if return_code != 0:
-            error_output = process.stderr.read()
-            with turn_lock:
-                turn_status['error'] = f"Error: {error_output}"
-    
+        # Example logic:
+        target_angle = angle
+        while True:
+            # Read current positions
+            m1_pos = motors['M1'].read_position()
+            m2_pos = motors['M2'].read_position()
+            m3_pos = motors['M3'].read_position()
+            m4_pos = motors['M4'].read_position()
+
+            # Calculate errors and control signals
+            # Implement your PID control here based on the target_angle
+
+            # Placeholder: Check if target is reached
+            # Replace with actual condition
+            if abs(m1_pos - target_angle) < 2 and abs(m2_pos - target_angle) < 2:
+                break
+
+            # Update motor positions
+            # Replace with actual movement commands
+            # For example:
+            # motors['M1'].move_to_position(target_angle)
+            # motors['M2'].move_to_position(target_angle)
+            time.sleep(0.1)  # Adjust sleep as needed
+
+        # After reaching the target
+        with turn_lock:
+            turn_status['current_angle'] = target_angle
+
     except Exception as e:
         with turn_lock:
             turn_status['error'] = f"Error: {str(e)}"
-    
+
     finally:
         with turn_lock:
             turn_status['is_turning'] = False
 
-# New Routes to Start and Stop move_direction.py
+# ------------------- IMU Data Update Thread -------------------
 
-@app.route('/start_move_direction', methods=['POST'])
-def start_move_direction():
-    global move_direction_process
-    if move_direction_process is None or move_direction_process.poll() is not None:
-        try:
-            script_path = os.path.join(os.path.dirname(__file__), 'move_direction.py')
-            move_direction_process = subprocess.Popen(['python3', script_path],
-                                                      stdout=subprocess.PIPE,
-                                                      stderr=subprocess.PIPE)
-            return jsonify({'status': 'success', 'message': 'move_direction.py started successfully.'})
-        except Exception as e:
-            print(f"Error starting move_direction.py: {e}")
-            return jsonify({'status': 'error', 'message': str(e)}), 500
-    else:
-        return jsonify({'status': 'error', 'message': 'move_direction.py is already running.'}), 400
+def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
+    """
+    Convert quaternion to Euler angles.
+    """
+    roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k), 1 - 2 * (quat_i**2 + quat_j**2))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
+    yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
+    return roll, pitch, yaw
 
-@app.route('/stop_move_direction', methods=['POST'])
-def stop_move_direction():
-    global move_direction_process
-    if move_direction_process and move_direction_process.poll() is None:
+def calibrate_imu():
+    """
+    Capture the initial IMU readings to use as calibration offsets.
+    """
+    global calibration_offsets, calibrated
+    quat_i, quat_j, quat_k, quat_real = bno.quaternion
+    roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+    calibration_offsets['roll'] = math.degrees(roll)
+    calibration_offsets['pitch'] = math.degrees(pitch)
+    calibration_offsets['yaw'] = math.degrees(yaw)
+    calibrated = True
+
+def update_imu_data():
+    global calibrated
+    error_count = 0
+    max_errors = 10  # Maximum consecutive errors before taking action
+    while True:
         try:
-            move_direction_process.terminate()
-            move_direction_process = None
-            return '', 200
+            if not calibrated:
+                calibrate_imu()
+            quat = bno.quaternion
+            if quat is None:
+                raise ValueError("Quaternion data is None")
+            quat_i, quat_j, quat_k, quat_real = quat
+            
+            # Check for invalid data (e.g., all 0xFF indicates an error)
+            if any(b == 0xFF for b in [quat_i, quat_j, quat_k, quat_real]):
+                raise ValueError("Received invalid quaternion data containing 0xFF")
+            
+            roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
+            
+            with imu_data_lock:
+                imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
+                imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
+                imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
+            
+            # Reset error count on successful read
+            error_count = 0
         except Exception as e:
-            print(f"Error stopping move_direction.py: {e}")
-            return jsonify({'status': 'error', 'message': str(e)}), 500
-    return '', 200  # If the process is already stopped or was never started
+            error_count += 1
+            if error_count <= max_errors:
+                print(f"Exception in update_imu_data: {e}")
+            elif error_count == max_errors + 1:
+                print("Max IMU errors reached. Attempting to reset IMU.")
+            elif error_count > max_errors:
+                # Attempt to reset the IMU
+                try:
+                    bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
+                    bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                    print("IMU has been reset and reinitialized.")
+                    calibrated = False  # Trigger recalibration
+                    error_count = 0  # Reset error count after reset
+                except Exception as reset_e:
+                    print(f"Failed to reset IMU: {reset_e}")
+                    # Optional: Sleep longer before retrying to prevent rapid failures
+                    time.sleep(2)
+        # Adjust sleep based on error state
+        if error_count > max_errors:
+            time.sleep(2)  # Longer sleep after attempting a reset
+        else:
+            time.sleep(0.05)  # Regular sleep interval
+
+# ------------------- Start IMU Data Update Thread -------------------
+
+@app.before_first_request
+def activate_job():
+    """Start the IMU data update thread before handling the first request."""
+    thread = threading.Thread(target=update_imu_data, daemon=True)
+    thread.start()
+
+# ------------------- Cleanup on Shutdown -------------------
+
+@app.route('/shutdown', methods=['POST'])
+def shutdown():
+    """Endpoint to gracefully shutdown the server."""
+    shutdown_func = request.environ.get('werkzeug.server.shutdown')
+    if shutdown_func is None:
+        raise RuntimeError('Not running with the Werkzeug Server')
+    shutdown_func()
+    return 'Server shutting down...'
+
+# ------------------- Run the Flask App -------------------
 
 if __name__ == '__main__':
-    threading.Thread(target=update_imu_data, daemon=True).start()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=True)
+    finally:
+        # Stop all motors on shutdown
+        for motor in motors.values():
+            motor.stop_motor()
+
+        # Stop all PWM channels
+        for pwm in motor_pwms.values():
+            pwm.stop()
+
+        GPIO.cleanup()
