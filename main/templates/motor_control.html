@@ -38,19 +38,8 @@
             font-size: 16px;
             margin: 10px 0;
         }
-        #key-feedback {
-            font-size: 18px;
-            font-weight: bold;
-            margin: 20px 0;
-            color: #FF5733;
-        }
-        .key-display {
-            font-size: 36px;
-            font-weight: bold;
-            color: #007BFF;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
+        /* Removed #key-feedback and .key-display styles as they are no longer needed */
+
         /* Gait Selection Styles */
         .gait-selection {
             margin: 20px 0;
@@ -165,6 +154,15 @@
             display: none; /* Hidden by default */
             margin-top: 10px;
         }
+        /* Process Status Notification */
+        #process-status {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #28a745; /* Green color */
+        }
+        #process-status.error {
+            color: #dc3545; /* Red color */
+        }
     </style>
     <!-- Include Three.js and its dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.126.1/build/three.min.js"></script>
@@ -194,16 +192,15 @@
         
         <p>Current Gait: <span id="current-gait">Walk</span></p>
         
-        <p>Press the "Up" arrow to move forward, "Down" arrow to move backward, and "Esc" to stop.</p>
-        <p id="key-feedback">Waiting for input...</p>
-        <div id="key-display" class="key-display">---</div>
+        <!-- Removed instructions related to keyboard input -->
+        <!-- Optional: Add a status message for motor control -->
+        <p id="process-status">Motor control is active.</p>
         
         <!-- Flexbox Container for Camera Feed, IMU Data, and 3D Viewer -->
         <div class="content-container">
             <!-- Live Camera Feed -->
             <div class="camera-feed">
                 <h2 style="margin-top: 0; color: #007BFF;">Live Camera Feed</h2>
-                <br><br><br><br><br><br>
                 <img src="{{ url_for('video_feed_stream') }}" alt="Video Feed" id="videoFeed">
             </div>            
 
@@ -230,55 +227,44 @@
     </div>
     
     <script>
-        // Motor control key press handling
-        let gaitType = 'walk'; // Default gait
-
-        // Update gaitType when user changes selection
-        const gaitRadios = document.querySelectorAll('input[name="gait"]');
-        gaitRadios.forEach(radio => {
-            radio.addEventListener('change', function() {
-                gaitType = this.value;
-                console.log(`Gait selected: ${gaitType}`);
-                document.getElementById('current-gait').innerText = gaitType.charAt(0).toUpperCase() + gaitType.slice(1);
+        // Notify the server to start move_direction.py when the page loads
+        function startMoveDirection() {
+            fetch('/start_move_direction', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({}) // Send an empty JSON object if no data is needed
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Move Direction Start Response:', data);
+                if (data.status === 'success') {
+                    document.getElementById('process-status').textContent = 'Motor control is active.';
+                    document.getElementById('process-status').classList.remove('error');
+                } else {
+                    document.getElementById('process-status').textContent = `Error: ${data.message}`;
+                    document.getElementById('process-status').classList.add('error');
+                }
+            })
+            .catch(error => {
+                console.error('Error starting move_direction.py:', error);
+                document.getElementById('process-status').textContent = 'Failed to start motor control.';
+                document.getElementById('process-status').classList.add('error');
             });
+        }
+
+        // Notify the server to stop move_direction.py when the page is unloaded
+        function stopMoveDirection() {
+            navigator.sendBeacon('/stop_move_direction'); // Use sendBeacon for reliability
+        }
+
+        window.addEventListener('DOMContentLoaded', (event) => {
+            startMoveDirection();
         });
 
-        document.addEventListener('keydown', function(event) {
-            let direction = null;
-            if (event.code === 'ArrowUp') {
-                direction = 'forward';
-            } else if (event.code === 'ArrowDown') {
-                direction = 'backward';
-            } else if (event.code === 'Escape') {
-                direction = 'stop';
-            }
-
-            console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
-
-            if (direction) {
-                document.getElementById('key-feedback').innerText = `Motor moving: ${direction} with gait ${gaitType}`;
-            }
-
-            if (direction) {
-                fetch('/control_motor', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ direction: direction, gait: gaitType })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Backend response:', data);
-                    if (data.status !== 'success') {
-                        alert(`Error: ${data.message}`);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Failed to communicate with the backend.');
-                });
-            }
+        window.addEventListener('beforeunload', (event) => {
+            stopMoveDirection();
         });
 
         // Initialize Three.js for 3D visualization

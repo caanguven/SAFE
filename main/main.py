@@ -14,9 +14,6 @@ from threading import Lock
 from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 
-
-
-
 app = Flask(__name__)
 
 # Specify the path to the Haar cascade XML file
@@ -25,6 +22,7 @@ haar_cascade_path = '/usr/share/opencv4/haarcascades/haarcascade_frontalface_def
 # Load the Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(haar_cascade_path)
 motor_process = None  # Initialize motor_process as None
+move_direction_process = None  # Global variable to track move_direction.py process
 
 # Check if the cascade loaded successfully
 if face_cascade.empty():
@@ -43,7 +41,6 @@ calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
 
 imu_data_lock = threading.Lock()
-
 
 # Initialize the AprilTag libraries
 at_detector = Detector(families='tag36h11 tag52h13',
@@ -226,9 +223,6 @@ def click_position():
         "image_path": marked_image_path
     })
 
-
-
-
 @app.route('/video_feed')
 def video_feed():
     Camera.release_instance()
@@ -262,6 +256,7 @@ def manual_drive_action():
     print(f"Direction: {direction}")
 
     return jsonify({"status": "success"})
+
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++ GYRO++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
@@ -272,7 +267,6 @@ def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
     pitch = math.asin(max(-1.0, min(1.0, 2 * (quat_real * quat_j - quat_k * quat_i))))
     yaw = math.atan2(2 * (quat_real * quat_k + quat_i * quat_j), 1 - 2 * (quat_j**2 + quat_k**2))
     return roll, pitch, yaw
-
 
 def calibrate_imu():
     """
@@ -336,11 +330,13 @@ def update_imu_data():
         else:
             time.sleep(0.05)  # Regular sleep interval
 
-
 # Route to serve the gyro.html page
 @app.route('/gyro')
 def gyro():
-    # Start the IMU data update thread
+    # Start the IMU data update thread if not already running
+    if not hasattr(app, 'imu_thread') or not app.imu_thread.is_alive():
+        app.imu_thread = threading.Thread(target=update_imu_data, daemon=True)
+        app.imu_thread.start()
     return render_template('gyro.html')
 
 # Route to fetch IMU data
@@ -349,8 +345,6 @@ def get_imu_data():
     with imu_data_lock:
         data = imu_data.copy()
     return jsonify(data)
-
-
 
 def gen_face_detection(camera):
     """Video streaming generator function with face detection."""
@@ -493,6 +487,37 @@ def run_turn_script(angle):
     finally:
         with turn_lock:
             turn_status['is_turning'] = False
+
+# New Routes to Start and Stop move_direction.py
+
+@app.route('/start_move_direction', methods=['POST'])
+def start_move_direction():
+    global move_direction_process
+    if move_direction_process is None or move_direction_process.poll() is not None:
+        try:
+            script_path = os.path.join(os.path.dirname(__file__), 'move_direction.py')
+            move_direction_process = subprocess.Popen(['python3', script_path],
+                                                      stdout=subprocess.PIPE,
+                                                      stderr=subprocess.PIPE)
+            return jsonify({'status': 'success', 'message': 'move_direction.py started successfully.'})
+        except Exception as e:
+            print(f"Error starting move_direction.py: {e}")
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+    else:
+        return jsonify({'status': 'error', 'message': 'move_direction.py is already running.'}), 400
+
+@app.route('/stop_move_direction', methods=['POST'])
+def stop_move_direction():
+    global move_direction_process
+    if move_direction_process and move_direction_process.poll() is None:
+        try:
+            move_direction_process.terminate()
+            move_direction_process = None
+            return '', 200
+        except Exception as e:
+            print(f"Error stopping move_direction.py: {e}")
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+    return '', 200  # If the process is already stopped or was never started
 
 if __name__ == '__main__':
     threading.Thread(target=update_imu_data, daemon=True).start()
