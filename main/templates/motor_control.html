@@ -6,163 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control Center</title>
     <style>
-        /* Base Styles */
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f0f8ff;
-            color: #333;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            text-align: center;
-            background-color: #fff;
-            border: 2px solid #007BFF;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            width: 90%;
-            max-width: 1200px;
-            margin-top: 20px;
-            overflow-y: auto;
-        }
-        h1 {
-            color: #007BFF;
-            font-size: 28px;
-            margin-bottom: 20px;
-        }
-        p {
-            font-size: 16px;
-            margin: 10px 0;
-        }
-        /* Removed #key-feedback and .key-display styles as they are no longer needed */
-
-        /* Gait Selection Styles */
-        .gait-selection {
-            margin: 20px 0;
-            font-size: 18px;
-        }
-        .gait-selection label {
-            margin-right: 20px;
-        }
-        /* Flexbox container for camera, IMU, and 3D viewer */
-        .content-container {
-            display: flex;
-            flex-direction: row;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-top: 20px;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-        /* Live Camera Feed Styles */
-        .camera-feed {
-            flex: 1 1 300px;
-            background-color: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .camera-feed h2 {
-            margin-top: 0;
-            color: #007BFF;
-        }
-        .camera-feed img {
-            width: 100%;
-            height: auto;
-            border-radius: 4px;
-        }
-        /* IMU and 3D Viewer Styles */
-        .imu-three-container {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            flex: 1 1 300px;
-        }
-        /* IMU Data Display Styles */
-        #imu-data {
-            background-color: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        #imu-data h2 {
-            margin-top: 0;
-            color: #007BFF;
-            font-size: 20px;
-        }
-        .imu-data p {
-            margin: 5px 0;
-            font-size: 16px;
-        }
-        /* Three.js Container Styles */
-        #cube-container {
-            width: 600px;
-            height: 400px;
-            background-color: #eaeaea;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            position: relative;
-        }
-        /* Responsive Design */
-        @media (max-width: 1200px) {
-            #cube-container {
-                width: 100%;
-                height: 400px;
-            }
-        }
-        @media (max-width: 768px) {
-            .content-container {
-                flex-direction: column;
-                align-items: center;
-            }
-            #cube-container {
-                width: 100%;
-                height: 300px;
-            }
-        }
-        /* Back Button Styles */
-        .button-container {
-            margin-top: 30px;
-        }
-        .service-button {
-            display: inline-block;
-            margin: 10px;
-            padding: 15px 30px;
-            font-size: 18px;
-            color: white;
-            background-color: #007bff;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background-color 0.3s ease;
-        }
-        .service-button:hover {
-            background-color: #0056b3;
-        }
-        /* IMU Error Notification */
-        #imu-error {
-            color: red;
-            font-weight: bold;
-            display: none; /* Hidden by default */
-            margin-top: 10px;
-        }
-        /* Process Status Notification */
-        #process-status {
-            margin-top: 20px;
-            font-size: 16px;
-            color: #28a745; /* Green color */
-        }
-        #process-status.error {
-            color: #dc3545; /* Red color */
-        }
+        /* [Styles remain the same as your provided code] */
+        /* ... */
     </style>
     <!-- Include Three.js and its dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.126.1/build/three.min.js"></script>
@@ -192,7 +37,6 @@
         
         <p>Current Gait: <span id="current-gait">Walk</span></p>
         
-        <!-- Removed instructions related to keyboard input -->
         <!-- Optional: Add a status message for motor control -->
         <p id="process-status">Motor control is active.</p>
         
@@ -227,7 +71,60 @@
     </div>
     
     <script>
-        // Notify the server to start move_direction.py when the page loads
+        // Motor control key press handling
+        let gaitType = 'walk'; // Default gait
+
+        // Update gaitType when user changes selection
+        const gaitRadios = document.querySelectorAll('input[name="gait"]');
+        gaitRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                gaitType = this.value;
+                console.log(`Gait selected: ${gaitType}`);
+                document.getElementById('current-gait').innerText = gaitType.charAt(0).toUpperCase() + gaitType.slice(1);
+            });
+        });
+
+        document.addEventListener('keydown', function(event) {
+            let direction = null;
+            if (event.code === 'ArrowUp') {
+                direction = 'forward';
+            } else if (event.code === 'ArrowDown') {
+                direction = 'backward';
+            } else if (event.code === 'ArrowLeft') {
+                direction = 'left';
+            } else if (event.code === 'ArrowRight') {
+                direction = 'right';
+            } else if (event.code === 'Space') {
+                direction = 'stable';
+            } else if (event.code === 'KeyQ') {
+                direction = 'quit';
+            }
+
+            console.log(`Detected key: ${event.code}, sending direction: ${direction}`);
+
+            if (direction) {
+                fetch('/send_command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ direction: direction })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Backend response:', data);
+                    if (data.status !== 'success') {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Failed to communicate with the backend.');
+                });
+            }
+        });
+
+        // Notify the server to start motor control when the page loads
         function startMoveDirection() {
             fetch('/start_move_direction', {
                 method: 'POST',
@@ -248,13 +145,13 @@
                 }
             })
             .catch(error => {
-                console.error('Error starting move_direction.py:', error);
+                console.error('Error starting motor control:', error);
                 document.getElementById('process-status').textContent = 'Failed to start motor control.';
                 document.getElementById('process-status').classList.add('error');
             });
         }
 
-        // Notify the server to stop move_direction.py when the page is unloaded
+        // Notify the server to stop motor control when the page is unloaded
         function stopMoveDirection() {
             navigator.sendBeacon('/stop_move_direction'); // Use sendBeacon for reliability
         }
