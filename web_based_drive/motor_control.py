@@ -241,17 +241,17 @@ class MotorControlSystem:
         self.control_thread = threading.Thread(target=self.control_loop, daemon=True)
         self.control_thread.start()
 
-        logging.info("MotorControlSystem initialized in '{}' mode.".format(self.mode))
+        logging.info(f"MotorControlSystem initialized in '{self.mode}' mode.")
 
     def set_direction(self, direction):
         with self.lock:
             self.current_direction = direction
-            logging.info("Direction set to '{}'.".format(direction))
+            logging.info(f"Direction set to '{direction}'.")
 
     def set_mode(self, mode):
         with self.lock:
             self.mode = mode
-            logging.info("Mode set to '{}'.".format(mode))
+            logging.info(f"Mode set to '{mode}'.")
 
     def get_status(self):
         with self.lock:
@@ -303,7 +303,7 @@ class MotorControlSystem:
                 group_phase_difference=180,
                 direction=1 if direction == 'forward' else -1
             )
-            logging.debug("Configured motor groups in 'gallop' mode for direction '{}'.".format(direction))
+            logging.debug(f"Configured motor groups in 'gallop' mode for direction '{direction}'.")
         else:
             # Normal mode or turning commands remain unchanged
             if direction == 'forward':
@@ -356,7 +356,7 @@ class MotorControlSystem:
                 group2 = MotorGroup(motors=[], group_phase_difference=0, direction=1)
             else:
                 raise ValueError("Invalid direction")
-            logging.debug("Configured motor groups in 'normal' mode for direction '{}'.".format(direction))
+            logging.debug(f"Configured motor groups in 'normal' mode for direction '{direction}'.")
         return [group1, group2]
 
     def control_loop(self):
