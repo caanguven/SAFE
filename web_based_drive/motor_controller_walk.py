@@ -6,6 +6,7 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import threading
 import logging
+import keyboard  # For keyboard input handling
 
 # Configure Logging
 logging.basicConfig(level=logging.DEBUG,
@@ -332,29 +333,95 @@ class MotorControlSystem:
             )
             logging.debug(f"Configured motor groups in 'gallop' mode for direction '{direction}'.")
             return [group1, group2]
-        elif mode == 'walk' and direction in ['forward', 'backward']:
+        elif mode == 'walk' and direction in ['forward', 'backward', 'left', 'right']:
             # Walk gait implementation
-            direction_value = 1 if direction == 'forward' else -1
-            group1 = MotorGroup(
-                motors=[self.motors['M2']],  # Back Left
-                group_phase_difference=0,
-                direction=direction_value
-            )
-            group2 = MotorGroup(
-                motors=[self.motors['M4']],  # Front Left
-                group_phase_difference=90,
-                direction=direction_value
-            )
-            group3 = MotorGroup(
-                motors=[self.motors['M1']],  # Back Right
-                group_phase_difference=180,
-                direction=direction_value
-            )
-            group4 = MotorGroup(
-                motors=[self.motors['M3']],  # Front Right
-                group_phase_difference=270,
-                direction=direction_value
-            )
+            direction_value = 1 if direction in ['forward', 'right'] else -1
+            if direction == 'forward':
+                group1 = MotorGroup(
+                    motors=[self.motors['M2']],  # Back Left
+                    group_phase_difference=0,
+                    direction=direction_value
+                )
+                group2 = MotorGroup(
+                    motors=[self.motors['M4']],  # Front Left
+                    group_phase_difference=90,
+                    direction=direction_value
+                )
+                group3 = MotorGroup(
+                    motors=[self.motors['M1']],  # Back Right
+                    group_phase_difference=180,
+                    direction=direction_value
+                )
+                group4 = MotorGroup(
+                    motors=[self.motors['M3']],  # Front Right
+                    group_phase_difference=270,
+                    direction=direction_value
+                )
+            elif direction == 'backward':
+                group1 = MotorGroup(
+                    motors=[self.motors['M2']],  # Back Left
+                    group_phase_difference=180,
+                    direction=direction_value
+                )
+                group2 = MotorGroup(
+                    motors=[self.motors['M4']],  # Front Left
+                    group_phase_difference=270,
+                    direction=direction_value
+                )
+                group3 = MotorGroup(
+                    motors=[self.motors['M1']],  # Back Right
+                    group_phase_difference=0,
+                    direction=direction_value
+                )
+                group4 = MotorGroup(
+                    motors=[self.motors['M3']],  # Front Right
+                    group_phase_difference=90,
+                    direction=direction_value
+                )
+            elif direction == 'left':
+                # To turn left, slow down or reverse right legs
+                group1 = MotorGroup(
+                    motors=[self.motors['M2']],  # Back Left
+                    group_phase_difference=0,
+                    direction=direction_value
+                )
+                group2 = MotorGroup(
+                    motors=[self.motors['M4']],  # Front Left
+                    group_phase_difference=90,
+                    direction=direction_value
+                )
+                group3 = MotorGroup(
+                    motors=[self.motors['M1']],  # Back Right
+                    group_phase_difference=180,
+                    direction=-direction_value  # Reverse direction for right legs
+                )
+                group4 = MotorGroup(
+                    motors=[self.motors['M3']],  # Front Right
+                    group_phase_difference=270,
+                    direction=-direction_value  # Reverse direction for right legs
+                )
+            elif direction == 'right':
+                # To turn right, slow down or reverse left legs
+                group1 = MotorGroup(
+                    motors=[self.motors['M2']],  # Back Left
+                    group_phase_difference=0,
+                    direction=-direction_value  # Reverse direction for left legs
+                )
+                group2 = MotorGroup(
+                    motors=[self.motors['M4']],  # Front Left
+                    group_phase_difference=90,
+                    direction=-direction_value  # Reverse direction for left legs
+                )
+                group3 = MotorGroup(
+                    motors=[self.motors['M1']],  # Back Right
+                    group_phase_difference=180,
+                    direction=direction_value
+                )
+                group4 = MotorGroup(
+                    motors=[self.motors['M3']],  # Front Right
+                    group_phase_difference=270,
+                    direction=direction_value
+                )
             logging.debug(f"Configured motor groups in 'walk' mode for direction '{direction}'.")
             return [group1, group2, group3, group4]
         else:
@@ -447,3 +514,67 @@ class MotorControlSystem:
         self.motor4_pwm.stop()
         GPIO.cleanup()
         logging.info("MotorControlSystem stopped and GPIO cleaned up.")
+
+def main():
+    # Initialize the motor control system
+    motor_control_system = MotorControlSystem()
+
+    try:
+        logging.info("Starting keyboard control. Press 'w', 'a', 's', 'd' to move, 'q' to quit.")
+        print("Keyboard Controls:")
+        print("  w - Forward")
+        print("  s - Backward")
+        print("  a - Turn Left")
+        print("  d - Turn Right")
+        print("  q - Quit")
+
+        while True:
+            # Forward
+            if keyboard.is_pressed('w'):
+                motor_control_system.set_mode('walk')
+                motor_control_system.set_direction('forward')
+                logging.info("Command: Move Forward")
+                print("Moving Forward")
+
+            # Backward
+            elif keyboard.is_pressed('s'):
+                motor_control_system.set_mode('walk')
+                motor_control_system.set_direction('backward')
+                logging.info("Command: Move Backward")
+                print("Moving Backward")
+
+            # Turn Left
+            elif keyboard.is_pressed('a'):
+                motor_control_system.set_mode('walk')
+                motor_control_system.set_direction('left')
+                logging.info("Command: Turn Left")
+                print("Turning Left")
+
+            # Turn Right
+            elif keyboard.is_pressed('d'):
+                motor_control_system.set_mode('walk')
+                motor_control_system.set_direction('right')
+                logging.info("Command: Turn Right")
+                print("Turning Right")
+
+            # Quit
+            elif keyboard.is_pressed('q'):
+                logging.info("Command: Quit")
+                print("Quitting...")
+                break
+
+            else:
+                # No key pressed, set to stable
+                motor_control_system.set_direction('stable')
+
+            time.sleep(0.1)  # Small delay to prevent high CPU usage
+
+    except KeyboardInterrupt:
+        logging.info("KeyboardInterrupt received. Exiting...")
+    finally:
+        # Stop the motor control system
+        motor_control_system.stop()
+        logging.info("Program terminated.")
+
+if __name__ == "__main__":
+    main()
