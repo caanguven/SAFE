@@ -71,6 +71,11 @@ class SpikeFilter:
                 self.last_valid_reading = new_value
                 return new_value
 
+    def reset(self):
+        self.filter_active = False
+        self.last_valid_reading = None
+        logging.debug(f"{self.name} SpikeFilter: Reset complete.")
+
 class PIDController:
     def __init__(self, Kp, Ki, Kd, name='PID'):
         self.Kp = Kp
@@ -99,6 +104,12 @@ class PIDController:
         logging.debug(f"{self.name} PID: error={error}, proportional={proportional}, integral={integral}, derivative={derivative}, control_signal={control_signal}")
 
         return control_signal
+
+    def reset(self):
+        self.previous_error = 0
+        self.integral = 0
+        self.last_time = time.time()
+        logging.debug(f"{self.name} PID: Reset complete.")
 
 class MotorController:
     def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
@@ -140,33 +151,44 @@ class MotorController:
             logging.debug(f"{self.name} Direction: Backward")
 
     def move_to_position(self, target, mcp):
-        current_position = self.read_position(mcp)
-        error = target - current_position
+        try:
+            current_position = self.read_position(mcp)
+            error = target - current_position
 
-        if error > 165:
-            error -= 330
-        elif error < -165:
-            error += 330
+            if error > 165:
+                error -= 330
+            elif error < -165:
+                error += 330
 
-        control_signal = self.pid.compute(error)
+            control_signal = self.pid.compute(error)
 
-        if abs(error) <= 2:
-            self.stop_motor()
-            logging.debug(f"{self.name} reached target. Stopping motor.")
-            return True
+            if abs(error) <= 2:
+                self.stop_motor()
+                logging.debug(f"{self.name} reached target. Stopping motor.")
+                return True
 
-        direction = 'forward' if control_signal > 0 else 'backward'
-        self.set_motor_direction(direction)
-        speed = min(100, max(30, abs(control_signal)))
-        self.pwm.ChangeDutyCycle(speed)
-        logging.debug(f"{self.name} Speed: {speed}%")
-        return False
+            direction = 'forward' if control_signal > 0 else 'backward'
+            self.set_motor_direction(direction)
+            speed = min(100, max(30, abs(control_signal)))
+            self.pwm.ChangeDutyCycle(speed)
+            logging.debug(f"{self.name} Speed: {speed}%")
+            return False
+        except Exception as e:
+            logging.error(f"{self.name} MotorController: Error during move_to_position: {e}")
+            self.reset()
+            return False
 
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
         GPIO.output(self.in2, GPIO.LOW)
         self.pwm.ChangeDutyCycle(0)
         logging.debug(f"{self.name} Motor Stopped")
+
+    def reset(self):
+        self.stop_motor()
+        self.pid.reset()
+        self.spike_filter.reset()
+        logging.info(f"{self.name} MotorController: Reset complete.")
 
 class MotorGroup:
     def __init__(self, motors, group_phase_difference=0, direction=1):
@@ -247,6 +269,10 @@ class MotorControlSystem:
         with self.lock:
             self.current_direction = direction
             logging.info(f"Direction set to '{direction}'.")
+            if direction == 'stable':
+                logging.info("Resetting all motors to 'stable' state.")
+                for motor in self.motors.values():
+                    motor.reset()
 
     def set_mode(self, mode):
         with self.lock:
