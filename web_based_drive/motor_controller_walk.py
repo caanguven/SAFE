@@ -6,7 +6,7 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import threading
 import logging
-import keyboard  # For keyboard input handling
+import curses  # For keyboard input handling without root
 
 # Configure Logging
 logging.basicConfig(level=logging.DEBUG,
@@ -379,7 +379,7 @@ class MotorControlSystem:
                     direction=direction_value
                 )
             elif direction == 'left':
-                # To turn left, slow down or reverse right legs
+                # To turn left, reverse direction for right legs
                 group1 = MotorGroup(
                     motors=[self.motors['M2']],  # Back Left
                     group_phase_difference=0,
@@ -401,7 +401,7 @@ class MotorControlSystem:
                     direction=-direction_value  # Reverse direction for right legs
                 )
             elif direction == 'right':
-                # To turn right, slow down or reverse left legs
+                # To turn right, reverse direction for left legs
                 group1 = MotorGroup(
                     motors=[self.motors['M2']],  # Back Left
                     group_phase_difference=0,
@@ -515,57 +515,64 @@ class MotorControlSystem:
         GPIO.cleanup()
         logging.info("MotorControlSystem stopped and GPIO cleaned up.")
 
-def main():
+def main(stdscr):
     # Initialize the motor control system
     motor_control_system = MotorControlSystem()
 
-    try:
-        logging.info("Starting keyboard control. Press 'w', 'a', 's', 'd' to move, 'q' to quit.")
-        print("Keyboard Controls:")
-        print("  w - Forward")
-        print("  s - Backward")
-        print("  a - Turn Left")
-        print("  d - Turn Right")
-        print("  q - Quit")
+    # Clear screen
+    stdscr.clear()
+    stdscr.nodelay(True)  # Make getch non-blocking
+    stdscr.keypad(True)
+    curses.noecho()
+    curses.cbreak()
 
+    # Instructions
+    stdscr.addstr(0, 0, "Keyboard Controls:")
+    stdscr.addstr(1, 0, "  w - Forward")
+    stdscr.addstr(2, 0, "  s - Backward")
+    stdscr.addstr(3, 0, "  a - Turn Left")
+    stdscr.addstr(4, 0, "  d - Turn Right")
+    stdscr.addstr(5, 0, "  q - Quit")
+    stdscr.refresh()
+
+    try:
         while True:
-            # Forward
-            if keyboard.is_pressed('w'):
+            key = stdscr.getch()
+            if key == ord('w'):
                 motor_control_system.set_mode('walk')
                 motor_control_system.set_direction('forward')
+                stdscr.addstr(7, 0, "Moving Forward          ")
+                stdscr.refresh()
                 logging.info("Command: Move Forward")
-                print("Moving Forward")
-
-            # Backward
-            elif keyboard.is_pressed('s'):
+            elif key == ord('s'):
                 motor_control_system.set_mode('walk')
                 motor_control_system.set_direction('backward')
+                stdscr.addstr(7, 0, "Moving Backward         ")
+                stdscr.refresh()
                 logging.info("Command: Move Backward")
-                print("Moving Backward")
-
-            # Turn Left
-            elif keyboard.is_pressed('a'):
+            elif key == ord('a'):
                 motor_control_system.set_mode('walk')
                 motor_control_system.set_direction('left')
+                stdscr.addstr(7, 0, "Turning Left            ")
+                stdscr.refresh()
                 logging.info("Command: Turn Left")
-                print("Turning Left")
-
-            # Turn Right
-            elif keyboard.is_pressed('d'):
+            elif key == ord('d'):
                 motor_control_system.set_mode('walk')
                 motor_control_system.set_direction('right')
+                stdscr.addstr(7, 0, "Turning Right           ")
+                stdscr.refresh()
                 logging.info("Command: Turn Right")
-                print("Turning Right")
-
-            # Quit
-            elif keyboard.is_pressed('q'):
-                logging.info("Command: Quit")
-                print("Quitting...")
-                break
-
-            else:
-                # No key pressed, set to stable
+            elif key == ord('q'):
                 motor_control_system.set_direction('stable')
+                stdscr.addstr(7, 0, "Quitting...              ")
+                stdscr.refresh()
+                logging.info("Command: Quit")
+                break
+            else:
+                # No key pressed or unrecognized key
+                motor_control_system.set_direction('stable')
+                stdscr.addstr(7, 0, "Robot is Stable         ")
+                stdscr.refresh()
 
             time.sleep(0.1)  # Small delay to prevent high CPU usage
 
@@ -575,6 +582,10 @@ def main():
         # Stop the motor control system
         motor_control_system.stop()
         logging.info("Program terminated.")
+        curses.nocbreak()
+        stdscr.keypad(False)
+        curses.echo()
+        curses.endwin()
 
 if __name__ == "__main__":
-    main()
+    curses.wrapper(main)
