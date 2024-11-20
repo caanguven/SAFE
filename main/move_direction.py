@@ -3,6 +3,7 @@ import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import curses
+import argparse
 
 # Constants for SPI and ADC
 SPI_PORT = 0
@@ -194,56 +195,114 @@ class MotorGroup:
             target_positions.append(position)
         return target_positions
 
-def configure_motor_groups(direction, motors):
-    if direction == 'forward':
-        group1 = MotorGroup(
-            motors=[motors['M2'], motors['M3']],
-            group_phase_difference=0,
-            direction=1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
-            direction=1
-        )
-    elif direction == 'backward':  # New backward direction
-        group1 = MotorGroup(
-            motors=[motors['M2'], motors['M3']],
-            group_phase_difference=0,
-            direction=-1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M1'], motors['M4']],
-            group_phase_difference=180,
-            direction=-1
-        )
-    elif direction == 'right':
-        group1 = MotorGroup(
-            motors=[motors['M1'], motors['M3']],
-            group_phase_difference=0,
-            direction=-1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M2'], motors['M4']],
-            group_phase_difference=180,
-            direction=1
-        )
-    elif direction == 'left':  # New left direction
-        group1 = MotorGroup(
-            motors=[motors['M1'], motors['M3']],
-            group_phase_difference=0,
-            direction=1
-        )
-        group2 = MotorGroup(
-            motors=[motors['M2'], motors['M4']],
-            group_phase_difference=180,
-            direction=-1
-        )
+def configure_motor_groups(direction, motors, mode):
+    if mode == 'normal':
+        if direction == 'forward':
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M3']],
+                group_phase_difference=0,
+                direction=1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M1'], motors['M4']],
+                group_phase_difference=180,
+                direction=1
+            )
+        elif direction == 'backward':  # New backward direction
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M3']],
+                group_phase_difference=0,
+                direction=-1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M1'], motors['M4']],
+                group_phase_difference=180,
+                direction=-1
+            )
+        elif direction == 'right':
+            group1 = MotorGroup(
+                motors=[motors['M1'], motors['M3']],
+                group_phase_difference=0,
+                direction=-1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M2'], motors['M4']],
+                group_phase_difference=180,
+                direction=1
+            )
+        elif direction == 'left':  # New left direction
+            group1 = MotorGroup(
+                motors=[motors['M1'], motors['M3']],
+                group_phase_difference=0,
+                direction=1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M2'], motors['M4']],
+                group_phase_difference=180,
+                direction=-1
+            )
+        else:
+            raise ValueError("Invalid direction")
+    elif mode == 'gallop':
+        # In gallop mode, M4 and M3 are synced with 180-degree phase difference to M2 and M1
+        if direction == 'forward':
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M1']],
+                group_phase_difference=0,
+                direction=1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M3'], motors['M4']],
+                group_phase_difference=180,
+                direction=1
+            )
+        elif direction == 'backward':
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M1']],
+                group_phase_difference=0,
+                direction=-1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M3'], motors['M4']],
+                group_phase_difference=180,
+                direction=-1
+            )
+        elif direction == 'right':
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M1']],
+                group_phase_difference=0,
+                direction=1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M3'], motors['M4']],
+                group_phase_difference=180,
+                direction=-1
+            )
+        elif direction == 'left':
+            group1 = MotorGroup(
+                motors=[motors['M2'], motors['M1']],
+                group_phase_difference=0,
+                direction=-1
+            )
+            group2 = MotorGroup(
+                motors=[motors['M3'], motors['M4']],
+                group_phase_difference=180,
+                direction=1
+            )
+        else:
+            raise ValueError("Invalid direction")
     else:
-        raise ValueError("Invalid direction")
+        raise ValueError("Invalid mode")
     return [group1, group2]
 
-def main(stdscr):
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Motor Control System')
+    parser.add_argument('--mode', choices=['normal', 'gallop'], default='normal',
+                        help='Operating mode of the motor control system.')
+    args = parser.parse_args()
+    return args
+
+def main(stdscr, args):
     curses.cbreak()
     curses.noecho()
     stdscr.nodelay(True)
@@ -309,7 +368,7 @@ def main(stdscr):
             stdscr.clrtoeol()
 
             if current_direction != 'stable':
-                motor_groups = configure_motor_groups(current_direction, motors)
+                motor_groups = configure_motor_groups(current_direction, motors, args.mode)
                 group1, group2 = motor_groups
 
                 base_position = generate_sawtooth_position(start_time)
@@ -339,7 +398,7 @@ def main(stdscr):
             phase_diff_m2_m4 = min(phase_diff_m2_m4, MAX_ANGLE - phase_diff_m2_m4)
 
             status_lines = [
-                f"Mode: {current_direction.capitalize()}",
+                f"Mode: {current_direction.capitalize()}, Operating Mode: {args.mode}",
                 f"M1: {m1_pos:.1f}°, M3: {m3_pos:.1f}° | Phase M1-M3: {phase_diff_m1_m3:.1f}°",
                 f"M2: {m2_pos:.1f}°, M4: {m4_pos:.1f}° | Phase M2-M4: {phase_diff_m2_m4:.1f}°"
             ]
@@ -371,4 +430,5 @@ def main(stdscr):
         curses.endwin()
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    args = parse_arguments()
+    curses.wrapper(lambda stdscr: main(stdscr, args))
