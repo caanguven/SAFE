@@ -196,103 +196,70 @@ class MotorGroup:
         return target_positions
 
 def configure_motor_groups(direction, motors, mode):
-    if mode == 'normal':
-        if direction == 'forward':
-            group1 = MotorGroup(
-                motors=[motors['M2'], motors['M3']],
-                group_phase_difference=0,
-                direction=1
-            )
-            group2 = MotorGroup(
-                motors=[motors['M1'], motors['M4']],
-                group_phase_difference=180,
-                direction=1
-            )
-        elif direction == 'backward':  # New backward direction
-            group1 = MotorGroup(
-                motors=[motors['M2'], motors['M3']],
-                group_phase_difference=0,
-                direction=-1
-            )
-            group2 = MotorGroup(
-                motors=[motors['M1'], motors['M4']],
-                group_phase_difference=180,
-                direction=-1
-            )
-        elif direction == 'right':
-            group1 = MotorGroup(
-                motors=[motors['M1'], motors['M3']],
-                group_phase_difference=0,
-                direction=-1
-            )
-            group2 = MotorGroup(
-                motors=[motors['M2'], motors['M4']],
-                group_phase_difference=180,
-                direction=1
-            )
-        elif direction == 'left':  # New left direction
-            group1 = MotorGroup(
-                motors=[motors['M1'], motors['M3']],
-                group_phase_difference=0,
-                direction=1
-            )
-            group2 = MotorGroup(
-                motors=[motors['M2'], motors['M4']],
-                group_phase_difference=180,
-                direction=-1
-            )
-        else:
-            raise ValueError("Invalid direction")
-    elif mode == 'gallop':
+    if mode == 'gallop' and direction in ['forward', 'backward']:
         # In gallop mode, M4 and M3 are synced with 180-degree phase difference to M2 and M1
+        group1 = MotorGroup(
+            motors=[motors['M2'], motors['M1']],
+            group_phase_difference=0,
+            direction=1 if direction == 'forward' else -1
+        )
+        group2 = MotorGroup(
+            motors=[motors['M4'], motors['M3']],
+            group_phase_difference=180,
+            direction=1 if direction == 'forward' else -1
+        )
+    else:
+        # Normal mode or turning commands remain unchanged
         if direction == 'forward':
             group1 = MotorGroup(
-                motors=[motors['M2'], motors['M1']],
+                motors=[motors['M2'], motors['M3']],
                 group_phase_difference=0,
                 direction=1
             )
             group2 = MotorGroup(
-                motors=[motors['M3'], motors['M4']],
+                motors=[motors['M1'], motors['M4']],
                 group_phase_difference=180,
                 direction=1
             )
         elif direction == 'backward':
             group1 = MotorGroup(
-                motors=[motors['M2'], motors['M1']],
+                motors=[motors['M2'], motors['M3']],
                 group_phase_difference=0,
                 direction=-1
             )
             group2 = MotorGroup(
-                motors=[motors['M3'], motors['M4']],
+                motors=[motors['M1'], motors['M4']],
                 group_phase_difference=180,
                 direction=-1
             )
         elif direction == 'right':
             group1 = MotorGroup(
-                motors=[motors['M2'], motors['M1']],
+                motors=[motors['M1'], motors['M3']],
                 group_phase_difference=0,
-                direction=1
+                direction=-1
             )
             group2 = MotorGroup(
-                motors=[motors['M3'], motors['M4']],
+                motors=[motors['M2'], motors['M4']],
                 group_phase_difference=180,
-                direction=-1
+                direction=1
             )
         elif direction == 'left':
             group1 = MotorGroup(
-                motors=[motors['M2'], motors['M1']],
+                motors=[motors['M1'], motors['M3']],
                 group_phase_difference=0,
-                direction=-1
-            )
-            group2 = MotorGroup(
-                motors=[motors['M3'], motors['M4']],
-                group_phase_difference=180,
                 direction=1
             )
+            group2 = MotorGroup(
+                motors=[motors['M2'], motors['M4']],
+                group_phase_difference=180,
+                direction=-1
+            )
+        elif direction == 'stable':
+            # No movement
+            group1 = MotorGroup(motors=[], group_phase_difference=0, direction=1)
+            group2 = MotorGroup(motors=[], group_phase_difference=0, direction=1)
         else:
             raise ValueError("Invalid direction")
-    else:
-        raise ValueError("Invalid mode")
     return [group1, group2]
 
 def parse_arguments():
@@ -310,13 +277,13 @@ def main(stdscr, args):
 
     # Initialize motors
     motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor1_pwm,
-                            MOTOR1_ADC_CHANNEL, encoder_flipped=False)
+                             MOTOR1_ADC_CHANNEL, encoder_flipped=False)
     motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
-                            MOTOR2_ADC_CHANNEL, encoder_flipped=True)
+                             MOTOR2_ADC_CHANNEL, encoder_flipped=True)
     motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor3_pwm,
-                            MOTOR3_ADC_CHANNEL, encoder_flipped=False)
+                             MOTOR3_ADC_CHANNEL, encoder_flipped=False)
     motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor4_pwm,
-                            MOTOR4_ADC_CHANNEL, encoder_flipped=True)
+                             MOTOR4_ADC_CHANNEL, encoder_flipped=True)
 
     motors = {
         'M1': motor1,
@@ -398,7 +365,8 @@ def main(stdscr, args):
             phase_diff_m2_m4 = min(phase_diff_m2_m4, MAX_ANGLE - phase_diff_m2_m4)
 
             status_lines = [
-                f"Mode: {current_direction.capitalize()}, Operating Mode: {args.mode}",
+                f"Operating Mode: {args.mode.capitalize()}",
+                f"Mode: {current_direction.capitalize()}",
                 f"M1: {m1_pos:.1f}°, M3: {m3_pos:.1f}° | Phase M1-M3: {phase_diff_m1_m3:.1f}°",
                 f"M2: {m2_pos:.1f}°, M4: {m4_pos:.1f}° | Phase M2-M4: {phase_diff_m2_m4:.1f}°"
             ]
