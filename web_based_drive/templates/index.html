@@ -9,6 +9,7 @@
         body {
             font-family: Arial, sans-serif;
             text-align: center;
+            background-color: #f2f2f2;
         }
         .controls {
             margin: 20px;
@@ -25,17 +26,24 @@
         .status {
             margin: 20px;
         }
+        .instructions {
+            margin: 20px;
+            font-size: 18px;
+        }
     </style>
 </head>
 <body>
     <h1>Motor Control System</h1>
 
-    <div class="controls">
-        <button onclick="sendDirection('forward')">Forward</button><br>
-        <button onclick="sendDirection('left')">Left</button>
-        <button onclick="sendDirection('stop')">Stop</button>
-        <button onclick="sendDirection('right')">Right</button><br>
-        <button onclick="sendDirection('backward')">Backward</button>
+    <div class="instructions">
+        <p>Use the arrow keys on your keyboard to control the robot:</p>
+        <ul style="list-style: none;">
+            <li><strong>Up Arrow:</strong> Forward</li>
+            <li><strong>Down Arrow:</strong> Backward</li>
+            <li><strong>Left Arrow:</strong> Turn Left</li>
+            <li><strong>Right Arrow:</strong> Turn Right</li>
+            <li><strong>Spacebar:</strong> Stop</li>
+        </ul>
     </div>
 
     <div class="mode-select">
@@ -48,13 +56,31 @@
 
     <div class="status">
         <h2>Status</h2>
-        <p id="mode-status">Mode: Normal</p>
-        <p id="direction-status">Direction: Stop</p>
+        <p id="mode-status">Operating Mode: Normal</p>
+        <p id="direction-status">Direction: Stable</p>
         <p id="motor-status">M1: 0°, M2: 0°, M3: 0°, M4: 0°</p>
         <p id="phase-status">Phase Differences - M1-M3: 0°, M2-M4: 0°</p>
     </div>
 
     <script>
+        // Map keyboard keys to directions
+        const keyDirectionMap = {
+            'ArrowUp': 'forward',
+            'ArrowDown': 'backward',
+            'ArrowLeft': 'left',
+            'ArrowRight': 'right',
+            ' ': 'stable'  // Spacebar
+        };
+
+        // Listen for keydown events
+        document.addEventListener('keydown', function(event) {
+            const direction = keyDirectionMap[event.key];
+            if (direction) {
+                event.preventDefault(); // Prevent default scrolling behavior
+                sendDirection(direction);
+            }
+        });
+
         function sendDirection(direction) {
             fetch('/control', {
                 method: 'POST',
@@ -65,7 +91,11 @@
             })
             .then(response => response.json())
             .then(data => {
-                document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
+                if (data.status === 'success') {
+                    document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
+                } else {
+                    console.error('Error:', data.message);
+                }
             })
             .catch((error) => {
                 console.error('Error:', error);
@@ -83,7 +113,11 @@
             })
             .then(response => response.json())
             .then(data => {
-                document.getElementById('mode-status').innerText = 'Mode: ' + capitalizeFirstLetter(data.mode);
+                if (data.status === 'success') {
+                    document.getElementById('mode-status').innerText = 'Operating Mode: ' + capitalizeFirstLetter(data.mode);
+                } else {
+                    console.error('Error:', data.message);
+                }
             })
             .catch((error) => {
                 console.error('Error:', error);
@@ -98,16 +132,20 @@
             fetch('/status')
             .then(response => response.json())
             .then(data => {
-                document.getElementById('mode-status').innerText = 'Operating Mode: ' + capitalizeFirstLetter(data.mode);
-                document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
-                document.getElementById('motor-status').innerText = 
-                    'M1: ' + data.motors.M1.toFixed(1) + '°, ' +
-                    'M2: ' + data.motors.M2.toFixed(1) + '°, ' +
-                    'M3: ' + data.motors.M3.toFixed(1) + '°, ' +
-                    'M4: ' + data.motors.M4.toFixed(1) + '°';
-                document.getElementById('phase-status').innerText = 
-                    'Phase Differences - M1-M3: ' + data.phase_diff['M1-M3'].toFixed(1) + '°, ' +
-                    'M2-M4: ' + data.phase_diff['M2-M4'].toFixed(1) + '°';
+                if (data.status !== 'error') {
+                    document.getElementById('mode-status').innerText = 'Operating Mode: ' + capitalizeFirstLetter(data.mode);
+                    document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
+                    document.getElementById('motor-status').innerText = 
+                        'M1: ' + data.motors.M1.toFixed(1) + '°, ' +
+                        'M2: ' + data.motors.M2.toFixed(1) + '°, ' +
+                        'M3: ' + data.motors.M3.toFixed(1) + '°, ' +
+                        'M4: ' + data.motors.M4.toFixed(1) + '°';
+                    document.getElementById('phase-status').innerText = 
+                        'Phase Differences - M1-M3: ' + data.phase_diff['M1-M3'].toFixed(1) + '°, ' +
+                        'M2-M4: ' + data.phase_diff['M2-M4'].toFixed(1) + '°';
+                } else {
+                    console.error('Error:', data.message);
+                }
             })
             .catch((error) => {
                 console.error('Error:', error);
