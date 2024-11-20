@@ -72,12 +72,34 @@
             ' ': 'stable'  // Spacebar
         };
 
+        // Track currently pressed keys to handle multiple key presses
+        const pressedKeys = new Set();
+
         // Listen for keydown events
         document.addEventListener('keydown', function(event) {
             const direction = keyDirectionMap[event.key];
-            if (direction) {
+            if (direction && !pressedKeys.has(event.key)) {
                 event.preventDefault(); // Prevent default scrolling behavior
+                pressedKeys.add(event.key);
                 sendDirection(direction);
+            }
+        });
+
+        // Listen for keyup events
+        document.addEventListener('keyup', function(event) {
+            const direction = keyDirectionMap[event.key];
+            if (direction) {
+                event.preventDefault();
+                pressedKeys.delete(event.key);
+                sendDirection('stable');
+            }
+        });
+
+        // Optional: Handle window blur (when the user switches tabs or windows)
+        window.addEventListener('blur', function() {
+            if (pressedKeys.size > 0) {
+                pressedKeys.clear();
+                sendDirection('stable');
             }
         });
 
