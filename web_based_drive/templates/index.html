@@ -1,0 +1,121 @@
+<!-- templates/index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Motor Control System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        .controls {
+            margin: 20px;
+        }
+        .controls button {
+            width: 100px;
+            height: 50px;
+            margin: 10px;
+            font-size: 16px;
+        }
+        .mode-select {
+            margin: 20px;
+        }
+        .status {
+            margin: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Motor Control System</h1>
+
+    <div class="controls">
+        <button onclick="sendDirection('forward')">Forward</button><br>
+        <button onclick="sendDirection('left')">Left</button>
+        <button onclick="sendDirection('stop')">Stop</button>
+        <button onclick="sendDirection('right')">Right</button><br>
+        <button onclick="sendDirection('backward')">Backward</button>
+    </div>
+
+    <div class="mode-select">
+        <label for="mode">Operating Mode:</label>
+        <select id="mode" onchange="changeMode()">
+            <option value="normal" selected>Normal</option>
+            <option value="gallop">Gallop</option>
+        </select>
+    </div>
+
+    <div class="status">
+        <h2>Status</h2>
+        <p id="mode-status">Mode: Normal</p>
+        <p id="direction-status">Direction: Stop</p>
+        <p id="motor-status">M1: 0°, M2: 0°, M3: 0°, M4: 0°</p>
+        <p id="phase-status">Phase Differences - M1-M3: 0°, M2-M4: 0°</p>
+    </div>
+
+    <script>
+        function sendDirection(direction) {
+            fetch('/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 'direction': direction }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+
+        function changeMode() {
+            var mode = document.getElementById('mode').value;
+            fetch('/mode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 'mode': mode }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('mode-status').innerText = 'Mode: ' + capitalizeFirstLetter(data.mode);
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+
+        function capitalizeFirstLetter(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
+        }
+
+        function updateStatus() {
+            fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('mode-status').innerText = 'Operating Mode: ' + capitalizeFirstLetter(data.mode);
+                document.getElementById('direction-status').innerText = 'Direction: ' + capitalizeFirstLetter(data.direction);
+                document.getElementById('motor-status').innerText = 
+                    'M1: ' + data.motors.M1.toFixed(1) + '°, ' +
+                    'M2: ' + data.motors.M2.toFixed(1) + '°, ' +
+                    'M3: ' + data.motors.M3.toFixed(1) + '°, ' +
+                    'M4: ' + data.motors.M4.toFixed(1) + '°';
+                document.getElementById('phase-status').innerText = 
+                    'Phase Differences - M1-M3: ' + data.phase_diff['M1-M3'].toFixed(1) + '°, ' +
+                    'M2-M4: ' + data.phase_diff['M2-M4'].toFixed(1) + '°';
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+
+        // Update status every second
+        setInterval(updateStatus, 1000);
+    </script>
+</body>
+</html>
