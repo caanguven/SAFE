@@ -1,5 +1,3 @@
-# motor_control.py
-
 import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
@@ -13,7 +11,7 @@ SPI_DEVICE = 0
 ADC_MAX = 1023
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 3  # Period in seconds
+SAWTOOTH_PERIOD = 5  # Period in seconds
 
 # GPIO Pins for Motor 3
 MOTOR3_IN1 = 11
@@ -28,9 +26,8 @@ class SpikeFilter:
         self.name = name
 
     def filter(self, new_value):
-        # Adjusted spike filter range for tighter filtering
         if self.filter_active:
-            if 200 <= new_value <= 800:
+            if 150 <= new_value <= 700:
                 logging.debug(f"{self.name} SpikeFilter: Value {new_value} within spike filter range, filtering out.")
                 return None
             else:
@@ -39,7 +36,7 @@ class SpikeFilter:
                 logging.debug(f"{self.name} SpikeFilter: Spike deactivated with value {new_value}")
                 return new_value
         else:
-            if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 250:
+            if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
                 self.filter_active = True
                 logging.debug(f"{self.name} SpikeFilter: Spike detected with value {new_value}")
                 return None
@@ -61,7 +58,6 @@ class PIDController:
         self.integral = 0
         self.last_time = time.time()
         self.name = name
-        self.integral_max = 100  # Anti-windup limit
 
     def compute(self, error):
         current_time = time.time()
@@ -71,15 +67,10 @@ class PIDController:
 
         proportional = self.Kp * error
         self.integral += error * delta_time
-        # Clamp integral to prevent windup
-        self.integral = max(min(self.integral, self.integral_max), -self.integral_max)
         integral = self.Ki * self.integral
         derivative = self.Kd * (error - self.previous_error) / delta_time
 
         control_signal = proportional + integral + derivative
-        # Clamp control_signal to prevent excessive values
-        control_signal = max(min(control_signal, 100), -100)  # Assuming max control signal is 100%
-
         self.previous_error = error
         self.last_time = current_time
 
@@ -107,7 +98,6 @@ class MotorController:
         self.encoder_flipped = encoder_flipped
         self.spike_filter = SpikeFilter(name)
         self.use_spike_filter = True  # Flag to enable/disable spike filter
-        self.last_speed = 0  # To implement rate limiting
 
     def read_position(self, mcp):
         raw_value = mcp.read_adc(self.adc_channel)
@@ -151,59 +141,22 @@ class MotorController:
             elif error < -165:
                 error += 330
 
-            # Check if in Dead Zone (Spike Filter Active)
-            in_dead_zone = self.use_spike_filter and self.spike_filter.filter_active
+            control_signal = self.pid.compute(error)
 
-            if in_dead_zone:
-                # Dead Zone Handling: Apply Rate Limiting and Signal Clamping
-                target_speed = 50  # 50% of maximum speed
-                max_change = 10    # Maximum speed change per loop (percentage)
+            if abs(error) <= 2:
+                self.stop_motor()
+                logging.info(f"{self.name} reached target. Stopping motor.")
+                return True
 
-                delta_speed = target_speed - self.last_speed
+            direction = 'forward' if control_signal > 0 else 'backward'
+            self.set_motor_direction(direction)
 
-                if delta_speed > max_change:
-                    speed = self.last_speed + max_change
-                elif delta_speed < -max_change:
-                    speed = self.last_speed - max_change
-                else:
-                    speed = target_speed
-
-                # Clamp speed to 0-50%
-                speed = max(min(speed, 50), 0)
-
-                self.last_speed = speed
-
-                self.pwm.ChangeDutyCycle(speed)
-                logging.info(f"{self.name} | Dead Zone | Speed: {speed:.2f}%")
-                return False  # Continue running
-            else:
-                # Normal PID Control with Rate Limiting
-                control_signal = self.pid.compute(error)
-
-                # Determine direction based on control signal
-                direction = 'forward' if control_signal > 0 else 'backward'
-                self.set_motor_direction(direction)
-
-                # Map control_signal to speed percentage between 0% and 100%
-                speed = min(100, abs(control_signal))
-
-                # Rate limiting: max change per loop
-                max_change = 10  # max speed change per loop in percentage
-                delta_speed = speed - self.last_speed
-                if delta_speed > max_change:
-                    speed = self.last_speed + max_change
-                elif delta_speed < -max_change:
-                    speed = self.last_speed - max_change
-
-                # Clamp speed to 0-100%
-                speed = max(min(speed, 100), 0)
-
-                self.last_speed = speed
-
-                self.pwm.ChangeDutyCycle(speed)
-                logging.info(f"{self.name} | Raw: {mcp.read_adc(self.adc_channel)} | Angle: {current_position:.2f}° | "
-                             f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
-                return False  # Continue running
+            # Map control_signal to speed percentage between 30% and 100%
+            speed = min(100, max(30, abs(control_signal)))
+            self.pwm.ChangeDutyCycle(speed)
+            logging.info(f"{self.name} | Raw: {mcp.read_adc(self.adc_channel)} | Angle: {current_position:.2f}° | "
+                         f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
+            return False
         except Exception as e:
             logging.error(f"{self.name} MotorController: Error during move_to_position: {e}")
             self.reset()
@@ -396,4 +349,5 @@ def main():
             motor_control_system.stop()
 
 if __name__ == "__main__":
-    main()
+    main() 
+

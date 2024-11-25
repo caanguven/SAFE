@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 
 def parse_log_file(file_path):
     """
@@ -22,6 +23,10 @@ def parse_log_file(file_path):
     )
 
     data = []
+
+    if not os.path.exists(file_path):
+        print(f"File not found: {file_path}")
+        return pd.DataFrame()  # Return empty DataFrame
 
     with open(file_path, 'r') as f:
         for line in f:
@@ -62,76 +67,89 @@ def parse_log_file(file_path):
 
 def plot_motor_data(df_with_filter, df_without_filter):
     """
-    Plots the four parameters from both DataFrames on separate subplots.
+    Plots the four parameters from both DataFrames on separate figures.
 
     Args:
         df_with_filter (pd.DataFrame): DataFrame with spike filter active.
         df_without_filter (pd.DataFrame): DataFrame with spike filter inactive.
     """
-    # Create a 2x2 subplot layout
-    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('Motor 3 Control Parameters: With vs Without Spike Filter', fontsize=16)
-
-    # Define plot configurations
-    plot_configs = [
+    # Define plot configurations for each parameter
+    plot_params = [
         {
-            'ax': axs[0, 0],
             'title': 'Potentiometer Raw Values',
             'y_label': 'Raw ADC Value',
-            'with_label': 'With Spike Filter',
-            'without_label': 'Without Spike Filter',
-            'with_color': 'blue',
-            'without_color': 'orange',
             'with_data': df_with_filter['raw'],
-            'without_data': df_without_filter['raw']
+            'without_data': df_without_filter['raw'],
+            'with_color': 'blue',
+            'without_color': 'orange'
         },
         {
-            'ax': axs[0, 1],
             'title': 'Current Angle (Degrees)',
             'y_label': 'Angle (°)',
-            'with_label': 'With Spike Filter',
-            'without_label': 'Without Spike Filter',
-            'with_color': 'green',
-            'without_color': 'red',
             'with_data': df_with_filter['angle'],
-            'without_data': df_without_filter['angle']
+            'without_data': df_without_filter['angle'],
+            'with_color': 'green',
+            'without_color': 'red'
         },
         {
-            'ax': axs[1, 0],
             'title': 'Error to Target (Degrees)',
             'y_label': 'Error (°)',
-            'with_label': 'With Spike Filter',
-            'without_label': 'Without Spike Filter',
-            'with_color': 'purple',
-            'without_color': 'brown',
             'with_data': df_with_filter['error'],
-            'without_data': df_without_filter['error']
+            'without_data': df_without_filter['error'],
+            'with_color': 'purple',
+            'without_color': 'brown'
         },
         {
-            'ax': axs[1, 1],
             'title': 'Control Signal Percentage',
             'y_label': 'Control Signal (%)',
-            'with_label': 'With Spike Filter',
-            'without_label': 'Without Spike Filter',
-            'with_color': 'cyan',
-            'without_color': 'magenta',
             'with_data': df_with_filter['control_signal'],
-            'without_data': df_without_filter['control_signal']
+            'without_data': df_without_filter['control_signal'],
+            'with_color': 'cyan',
+            'without_color': 'magenta'
         }
     ]
 
-    for config in plot_configs:
-        ax = config['ax']
-        ax.plot(df_with_filter['relative_time'], config['with_data'], label=config['with_label'], color=config['with_color'])
-        ax.plot(df_without_filter['relative_time'], config['without_data'], label=config['without_label'], color=config['without_color'])
-        ax.set_title(config['title'])
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel(config['y_label'])
-        ax.legend()
-        ax.grid(True)
+    # Create two separate figures
+    figures = {
+        'With Spike Filter': plt.figure(figsize=(15, 10)),
+        'Without Spike Filter': plt.figure(figsize=(15, 10))
+    }
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('motor3_control_plot.png')
+    # Assign titles to figures
+    figures['With Spike Filter'].suptitle('Motor 3 Control Parameters: With Spike Filter', fontsize=16)
+    figures['Without Spike Filter'].suptitle('Motor 3 Control Parameters: Without Spike Filter', fontsize=16)
+
+    # Plot for "With Spike Filter"
+    for idx, param in enumerate(plot_params, 1):
+        ax = figures['With Spike Filter'].add_subplot(2, 2, idx)
+        ax.plot(df_with_filter['relative_time'], param['with_data'], label='With Spike Filter', color=param['with_color'])
+        ax.set_title(param['title'])
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(param['y_label'])
+        ax.grid(True)
+        if idx == 1:
+            ax.legend()
+
+    # Plot for "Without Spike Filter"
+    for idx, param in enumerate(plot_params, 1):
+        ax = figures['Without Spike Filter'].add_subplot(2, 2, idx)
+        ax.plot(df_without_filter['relative_time'], param['without_data'], label='Without Spike Filter', color=param['without_color'])
+        ax.set_title(param['title'])
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(param['y_label'])
+        ax.grid(True)
+        if idx == 1:
+            ax.legend()
+
+    # Adjust layout for both figures
+    figures['With Spike Filter'].tight_layout(rect=[0, 0.03, 1, 0.95])
+    figures['Without Spike Filter'].tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    # Save the figures
+    figures['With Spike Filter'].savefig('motor3_with_spike_filter_plot.png')
+    figures['Without Spike Filter'].savefig('motor3_without_spike_filter_plot.png')
+
+    # Display the figures
     plt.show()
 
 def main():
@@ -155,7 +173,7 @@ def main():
     # Plot the data
     print("Plotting data...")
     plot_motor_data(df_with_filter, df_without_filter)
-    print("Plot saved as 'motor3_control_plot.png' and displayed.")
+    print("Plots saved as 'motor3_with_spike_filter_plot.png' and 'motor3_without_spike_filter_plot.png', and displayed.")
 
 if __name__ == "__main__":
     main()
