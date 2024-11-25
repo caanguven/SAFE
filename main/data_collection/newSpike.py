@@ -26,8 +26,9 @@ MOTOR3_ADC_CHANNEL = 2
 # ==========================
 # Constants for Control Signal Limiting
 # ==========================
-MAX_CONTROL_SIGNAL_DEAD_ZONE = 60  # Maximum control signal percentage in dead zone
-CONTROL_SIGNAL_INCREMENT_LIMIT = 5  # Max allowed change per control loop iteration
+MAX_CONTROL_SIGNAL_DEAD_ZONE = 50       # Maximum control signal percentage in dead zone
+CONTROL_SIGNAL_INCREMENT_LIMIT = 10     # Max allowed change per control loop iteration in dead zone
+MAX_CONTROL_SIGNAL_CHANGE = 10          # General max allowed change per control loop iteration
 
 class SpikeFilter:
     def __init__(self, name):
@@ -156,9 +157,21 @@ class MotorController:
 
             control_signal = self.pid.compute(error)
 
-            # Limit control signal when in dead zone (SpikeFilter active)
+            # ==========================
+            # General Control Signal Rate Limiting
+            # ==========================
+            if control_signal > self.previous_control_signal + MAX_CONTROL_SIGNAL_CHANGE:
+                control_signal = self.previous_control_signal + MAX_CONTROL_SIGNAL_CHANGE
+                logging.debug(f"{self.name} Control Signal general limit applied: {control_signal:.2f}%")
+            elif control_signal < self.previous_control_signal - MAX_CONTROL_SIGNAL_CHANGE:
+                control_signal = self.previous_control_signal - MAX_CONTROL_SIGNAL_CHANGE
+                logging.debug(f"{self.name} Control Signal general limit applied: {control_signal:.2f}%")
+
+            # ==========================
+            # Dead Zone Specific Control Signal Limiting
+            # ==========================
             if self.spike_filter.filter_active:
-                # Calculate the allowed increment/decrement
+                # Calculate the allowed increment/decrement within dead zone
                 allowed_increment = CONTROL_SIGNAL_INCREMENT_LIMIT
                 if control_signal > self.previous_control_signal + allowed_increment:
                     control_signal = self.previous_control_signal + allowed_increment
