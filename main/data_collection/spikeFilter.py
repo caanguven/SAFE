@@ -29,24 +29,6 @@ MOTOR1_IN2 = 26
 MOTOR1_SPD = 18
 MOTOR1_ADC_CHANNEL = 0
 
-# GPIO Pins for Motor 2
-MOTOR2_IN1 = 29
-MOTOR2_IN2 = 22
-MOTOR2_SPD = 31
-MOTOR2_ADC_CHANNEL = 1
-
-# GPIO Pins for Motor 3
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
-MOTOR3_ADC_CHANNEL = 2
-
-# GPIO Pins for Motor 4
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
-MOTOR4_ADC_CHANNEL = 3
-
 class SpikeFilter:
     def __init__(self, name):
         self.filter_active = False
@@ -202,21 +184,6 @@ class MotorController:
         self.spike_filter.reset()
         logging.info(f"{self.name} MotorController: Reset complete.")
 
-class MotorGroup:
-    def __init__(self, motors, group_phase_difference=0, direction=1):
-        self.motors = motors
-        self.group_phase_difference = group_phase_difference
-        self.direction = direction
-
-    def generate_target_positions(self, base_position):
-        target_positions = []
-        for motor in self.motors:
-            position = (base_position + self.group_phase_difference) % MAX_ANGLE
-            if self.direction == -1:
-                position = (MAX_ANGLE - position) % MAX_ANGLE
-            target_positions.append(position)
-        return target_positions
-
 class MotorControlSystem:
     def __init__(self, mode='normal', run_duration=30, spike_filter_duration=15):
         self.mode = mode  # 'normal' or 'gallop'
@@ -229,44 +196,20 @@ class MotorControlSystem:
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
         GPIO.setup(MOTOR1_SPD, GPIO.OUT)
-        GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-        GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-        GPIO.setup(MOTOR2_SPD, GPIO.OUT)
-        GPIO.setup(MOTOR3_IN1, GPIO.OUT)
-        GPIO.setup(MOTOR3_IN2, GPIO.OUT)
-        GPIO.setup(MOTOR3_SPD, GPIO.OUT)
-        GPIO.setup(MOTOR4_IN1, GPIO.OUT)
-        GPIO.setup(MOTOR4_IN2, GPIO.OUT)
-        GPIO.setup(MOTOR4_SPD, GPIO.OUT)
 
         # Set up PWM for motor speed control
         self.motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
         self.motor1_pwm.start(0)
-        self.motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
-        self.motor2_pwm.start(0)
-        self.motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
-        self.motor3_pwm.start(0)
-        self.motor4_pwm = GPIO.PWM(MOTOR4_SPD, 1000)
-        self.motor4_pwm.start(0)
 
         # Set up MCP3008
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-        # Initialize motors
+        # Initialize Motor 1
         self.motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, self.motor1_pwm,
                                       MOTOR1_ADC_CHANNEL, encoder_flipped=False)
-        self.motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, self.motor2_pwm,
-                                      MOTOR2_ADC_CHANNEL, encoder_flipped=True)
-        self.motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, self.motor3_pwm,
-                                      MOTOR3_ADC_CHANNEL, encoder_flipped=False)
-        self.motor4 = MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, self.motor4_pwm,
-                                      MOTOR4_ADC_CHANNEL, encoder_flipped=True)
 
         self.motors = {
-            'M1': self.motor1,
-            'M2': self.motor2,
-            'M3': self.motor3,
-            'M4': self.motor4
+            'M1': self.motor1
         }
 
         self.start_time = time.time()
@@ -284,9 +227,8 @@ class MotorControlSystem:
             self.current_direction = direction
             logging.info(f"Direction set to '{direction}'.")
             if direction == 'stable':
-                logging.info("Resetting all motors to 'stable' state.")
-                for motor in self.motors.values():
-                    motor.reset()
+                logging.info("Resetting Motor 1 to 'stable' state.")
+                self.motors['M1'].reset()
 
     def set_mode(self, mode):
         with self.lock:
@@ -305,23 +247,6 @@ class MotorControlSystem:
                 pos = motor.read_position(self.mcp)
                 status['motors'][name] = pos
 
-            # Calculate phase differences
-            m1_pos = status['motors']['M1']
-            m2_pos = status['motors']['M2']
-            m3_pos = status['motors']['M3']
-            m4_pos = status['motors']['M4']
-
-            phase_diff_m1_m3 = abs(m1_pos - m3_pos)
-            phase_diff_m2_m4 = abs(m2_pos - m4_pos)
-
-            phase_diff_m1_m3 = min(phase_diff_m1_m3, MAX_ANGLE - phase_diff_m1_m3)
-            phase_diff_m2_m4 = min(phase_diff_m2_m4, MAX_ANGLE - phase_diff_m2_m4)
-
-            status['phase_diff'] = {
-                'M1-M3': phase_diff_m1_m3,
-                'M2-M4': phase_diff_m2_m4
-            }
-
             return status
 
     def generate_sawtooth_position(self):
@@ -329,75 +254,6 @@ class MotorControlSystem:
         position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
         position = (position_in_cycle * MAX_ANGLE) % MAX_ANGLE
         return position
-
-    def configure_motor_groups(self, direction, mode):
-        if mode == 'gallop' and direction in ['forward', 'backward']:
-            # In gallop mode, M4 and M3 are synced with 180-degree phase difference to M2 and M1
-            group1 = MotorGroup(
-                motors=[self.motors['M2'], self.motors['M1']],
-                group_phase_difference=0,
-                direction=1 if direction == 'forward' else -1
-            )
-            group2 = MotorGroup(
-                motors=[self.motors['M4'], self.motors['M3']],
-                group_phase_difference=180,
-                direction=1 if direction == 'forward' else -1
-            )
-            logging.debug(f"Configured motor groups in 'gallop' mode for direction '{direction}'.")
-        else:
-            # Normal mode or turning commands remain unchanged
-            if direction == 'forward':
-                group1 = MotorGroup(
-                    motors=[self.motors['M2'], self.motors['M3']],
-                    group_phase_difference=0,
-                    direction=1
-                )
-                group2 = MotorGroup(
-                    motors=[self.motors['M1'], self.motors['M4']],
-                    group_phase_difference=180,
-                    direction=1
-                )
-            elif direction == 'backward':
-                group1 = MotorGroup(
-                    motors=[self.motors['M2'], self.motors['M3']],
-                    group_phase_difference=0,
-                    direction=-1
-                )
-                group2 = MotorGroup(
-                    motors=[self.motors['M1'], self.motors['M4']],
-                    group_phase_difference=180,
-                    direction=-1
-                )
-            elif direction == 'right':
-                group1 = MotorGroup(
-                    motors=[self.motors['M1'], self.motors['M3']],
-                    group_phase_difference=0,
-                    direction=-1
-                )
-                group2 = MotorGroup(
-                    motors=[self.motors['M2'], self.motors['M4']],
-                    group_phase_difference=180,
-                    direction=1
-                )
-            elif direction == 'left':
-                group1 = MotorGroup(
-                    motors=[self.motors['M1'], self.motors['M3']],
-                    group_phase_difference=0,
-                    direction=1
-                )
-                group2 = MotorGroup(
-                    motors=[self.motors['M2'], self.motors['M4']],
-                    group_phase_difference=180,
-                    direction=-1
-                )
-            elif direction == 'stable':
-                # No movement
-                group1 = MotorGroup(motors=[], group_phase_difference=0, direction=1)
-                group2 = MotorGroup(motors=[], group_phase_difference=0, direction=1)
-            else:
-                raise ValueError("Invalid direction")
-            logging.debug(f"Configured motor groups in 'normal' mode for direction '{direction}'.")
-        return [group1, group2]
 
     def control_loop(self):
         spike_filter_disabled = False
@@ -416,8 +272,8 @@ class MotorControlSystem:
 
             # Stop the system after run_duration seconds
             if elapsed_time >= self.run_duration:
-                logging.info("Run duration completed. Stopping MotorControlSystem.")
-                self.stop()
+                logging.info("Run duration completed. Preparing to stop MotorControlSystem.")
+                self.running = False  # Signal to stop the loop
                 break
 
             with self.lock:
@@ -425,24 +281,19 @@ class MotorControlSystem:
                 mode = self.mode
 
             if direction != 'stable':
-                motor_groups = self.configure_motor_groups(direction, mode)
-                group1, group2 = motor_groups
+                # For single motor, we don't need motor groups
+                motor = self.motors['M1']
 
                 base_position = self.generate_sawtooth_position()
 
-                group1_targets = group1.generate_target_positions(base_position)
-                group2_targets = group2.generate_target_positions(base_position)
+                # For a single motor, target is base_position
+                target = base_position
 
-                for motor, target in zip(group1.motors, group1_targets):
-                    motor.move_to_position(target, self.mcp)
-
-                for motor, target in zip(group2.motors, group2_targets):
-                    motor.move_to_position(target, self.mcp)
+                motor.move_to_position(target, self.mcp)
             else:
-                # Stop all motors
-                for motor in self.motors.values():
-                    motor.stop_motor()
-                logging.debug("All motors stopped (direction: stable).")
+                # Stop Motor 1
+                self.motors['M1'].stop_motor()
+                logging.debug("Motor 1 stopped (direction: stable).")
 
             time.sleep(0.02)  # 20 ms delay
 
@@ -450,13 +301,9 @@ class MotorControlSystem:
         if self.running:
             self.running = False
             self.control_thread.join()
-            for motor in self.motors.values():
-                motor.stop_motor()
+            self.motors['M1'].stop_motor()
 
             self.motor1_pwm.stop()
-            self.motor2_pwm.stop()
-            self.motor3_pwm.stop()
-            self.motor4_pwm.stop()
             GPIO.cleanup()
             logging.info("MotorControlSystem stopped and GPIO cleaned up.")
 
@@ -474,6 +321,9 @@ def main():
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt received. Stopping MotorControlSystem.")
         motor_control_system.stop()
+    finally:
+        if motor_control_system.control_thread.is_alive():
+            motor_control_system.stop()
 
 if __name__ == "__main__":
     main()
