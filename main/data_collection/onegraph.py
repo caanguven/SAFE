@@ -65,9 +65,9 @@ def parse_log_file(file_path):
 
     return df
 
-def plot_motor_data(df_with_filter, df_without_filter):
+def plot_combined_motor_data(df_with_filter, df_without_filter):
     """
-    Plots the four parameters from both DataFrames on separate figures.
+    Plots the four parameters with both 'with filter' and 'without filter' data on the same graphs.
 
     Args:
         df_with_filter (pd.DataFrame): DataFrame with spike filter active.
@@ -109,47 +109,27 @@ def plot_motor_data(df_with_filter, df_without_filter):
         }
     ]
 
-    # Create two separate figures
-    figures = {
-        'With Spike Filter': plt.figure(figsize=(15, 10)),
-        'Without Spike Filter': plt.figure(figsize=(15, 10))
-    }
+    # Create a figure with 2x2 subplots
+    fig, axs = plt.subplots(2, 2, figsize=(18, 12))
+    fig.suptitle('Motor 3 Control Parameters: With vs Without Spike Filter', fontsize=20)
 
-    # Assign titles to figures
-    figures['With Spike Filter'].suptitle('Motor 3 Control Parameters: With Spike Filter', fontsize=16)
-    figures['Without Spike Filter'].suptitle('Motor 3 Control Parameters: Without Spike Filter', fontsize=16)
+    # Flatten the axs array for easy iteration
+    axs = axs.flatten()
 
-    # Plot for "With Spike Filter"
-    for idx, param in enumerate(plot_params, 1):
-        ax = figures['With Spike Filter'].add_subplot(2, 2, idx)
-        ax.plot(df_with_filter['relative_time'], param['with_data'], label='With Spike Filter', color=param['with_color'])
-        ax.set_title(param['title'])
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel(param['y_label'])
+    for idx, param in enumerate(plot_params):
+        ax = axs[idx]
+        ax.plot(df_with_filter['relative_time'], param['with_data'],
+                label='With Spike Filter', color=param['with_color'])
+        ax.plot(df_without_filter['relative_time'], param['without_data'],
+                label='Without Spike Filter', color=param['without_color'], linestyle='--')
+        ax.set_title(param['title'], fontsize=16)
+        ax.set_xlabel('Time (s)', fontsize=14)
+        ax.set_ylabel(param['y_label'], fontsize=14)
+        ax.legend(fontsize=12)
         ax.grid(True)
-        if idx == 1:
-            ax.legend()
 
-    # Plot for "Without Spike Filter"
-    for idx, param in enumerate(plot_params, 1):
-        ax = figures['Without Spike Filter'].add_subplot(2, 2, idx)
-        ax.plot(df_without_filter['relative_time'], param['without_data'], label='Without Spike Filter', color=param['without_color'])
-        ax.set_title(param['title'])
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel(param['y_label'])
-        ax.grid(True)
-        if idx == 1:
-            ax.legend()
-
-    # Adjust layout for both figures
-    figures['With Spike Filter'].tight_layout(rect=[0, 0.03, 1, 0.95])
-    figures['Without Spike Filter'].tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    # Save the figures
-    figures['With Spike Filter'].savefig('motor3_with_spike_filter_plot.png')
-    figures['Without Spike Filter'].savefig('motor3_without_spike_filter_plot.png')
-
-    # Display the figures
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig('motor3_with_and_without_spike_filter_plot.png')
     plt.show()
 
 def main():
@@ -172,8 +152,8 @@ def main():
 
     # Plot the data
     print("Plotting data...")
-    plot_motor_data(df_with_filter, df_without_filter)
-    print("Plots saved as 'motor3_with_spike_filter_plot.png' and 'motor3_without_spike_filter_plot.png', and displayed.")
+    plot_combined_motor_data(df_with_filter, df_without_filter)
+    print("Plot saved as 'motor3_with_and_without_spike_filter_plot.png' and displayed.")
 
 if __name__ == "__main__":
     main()
