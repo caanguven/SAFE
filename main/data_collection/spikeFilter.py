@@ -130,7 +130,7 @@ class MotorController:
             GPIO.output(self.in2, GPIO.HIGH)
             logging.debug(f"{self.name} Direction: Backward")
 
-    def move_to_position(self, target, mcp):
+    def move_to_position(self, target, mcp, log=True):
         try:
             current_position = self.read_position(mcp)
             error = target - current_position
@@ -145,7 +145,8 @@ class MotorController:
 
             if abs(error) <= 2:
                 self.stop_motor()
-                logging.info(f"{self.name} reached target. Stopping motor.")
+                if log:
+                    logging.info(f"{self.name} reached target. Stopping motor.")
                 return True
 
             direction = 'forward' if control_signal > 0 else 'backward'
@@ -154,8 +155,10 @@ class MotorController:
             # Map control_signal to speed percentage between 30% and 100%
             speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
-            logging.info(f"{self.name} | Raw: {mcp.read_adc(self.adc_channel)} | Angle: {current_position:.2f}° | "
-                         f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
+            if log:
+                raw_adc = mcp.read_adc(self.adc_channel)
+                logging.info(f"{self.name} | Raw: {raw_adc} | Angle: {current_position:.2f}° | "
+                             f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
             return False
         except Exception as e:
             logging.error(f"{self.name} MotorController: Error during move_to_position: {e}")
@@ -175,11 +178,14 @@ class MotorController:
         logging.info(f"{self.name} MotorController: Reset complete.")
 
 class MotorControlSystem:
-    def __init__(self, mode='normal', run_duration=30, spike_filter_duration=15):
+    def __init__(self, mode='normal', run_duration=35, spike_filter_duration=15, catch_up_duration=5):
         self.mode = mode  # 'normal' or 'gallop'
         self.current_direction = 'stable'
         self.lock = threading.Lock()
         self.running = True
+        self.initialized = False  # Flag for synchronization
+        self.catch_up_duration = catch_up_duration  # Duration for catch-up phase in seconds
+        self.logging_enabled = False  # Flag to control logging
 
         # Initialize separate loggers for with and without spike filter
         self.logger = logging.getLogger('Motor3Control')
@@ -277,8 +283,25 @@ class MotorControlSystem:
             current_time = time.time()
             elapsed_time = current_time - self.start_time
 
-            # Disable spike filter after spike_filter_duration seconds
-            if elapsed_time >= self.spike_filter_duration and not spike_filter_disabled:
+            # **Synchronization Start: Ensure error is 0 at the beginning**
+            if not self.initialized:
+                with self.lock:
+                    current_position = self.motors['M3'].read_position(self.mcp)
+                    # Calculate t0 to align sawtooth wave with current position
+                    # position = (elapsed_time / T) * MAX_ANGLE => t0 = (position / MAX_ANGLE) * T
+                    t0 = (current_position / MAX_ANGLE) * SAWTOOTH_PERIOD
+                    self.start_time = time.time() - t0
+                    self.initialized = True
+                    self.logger.info(f"Synchronization complete. Start time adjusted with t0={t0:.2f}s to align sawtooth wave with current position={current_position:.2f}°.")
+
+            # **Catch-Up Phase: First 5 seconds**
+            if not self.logging_enabled and elapsed_time >= self.catch_up_duration:
+                self.logging_enabled = True
+                self.logger.info(f"Catch-up phase complete. Logging and recording data now enabled.")
+
+            # Disable spike filter after spike_filter_duration seconds (relative to start_time)
+            # Adjust spike_filter_duration to account for catch_up_duration
+            if elapsed_time >= (self.catch_up_duration + self.spike_filter_duration) and not spike_filter_disabled:
                 with self.lock:
                     for motor in self.motors.values():
                         motor.use_spike_filter = False
@@ -312,7 +335,10 @@ class MotorControlSystem:
                 # For a single motor, target is base_position
                 target = base_position
 
-                motor.move_to_position(target, self.mcp)
+                # Determine if logging should occur based on catch-up phase
+                log = self.logging_enabled
+
+                motor.move_to_position(target, self.mcp, log=log)
             else:
                 # Stop Motor 3
                 self.motors['M3'].stop_motor()
@@ -332,13 +358,13 @@ class MotorControlSystem:
 
 def main():
     # Initialize MotorControlSystem
-    motor_control_system = MotorControlSystem(mode='normal', run_duration=30, spike_filter_duration=15)
+    motor_control_system = MotorControlSystem(mode='normal', run_duration=35, spike_filter_duration=15, catch_up_duration=5)
 
     # Set initial direction to 'forward' to start movement
     motor_control_system.set_direction('forward')
 
     try:
-        # Wait until the control loop completes (30 seconds)
+        # Wait until the control loop completes (35 seconds)
         while motor_control_system.control_thread.is_alive():
             time.sleep(1)
     except KeyboardInterrupt:
@@ -349,5 +375,4 @@ def main():
             motor_control_system.stop()
 
 if __name__ == "__main__":
-    main() 
-
+    main()
