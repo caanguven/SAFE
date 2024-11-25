@@ -151,33 +151,59 @@ class MotorController:
             elif error < -165:
                 error += 330
 
-            control_signal = self.pid.compute(error)
+            # Check if in Dead Zone (Spike Filter Active)
+            in_dead_zone = self.use_spike_filter and self.spike_filter.filter_active
 
-            if abs(error) <= 2:
-                self.stop_motor()
-                logging.info(f"{self.name} reached target. Stopping motor.")
-                return True
+            if in_dead_zone:
+                # Dead Zone Handling: Apply Rate Limiting and Signal Clamping
+                target_speed = 50  # 50% of maximum speed
+                max_change = 10    # Maximum speed change per loop (percentage)
 
-            direction = 'forward' if control_signal > 0 else 'backward'
-            self.set_motor_direction(direction)
+                delta_speed = target_speed - self.last_speed
 
-            # Map control_signal to speed percentage between 0% and 100%
-            speed = min(100, abs(control_signal))
+                if delta_speed > max_change:
+                    speed = self.last_speed + max_change
+                elif delta_speed < -max_change:
+                    speed = self.last_speed - max_change
+                else:
+                    speed = target_speed
 
-            # Rate limiting: max change per loop
-            max_change = 10  # max speed change per loop in percentage
-            delta_speed = speed - self.last_speed
-            if delta_speed > max_change:
-                speed = self.last_speed + max_change
-            elif delta_speed < -max_change:
-                speed = self.last_speed - max_change
+                # Clamp speed to 0-50%
+                speed = max(min(speed, 50), 0)
 
-            self.last_speed = speed
+                self.last_speed = speed
 
-            self.pwm.ChangeDutyCycle(speed)
-            logging.info(f"{self.name} | Raw: {mcp.read_adc(self.adc_channel)} | Angle: {current_position:.2f}° | "
-                         f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
-            return False
+                self.pwm.ChangeDutyCycle(speed)
+                logging.info(f"{self.name} | Dead Zone | Speed: {speed:.2f}%")
+                return False  # Continue running
+            else:
+                # Normal PID Control with Rate Limiting
+                control_signal = self.pid.compute(error)
+
+                # Determine direction based on control signal
+                direction = 'forward' if control_signal > 0 else 'backward'
+                self.set_motor_direction(direction)
+
+                # Map control_signal to speed percentage between 0% and 100%
+                speed = min(100, abs(control_signal))
+
+                # Rate limiting: max change per loop
+                max_change = 10  # max speed change per loop in percentage
+                delta_speed = speed - self.last_speed
+                if delta_speed > max_change:
+                    speed = self.last_speed + max_change
+                elif delta_speed < -max_change:
+                    speed = self.last_speed - max_change
+
+                # Clamp speed to 0-100%
+                speed = max(min(speed, 100), 0)
+
+                self.last_speed = speed
+
+                self.pwm.ChangeDutyCycle(speed)
+                logging.info(f"{self.name} | Raw: {mcp.read_adc(self.adc_channel)} | Angle: {current_position:.2f}° | "
+                             f"Error: {error:.2f}° | Control Signal: {speed:.2f}%")
+                return False  # Continue running
         except Exception as e:
             logging.error(f"{self.name} MotorController: Error during move_to_position: {e}")
             self.reset()
