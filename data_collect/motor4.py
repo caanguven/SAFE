@@ -58,9 +58,7 @@ class PIDController:
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
-        self.previous_error = 0
-        self.integral = 0
-        self.last_time = time.time()
+        self.reset()
 
     def compute(self, error):
         current_time = time.time()
@@ -102,14 +100,19 @@ class Motor4Controller:
         # Control components
         self.pid = PIDController()
         self.spike_filter = SpikeFilter()
-        self.position = 0
         self.last_valid_position = None
+        self.reset()
+
+    def reset(self):
+        self.pid.reset()
+        self.spike_filter.reset()
+        self.last_valid_position = None
+        self.stop_motor()
+        time.sleep(0.1)  # Small delay to ensure motor stops
 
     def read_position(self, use_filter=True):
         raw_value = self.mcp.read_adc(MOTOR4_ADC_CHANNEL)
-        
-        # Flip the encoder reading
-        raw_value = ADC_MAX - raw_value
+        raw_value = ADC_MAX - raw_value  # Flip reading
         
         if use_filter:
             filtered_value = self.spike_filter.filter(raw_value)
@@ -140,6 +143,72 @@ class Motor4Controller:
         self.stop_motor()
         self.pwm.stop()
 
+def run_single_test(use_filter, test_duration=15):
+    motor4 = Motor4Controller()
+    
+    # Set up logging
+    headers = ['timestamp', 'sawtooth_reference', 'position_degrees', 
+              'raw_value', 'control_signal', 'error', 'spike_filter']
+    
+    filter_status = "with_filter" if use_filter else "without_filter"
+    log_file, writer = setup_csv_logger(f'logs/motor4_test_{filter_status}.csv', headers)
+    
+    print(f"\nStarting test {filter_status}")
+    print("Motor running, logging will begin in 5 seconds...")
+    
+    try:
+        start_time = time.time()
+        logging_started = False
+        
+        while (time.time() - start_time) < test_duration:
+            current_time = time.time()
+            elapsed_time = current_time - start_time
+            
+            # Generate reference position
+            reference = generate_sawtooth_reference(elapsed_time)
+            
+            # Read current position
+            current_position, raw_value = motor4.read_position(use_filter)
+            
+            # Calculate error
+            error = reference - current_position
+            if error > 165:
+                error -= 330
+            elif error < -165:
+                error += 330
+            
+            # Compute control signal
+            control_signal = motor4.pid.compute(error)
+            control_signal_percent = min(100, max(30, abs(control_signal)))
+            
+            # Set motor direction and speed
+            direction = 'forward' if control_signal > 0 else 'backward'
+            motor4.set_motor_direction(direction)
+            motor4.pwm.ChangeDutyCycle(control_signal_percent)
+            
+            # Handle logging
+            if elapsed_time >= 5 and not logging_started:
+                print("Logging started...")
+                logging_started = True
+            
+            if logging_started:
+                writer.writerow({
+                    'timestamp': elapsed_time,
+                    'sawtooth_reference': reference,
+                    'position_degrees': current_position,
+                    'raw_value': raw_value,
+                    'control_signal': control_signal_percent,
+                    'error': error,
+                    'spike_filter': use_filter
+                })
+            
+            time.sleep(0.02)
+    finally:
+        motor4.cleanup()
+        log_file.close()
+        print(f"Test completed {filter_status}")
+        return motor4
+
 def setup_csv_logger(filename, headers):
     if not os.path.exists('logs'):
         os.makedirs('logs')
@@ -154,118 +223,23 @@ def generate_sawtooth_reference(elapsed_time, period=2):
 
 def run_motor_test():
     try:
-        # Initialize GPIO first
+        # Initialize GPIO
         GPIO.setwarnings(False)
         GPIO.cleanup()
         
-        # Headers for CSV
-        headers = ['timestamp', 'sawtooth_reference', 'position_degrees', 
-                  'raw_value', 'control_signal', 'error', 'spike_filter']
-        
-        # First test with filter
-        motor4 = Motor4Controller()
-        log_file, csv_writer = setup_csv_logger('logs/motor4_test_with_filter.csv', headers)
-        
-        print("Starting test with_filter")
-        print("Motor running, logging will begin in 5 seconds...")
-        
-        start_time = time.time()
-        logging_started = False
-        
-        while (time.time() - start_time) < 15:
-            elapsed_time = time.time() - start_time
-            reference = generate_sawtooth_reference(elapsed_time)
-            current_position, raw_value = motor4.read_position(use_filter=True)
-            
-            error = reference - current_position
-            if error > 165:
-                error -= 330
-            elif error < -165:
-                error += 330
-            
-            control_signal = motor4.pid.compute(error)
-            control_signal_percent = min(100, max(30, abs(control_signal)))
-            
-            direction = 'forward' if control_signal > 0 else 'backward'
-            motor4.set_motor_direction(direction)
-            motor4.pwm.ChangeDutyCycle(control_signal_percent)
-            
-            # Start logging after 5 seconds
-            if elapsed_time >= 5 and not logging_started:
-                print("Logging started...")
-                logging_started = True
-            
-            if logging_started:
-                csv_writer.writerow({
-                    'timestamp': elapsed_time,
-                    'sawtooth_reference': reference,
-                    'position_degrees': current_position,
-                    'raw_value': raw_value,
-                    'control_signal': control_signal_percent,
-                    'error': error,
-                    'spike_filter': True
-                })
-            
-            time.sleep(0.02)
-        
-        # Clean up first test
+        # Run test with filter
+        motor4 = run_single_test(use_filter=True)
         motor4.cleanup()
-        log_file.close()
-        print("Test completed with_filter")
         
-        # Small delay between tests
+        # Delay between tests
         time.sleep(1)
         
-        # Second test without filter
-        print("Starting test without_filter")
-        print("Motor running, logging will begin in 5 seconds...")
+        # Clean GPIO before second test
+        GPIO.cleanup()
         
-        motor4 = Motor4Controller()
-        log_file, csv_writer = setup_csv_logger('logs/motor4_test_without_filter.csv', headers)
-        
-        start_time = time.time()
-        logging_started = False
-        
-        while (time.time() - start_time) < 15:
-            elapsed_time = time.time() - start_time
-            reference = generate_sawtooth_reference(elapsed_time)
-            current_position, raw_value = motor4.read_position(use_filter=False)
-            
-            error = reference - current_position
-            if error > 165:
-                error -= 330
-            elif error < -165:
-                error += 330
-            
-            control_signal = motor4.pid.compute(error)
-            control_signal_percent = min(100, max(30, abs(control_signal)))
-            
-            direction = 'forward' if control_signal > 0 else 'backward'
-            motor4.set_motor_direction(direction)
-            motor4.pwm.ChangeDutyCycle(control_signal_percent)
-            
-            # Start logging after 5 seconds
-            if elapsed_time >= 5 and not logging_started:
-                print("Logging started...")
-                logging_started = True
-            
-            if logging_started:
-                csv_writer.writerow({
-                    'timestamp': elapsed_time,
-                    'sawtooth_reference': reference,
-                    'position_degrees': current_position,
-                    'raw_value': raw_value,
-                    'control_signal': control_signal_percent,
-                    'error': error,
-                    'spike_filter': False
-                })
-            
-            time.sleep(0.02)
-        
-        # Clean up second test
+        # Run test without filter
+        motor4 = run_single_test(use_filter=False)
         motor4.cleanup()
-        log_file.close()
-        print("Test completed without_filter")
         
     except Exception as e:
         print(f"Error occurred: {e}")
