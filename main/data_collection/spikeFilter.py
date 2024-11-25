@@ -11,13 +11,13 @@ SPI_DEVICE = 0
 ADC_MAX = 1023
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 2  # Period in seconds
+SAWTOOTH_PERIOD = 1.5  # Period in seconds
 
 # GPIO Pins for Motor 3
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
-MOTOR3_ADC_CHANNEL = 2
+MOTOR3_IN1 = 12
+MOTOR3_IN2 = 13
+MOTOR3_SPD = 35
+MOTOR3_ADC_CHANNEL = 3
 
 class SpikeFilter:
     def __init__(self, name):

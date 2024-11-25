@@ -67,57 +67,30 @@ def parse_log_file(file_path):
 
 def plot_combined_graph(df, title, output_filename):
     """
-    Plots all four parameters on a single graph with multiple y-axes.
+    Plots all four parameters on a single graph with markers for data points.
 
     Args:
         df (pd.DataFrame): DataFrame containing the data to plot.
         title (str): Title of the figure.
         output_filename (str): Filename to save the plot.
     """
-    fig, ax1 = plt.subplots(figsize=(15, 8))
+    fig, ax = plt.subplots(figsize=(15, 8))
     fig.suptitle(title, fontsize=20)
 
-    # Plot Potentiometer Raw Values on ax1
-    color1 = 'tab:blue'
-    ax1.set_xlabel('Time (s)', fontsize=14)
-    ax1.set_ylabel('Raw ADC Value', color=color1, fontsize=14)
-    ax1.plot(df['relative_time'], df['raw'], color=color1, label='Raw ADC Value')
-    ax1.tick_params(axis='y', labelcolor=color1)
+    # Plot all data with markers
+    ax.plot(df['relative_time'], df['raw'], label='Raw ADC Value', marker='o', markersize=4, linestyle='-', linewidth=1)
+    ax.plot(df['relative_time'], df['angle'], label='Angle (°)', marker='s', markersize=4, linestyle='-', linewidth=1)
+    ax.plot(df['relative_time'], df['error'], label='Error (°)', marker='^', markersize=4, linestyle='-', linewidth=1)
+    ax.plot(df['relative_time'], df['control_signal'], label='Control Signal (%)', marker='d', markersize=4, linestyle='-', linewidth=1)
 
-    # Create a second y-axis for Angle
-    ax2 = ax1.twinx()
-    color2 = 'tab:green'
-    ax2.set_ylabel('Angle (°)', color=color2, fontsize=14)
-    ax2.plot(df['relative_time'], df['angle'], color=color2, label='Angle (°)')
-    ax2.tick_params(axis='y', labelcolor=color2)
+    # Set labels and grid
+    ax.set_xlabel('Time (s)', fontsize=14)
+    ax.set_ylabel('Values', fontsize=14)
+    ax.grid(True)
 
-    # Create a third y-axis for Error
-    ax3 = ax1.twinx()
-    color3 = 'tab:purple'
-    ax3.set_ylabel('Error (°)', color=color3, fontsize=14)
-    ax3.plot(df['relative_time'], df['error'], color=color3, label='Error (°)')
-    ax3.tick_params(axis='y', labelcolor=color3)
-
-    # Offset the third y-axis
-    ax3.spines['right'].set_position(('outward', 60))
-
-    # Create a fourth y-axis for Control Signal
-    ax4 = ax1.twinx()
-    color4 = 'tab:cyan'
-    ax4.set_ylabel('Control Signal (%)', color=color4, fontsize=14)
-    ax4.plot(df['relative_time'], df['control_signal'], color=color4, label='Control Signal (%)')
-    ax4.tick_params(axis='y', labelcolor=color4)
-
-    # Offset the fourth y-axis
-    ax4.spines['right'].set_position(('outward', 120))
-
-    # Add legends
-    lines_labels = [ax.get_legend_handles_labels() for ax in [ax1, ax2, ax3, ax4]]
-    lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
-    ax1.legend(lines, labels, loc='upper left', fontsize=12)
-
-    # Add grid
-    ax1.grid(True)
+    # Add legend with markers
+    lines, labels = ax.get_legend_handles_labels()
+    ax.legend(lines, labels, loc='upper left', fontsize=12)
 
     # Adjust layout to prevent overlap
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -128,8 +101,8 @@ def plot_combined_graph(df, title, output_filename):
 
 def main():
     # Define log file paths
-    log_with_filter = 'motor3_with_spike_filter.log'
-    log_without_filter = 'motor3_without_spike_filter.log'
+    log_with_filter = 'motor3_with_spike_filter_5.log'
+    log_without_filter = 'motor3_without_spike_filter_5.log'
 
     # Parse log files
     print("Parsing 'with spike filter' log file...")
