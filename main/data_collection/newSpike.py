@@ -26,7 +26,7 @@ MOTOR3_ADC_CHANNEL = 2
 # ==========================
 # Constants for Control Signal Limiting
 # ==========================
-MAX_CONTROL_SIGNAL_DEAD_ZONE = 45  # Maximum control signal percentage in dead zone
+MAX_CONTROL_SIGNAL_DEAD_ZONE = 60  # Maximum control signal percentage in dead zone
 CONTROL_SIGNAL_INCREMENT_LIMIT = 5  # Max allowed change per control loop iteration
 
 class SpikeFilter:
