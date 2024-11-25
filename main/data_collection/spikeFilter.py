@@ -208,7 +208,7 @@ class MotorController:
         try:
             # **Dynamic Rate Limiting Based on Spike Filter Status**
             if self.spike_filter.filter_active:
-                self.pid.set_max_delta(30)  # Limit spike to 30%
+                self.pid.set_max_delta(50)  # Limit spike to 30%
             else:
                 self.pid.set_max_delta(10)  # Normal rate limiting
 
