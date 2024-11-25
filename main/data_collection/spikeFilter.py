@@ -20,75 +20,37 @@ MOTOR3_SPD = 33
 MOTOR3_ADC_CHANNEL = 2
 
 class SpikeFilter:
-    def __init__(self, name, buffer_size=5, threshold=150):
-        """
-        Initializes the SpikeFilter with a moving average buffer.
-
-        Args:
-            name (str): Identifier for the spike filter.
-            buffer_size (int): Number of recent readings to maintain for moving average.
-            threshold (float): Maximum allowed deviation from the moving average.
-        """
-        self.name = name
-        self.buffer_size = buffer_size
-        self.threshold = threshold
-        self.readings = []
+    def __init__(self, name):
         self.filter_active = False
+        self.last_valid_reading = None
+        self.name = name
 
     def filter(self, new_value):
-        """
-        Filters the new sensor reading, detecting spikes based on deviation from the moving average.
-
-        Args:
-            new_value (float): The latest sensor reading.
-
-        Returns:
-            float: The filtered value. If a spike is detected, returns the moving average.
-        """
-        self.readings.append(new_value)
-        if len(self.readings) > self.buffer_size:
-            self.readings.pop(0)
-
-        if len(self.readings) == self.buffer_size:
-            moving_avg = sum(self.readings) / self.buffer_size
-            deviation = abs(new_value - moving_avg)
-
-            if deviation > self.threshold:
-                if not self.filter_active:
-                    self.filter_active = True
-                    logging.warning(f"{self.name} SpikeFilter: Spike detected. Deviation={deviation:.2f}")
-                # Return the moving average to smooth out the spike
-                logging.debug(f"{self.name} SpikeFilter: Filtering out spike. Returning moving average={moving_avg:.2f}")
-                return moving_avg
+        if self.filter_active:
+            if 150 <= new_value <= 700:
+                logging.debug(f"{self.name} SpikeFilter: Value {new_value} within spike filter range, filtering out.")
+                return None
             else:
-                if self.filter_active:
-                    self.filter_active = False
-                    logging.info(f"{self.name} SpikeFilter: Spike cleared. Deviation={deviation:.2f}")
+                self.filter_active = False
+                self.last_valid_reading = new_value
+                logging.debug(f"{self.name} SpikeFilter: Spike deactivated with value {new_value}")
                 return new_value
         else:
-            # Not enough data to compute moving average; return the new value
-            return new_value
+            if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
+                self.filter_active = True
+                logging.debug(f"{self.name} SpikeFilter: Spike detected with value {new_value}")
+                return None
+            else:
+                self.last_valid_reading = new_value
+                return new_value
 
     def reset(self):
-        """
-        Resets the SpikeFilter to its initial state.
-        """
-        self.readings = []
         self.filter_active = False
+        self.last_valid_reading = None
         logging.debug(f"{self.name} SpikeFilter: Reset complete.")
 
 class PIDController:
-    def __init__(self, Kp, Ki, Kd, name='PID', max_delta=10):
-        """
-        Initializes the PIDController with rate limiting.
-
-        Args:
-            Kp (float): Proportional gain.
-            Ki (float): Integral gain.
-            Kd (float): Derivative gain.
-            name (str): Identifier for the PID controller.
-            max_delta (float): Maximum allowed change in control signal per update (percentage points).
-        """
+    def __init__(self, Kp, Ki, Kd, name='PID'):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
@@ -96,33 +58,12 @@ class PIDController:
         self.integral = 0
         self.last_time = time.time()
         self.name = name
-        self.max_delta = max_delta  # Rate limiting parameter
-        self.last_control_signal = 0  # To keep track of the last control signal
-
-    def set_max_delta(self, max_delta):
-        """
-        Sets the maximum allowed change in control signal.
-
-        Args:
-            max_delta (float): New maximum delta value.
-        """
-        self.max_delta = max_delta
-        logging.debug(f"{self.name} PID: max_delta set to {self.max_delta}%")
 
     def compute(self, error):
-        """
-        Computes the PID control signal with rate limiting.
-
-        Args:
-            error (float): The current error.
-
-        Returns:
-            float: The computed control signal.
-        """
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001  # Prevent division by zero
+            delta_time = 0.0001
 
         proportional = self.Kp * error
         self.integral += error * delta_time
@@ -130,17 +71,6 @@ class PIDController:
         derivative = self.Kd * (error - self.previous_error) / delta_time
 
         control_signal = proportional + integral + derivative
-
-        # Rate limiting
-        delta_control = control_signal - self.last_control_signal
-        if delta_control > self.max_delta:
-            control_signal = self.last_control_signal + self.max_delta
-            logging.debug(f"{self.name} PID: Rate limited. Control signal increased to {control_signal:.2f}%")
-        elif delta_control < -self.max_delta:
-            control_signal = self.last_control_signal - self.max_delta
-            logging.debug(f"{self.name} PID: Rate limited. Control signal decreased to {control_signal:.2f}%")
-
-        self.last_control_signal = control_signal
         self.previous_error = error
         self.last_time = current_time
 
@@ -150,13 +80,9 @@ class PIDController:
         return control_signal
 
     def reset(self):
-        """
-        Resets the PID controller to its initial state.
-        """
         self.previous_error = 0
         self.integral = 0
         self.last_time = time.time()
-        self.last_control_signal = 0
         logging.debug(f"{self.name} PID: Reset complete.")
 
 class MotorController:
@@ -168,9 +94,9 @@ class MotorController:
         self.adc_channel = adc_channel
         self.position = 0
         self.last_valid_position = None
-        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05, name=f'PID-{self.name}', max_delta=10)
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05, name=f'PID-{self.name}')
         self.encoder_flipped = encoder_flipped
-        self.spike_filter = SpikeFilter(name, buffer_size=5, threshold=150)
+        self.spike_filter = SpikeFilter(name)
         self.use_spike_filter = True  # Flag to enable/disable spike filter
 
     def read_position(self, mcp):
@@ -206,12 +132,6 @@ class MotorController:
 
     def move_to_position(self, target, mcp, log=True):
         try:
-            # **Dynamic Rate Limiting Based on Spike Filter Status**
-            if self.spike_filter.filter_active:
-                self.pid.set_max_delta(50)  # Limit spike to 30%
-            else:
-                self.pid.set_max_delta(10)  # Normal rate limiting
-
             current_position = self.read_position(mcp)
             error = target - current_position
 
@@ -232,16 +152,8 @@ class MotorController:
             direction = 'forward' if control_signal > 0 else 'backward'
             self.set_motor_direction(direction)
 
-            # **Mapping Control Signal to Speed with Conditional Limiting**
-            if self.spike_filter.filter_active:
-                # During spike filter active, cap speed at 30%
-                speed = min(30, max(30, abs(control_signal)))  # Effectively setting speed to 30%
-                # Alternatively, allow gradual changes up to 30%
-                # speed = min(30, max(0, abs(control_signal)))
-            else:
-                # Normal operation: speed between 30% and 100%
-                speed = min(100, max(30, abs(control_signal)))
-
+            # Map control_signal to speed percentage between 30% and 100%
+            speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
             if log:
                 raw_adc = mcp.read_adc(self.adc_channel)
