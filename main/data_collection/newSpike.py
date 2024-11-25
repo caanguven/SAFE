@@ -24,10 +24,10 @@ MOTOR3_SPD = 33
 MOTOR3_ADC_CHANNEL = 2
 
 # ==========================
-# New Constants for Control Signal Limiting
+# Constants for Control Signal Limiting
 # ==========================
-MAX_CONTROL_SIGNAL_DEAD_ZONE = 30  # Maximum control signal percentage in dead zone
-CONTROL_SIGNAL_INCREMENT_LIMIT = 2  # Max allowed change per control loop iteration
+MAX_CONTROL_SIGNAL_DEAD_ZONE = 50  # Maximum control signal percentage in dead zone
+CONTROL_SIGNAL_INCREMENT_LIMIT = 10  # Max allowed change per control loop iteration
 
 class SpikeFilter:
     def __init__(self, name):
