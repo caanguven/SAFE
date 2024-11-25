@@ -7,14 +7,6 @@ import Adafruit_MCP3008
 import threading
 import logging
 
-# Configure Logging
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s [%(levelname)s] %(message)s',
-                    handlers=[
-                        logging.FileHandler("motor_control.log"),
-                        logging.StreamHandler()
-                    ])
-
 # Constants for SPI and ADC
 SPI_PORT = 0
 SPI_DEVICE = 0
@@ -23,11 +15,11 @@ MIN_ANGLE = 0
 MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
-# GPIO Pins for Motor 1
-MOTOR1_IN1 = 7
-MOTOR1_IN2 = 26
-MOTOR1_SPD = 18
-MOTOR1_ADC_CHANNEL = 0
+# GPIO Pins for Motor 3
+MOTOR3_IN1 = 11
+MOTOR3_IN2 = 32
+MOTOR3_SPD = 33
+MOTOR3_ADC_CHANNEL = 2
 
 class SpikeFilter:
     def __init__(self, name):
@@ -191,25 +183,51 @@ class MotorControlSystem:
         self.lock = threading.Lock()
         self.running = True
 
+        # Initialize separate loggers for with and without spike filter
+        self.logger = logging.getLogger('Motor3Control')
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False  # Prevent double logging
+
+        # Formatter
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+        # Handler for with spike filter
+        self.handler_with_filter = logging.FileHandler('motor3_with_spike_filter.log')
+        self.handler_with_filter.setLevel(logging.DEBUG)
+        self.handler_with_filter.setFormatter(formatter)
+
+        # Handler for without spike filter
+        self.handler_without_filter = logging.FileHandler('motor3_without_spike_filter.log')
+        self.handler_without_filter.setLevel(logging.DEBUG)
+        self.handler_without_filter.setFormatter(formatter)
+
+        # Initially, add only the with_spike_filter handler
+        self.logger.addHandler(self.handler_with_filter)
+
+        # Redirect logging to the custom logger
+        logging.getLogger().handlers = []  # Remove other handlers
+        logging.getLogger().addHandler(self.handler_with_filter)
+        logging.getLogger().setLevel(logging.DEBUG)
+
         # GPIO setup
         GPIO.setmode(GPIO.BOARD)
-        GPIO.setup(MOTOR1_IN1, GPIO.OUT)
-        GPIO.setup(MOTOR1_IN2, GPIO.OUT)
-        GPIO.setup(MOTOR1_SPD, GPIO.OUT)
+        GPIO.setup(MOTOR3_IN1, GPIO.OUT)
+        GPIO.setup(MOTOR3_IN2, GPIO.OUT)
+        GPIO.setup(MOTOR3_SPD, GPIO.OUT)
 
         # Set up PWM for motor speed control
-        self.motor1_pwm = GPIO.PWM(MOTOR1_SPD, 1000)
-        self.motor1_pwm.start(0)
+        self.motor3_pwm = GPIO.PWM(MOTOR3_SPD, 1000)
+        self.motor3_pwm.start(0)
 
         # Set up MCP3008
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-        # Initialize Motor 1
-        self.motor1 = MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, self.motor1_pwm,
-                                      MOTOR1_ADC_CHANNEL, encoder_flipped=False)
+        # Initialize Motor 3
+        self.motor3 = MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, self.motor3_pwm,
+                                      MOTOR3_ADC_CHANNEL, encoder_flipped=False)
 
         self.motors = {
-            'M1': self.motor1
+            'M3': self.motor3
         }
 
         self.start_time = time.time()
@@ -220,20 +238,20 @@ class MotorControlSystem:
         self.control_thread = threading.Thread(target=self.control_loop, daemon=True)
         self.control_thread.start()
 
-        logging.info(f"MotorControlSystem initialized in '{self.mode}' mode.")
+        self.logger.info(f"MotorControlSystem initialized in '{self.mode}' mode.")
 
     def set_direction(self, direction):
         with self.lock:
             self.current_direction = direction
-            logging.info(f"Direction set to '{direction}'.")
+            self.logger.info(f"Direction set to '{direction}'.")
             if direction == 'stable':
-                logging.info("Resetting Motor 1 to 'stable' state.")
-                self.motors['M1'].reset()
+                self.logger.info("Resetting Motor 3 to 'stable' state.")
+                self.motors['M3'].reset()
 
     def set_mode(self, mode):
         with self.lock:
             self.mode = mode
-            logging.info(f"Mode set to '{mode}'.")
+            self.logger.info(f"Mode set to '{mode}'.")
 
     def get_status(self):
         with self.lock:
@@ -268,11 +286,18 @@ class MotorControlSystem:
                         motor.use_spike_filter = False
                         motor.spike_filter.reset()
                 spike_filter_disabled = True
-                logging.info("Spike filters disabled. Running without spike filtering.")
+
+                # Switch logging handlers
+                self.logger.removeHandler(self.handler_with_filter)
+                self.logger.addHandler(self.handler_without_filter)
+                logging.getLogger().removeHandler(self.handler_with_filter)
+                logging.getLogger().addHandler(self.handler_without_filter)
+
+                self.logger.info("Spike filters disabled. Running without spike filtering.")
 
             # Stop the system after run_duration seconds
             if elapsed_time >= self.run_duration:
-                logging.info("Run duration completed. Preparing to stop MotorControlSystem.")
+                self.logger.info("Run duration completed. Preparing to stop MotorControlSystem.")
                 self.running = False  # Signal to stop the loop
                 break
 
@@ -282,7 +307,7 @@ class MotorControlSystem:
 
             if direction != 'stable':
                 # For single motor, we don't need motor groups
-                motor = self.motors['M1']
+                motor = self.motors['M3']
 
                 base_position = self.generate_sawtooth_position()
 
@@ -291,9 +316,9 @@ class MotorControlSystem:
 
                 motor.move_to_position(target, self.mcp)
             else:
-                # Stop Motor 1
-                self.motors['M1'].stop_motor()
-                logging.debug("Motor 1 stopped (direction: stable).")
+                # Stop Motor 3
+                self.motors['M3'].stop_motor()
+                self.logger.debug("Motor 3 stopped (direction: stable).")
 
             time.sleep(0.02)  # 20 ms delay
 
@@ -301,11 +326,11 @@ class MotorControlSystem:
         if self.running:
             self.running = False
             self.control_thread.join()
-            self.motors['M1'].stop_motor()
+            self.motors['M3'].stop_motor()
 
-            self.motor1_pwm.stop()
+            self.motor3_pwm.stop()
             GPIO.cleanup()
-            logging.info("MotorControlSystem stopped and GPIO cleaned up.")
+            self.logger.info("MotorControlSystem stopped and GPIO cleaned up.")
 
 def main():
     # Initialize MotorControlSystem
@@ -319,7 +344,7 @@ def main():
         while motor_control_system.control_thread.is_alive():
             time.sleep(1)
     except KeyboardInterrupt:
-        logging.info("KeyboardInterrupt received. Stopping MotorControlSystem.")
+        logging.getLogger('Motor3Control').info("KeyboardInterrupt received. Stopping MotorControlSystem.")
         motor_control_system.stop()
     finally:
         if motor_control_system.control_thread.is_alive():
