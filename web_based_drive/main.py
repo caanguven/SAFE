@@ -186,7 +186,8 @@
 
 
 
-# app.from flask import Flask, Response, request, render_template, jsonify
+# app.
+from flask import Flask, Response, request, render_template, jsonify
 from motor_control import MotorControlSystem  # Assuming motor_control.py is in the same directory
 from picamera2 import Picamera2
 import cv2
