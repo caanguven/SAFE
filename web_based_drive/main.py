@@ -225,7 +225,6 @@ except:
         
         # GPIO setup
 GPIO.setwarnings(False)  # Disable warnings
-GPIO.setmode(GPIO.BOARD)
 
 # Initialize Motor Control System
 motor_system = MotorControlSystem(mode='normal')
