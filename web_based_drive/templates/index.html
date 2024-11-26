@@ -224,6 +224,9 @@
                  });
                  cube = new THREE.Mesh(geometry, material);
                  cube.scale.set(0.02, 0.02, 0.02);
+
+                 cube.rotation.set(Math.PI, 0, 0); // Adjust x, y, z values as needed
+
                  scene.add(cube);
              });
  
@@ -232,7 +235,7 @@
              const ambientLight = new THREE.AmbientLight(0x404040);
              scene.add(ambientLight);
              const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-             directionalLight.position.set(1, -1, 1).normalize();
+             directionalLight.position.set(1, 1, 1).normalize();
              scene.add(directionalLight);
  
              animate();
