@@ -428,6 +428,7 @@
 
 
 # motor_control.py
+# motor_control.py
 
 import RPi.GPIO as GPIO
 import time
@@ -435,8 +436,6 @@ import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
 import threading
 import logging
-import os
-import importlib
 
 # Configure Logging
 logging.basicConfig(level=logging.DEBUG,
@@ -642,33 +641,9 @@ class MotorControlSystem:
         self.current_direction = 'stable'
         self.lock = threading.Lock()
         self.running = True
-        
-        # Complete GPIO cleanup and reset
-        try:
-            GPIO.cleanup()
-            GPIO.setwarnings(False)
-        except:
-            pass
 
-        try:
-            # Try to unload and reload GPIO
-            os.system('sudo rmmod gpio_raspberrypi 2>/dev/null')
-            os.system('sudo modprobe gpio_raspberrypi')
-            importlib.reload(GPIO)
-            GPIO.setwarnings(False)
-            GPIO.setmode(GPIO.BOARD)
-        except Exception as e:
-            # If that fails, try one final approach
-            try:
-                GPIO.cleanup()
-                del GPIO
-                import RPi.GPIO as GPIO
-                GPIO.setwarnings(False)
-                GPIO.setmode(GPIO.BOARD)
-            except Exception as e:
-                logging.error(f"Fatal error initializing GPIO: {e}")
-                raise
-
+        # GPIO setup
+        GPIO.setmode(GPIO.BOARD)
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
         GPIO.setup(MOTOR1_SPD, GPIO.OUT)
@@ -880,5 +855,3 @@ class MotorControlSystem:
         self.motor4_pwm.stop()
         GPIO.cleanup()
         logging.info("MotorControlSystem stopped and GPIO cleaned up.")
-
-
