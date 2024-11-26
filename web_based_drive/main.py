@@ -186,8 +186,10 @@
 
 
 ## app.py
+# app.py
 
-from flask import Flask, Response, request, render_template, jsonify, stream_with_context
+import RPi.GPIO as GPIO  # Import GPIO without setting the mode here
+from flask import Flask, Response, request, render_template, jsonify, send_from_directory
 from motor_control import MotorControlSystem  # Assuming motor_control.py is in the same directory
 from picamera2 import Picamera2
 import cv2
@@ -201,7 +203,6 @@ import os
 import logging
 import busio
 import board
-from threading import Lock
 from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 
@@ -302,7 +303,7 @@ def calibrate_imu():
     logging.info(f"IMU calibrated with offsets: {calibration_offsets}")
 
 def update_imu_data():
-    global bno ,calibrated
+    global calibrated
     error_count = 0
     max_errors = 10  # Maximum consecutive errors before taking action
     while True:
@@ -336,6 +337,7 @@ def update_imu_data():
             elif error_count > max_errors:
                 # Attempt to reset the IMU
                 try:
+                    global bno
                     bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
                     bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
                     logging.info("IMU has been reset and reinitialized.")
@@ -474,7 +476,7 @@ if __name__ == '__main__':
     imu_thread = threading.Thread(target=update_imu_data, daemon=True)
     imu_thread.start()
     try:
-        app.run(host='0.0.0.0', port=5000, threaded=True)
+        app.run(host='0.0.0.0', port=5000, threaded=True, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt received. Shutting down.")
         motor_system.stop()
