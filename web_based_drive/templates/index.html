@@ -232,7 +232,7 @@
              const ambientLight = new THREE.AmbientLight(0x404040);
              scene.add(ambientLight);
              const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-             directionalLight.position.set(1, 1, 1).normalize();
+             directionalLight.position.set(1, -1, 1).normalize();
              scene.add(directionalLight);
  
              animate();
@@ -246,9 +246,9 @@
  
          function setCubeRotation(roll, pitch, yaw) {
              if (cube) {
-                 cube.rotation.x = pitch * Math.PI / 180;
+                 cube.rotation.x = -pitch * Math.PI / 180;
                  cube.rotation.y = yaw * Math.PI / 180;
-                 cube.rotation.z = roll * Math.PI / 180;
+                 cube.rotation.z = -roll * Math.PI / 180;
              }
          }
  
