@@ -186,9 +186,7 @@
 
 
 
-# app.py
-
-from flask import Flask, Response, request, render_template, jsonify
+# app.from flask import Flask, Response, request, render_template, jsonify
 from motor_control import MotorControlSystem  # Assuming motor_control.py is in the same directory
 from picamera2 import Picamera2
 import cv2
@@ -207,7 +205,6 @@ from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 from threading import Lock
 import RPi.GPIO as GPIO
 
-
 app = Flask(__name__)
 
 # Configure Logging
@@ -222,20 +219,20 @@ try:
     GPIO.cleanup()
 except:
     pass
-        
-        # GPIO setup
+
+# GPIO setup
 GPIO.setwarnings(False)  # Disable warnings
 
 # Initialize Motor Control System
 motor_system = MotorControlSystem(mode='normal')
 
+# IMU Data Structures
 imu_data = {'roll': 0, 'pitch': 0, 'yaw': 0}
 calibration_offsets = {'roll': None, 'pitch': None, 'yaw': None}
 calibrated = False
 imu_data_lock = Lock()
 
-
-# Gyro 
+# Initialize IMU
 try:
     i2c = busio.I2C(board.SCL, board.SDA, frequency=400000)
     bno = BNO08X_I2C(i2c)
@@ -244,7 +241,7 @@ try:
 except Exception as e:
     logging.error(f"Error initializing IMU: {e}")
 
-# Add these functions
+# Quaternion to Euler Conversion
 def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
     roll = math.atan2(2 * (quat_real * quat_i + quat_j * quat_k),
                       1 - 2 * (quat_i**2 + quat_j**2))
@@ -253,6 +250,7 @@ def quaternion_to_euler(quat_i, quat_j, quat_k, quat_real):
                      1 - 2 * (quat_j**2 + quat_k**2))
     return roll, pitch, yaw
 
+# IMU Update Function
 def update_imu_data():
     global calibrated
     while True:
@@ -264,20 +262,20 @@ def update_imu_data():
                 calibration_offsets['pitch'] = math.degrees(pitch)
                 calibration_offsets['yaw'] = math.degrees(yaw)
                 calibrated = True
-                
+
             quat_i, quat_j, quat_k, quat_real = bno.quaternion
             roll, pitch, yaw = quaternion_to_euler(quat_i, quat_j, quat_k, quat_real)
-            
+
             with imu_data_lock:
                 imu_data['roll'] = math.degrees(roll) - calibration_offsets['roll']
                 imu_data['pitch'] = math.degrees(pitch) - calibration_offsets['pitch']
                 imu_data['yaw'] = math.degrees(yaw) - calibration_offsets['yaw']
-            
+
         except Exception as e:
             logging.error(f"Error updating IMU data: {e}")
         time.sleep(0.1)
 
-# Add this route
+# IMU Data Route
 @app.route('/imu_data')
 def get_imu_data():
     with imu_data_lock:
@@ -369,6 +367,7 @@ def gen(camera):
             logging.error(f"Error in video streaming: {e}")
             break
 
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -433,8 +432,13 @@ def shutdown():
         logging.error(f"Error during shutdown: {e}")
         return 'Shutdown failed.', 500
 
+# Main Entry Point
 if __name__ == '__main__':
     try:
+        # Start IMU update thread
+        imu_thread = threading.Thread(target=update_imu_data, daemon=True)
+        imu_thread.start()
+        # Start Flask app
         app.run(host='0.0.0.0', port=5000, threaded=True)
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt received. Shutting down.")
