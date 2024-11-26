@@ -650,6 +650,7 @@ class MotorControlSystem:
         GPIO.setwarnings(False)  # Disable warnings
 
         # GPIO setup
+        GPIO.setmode(GPIO.BOARD)
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
         GPIO.setup(MOTOR1_SPD, GPIO.OUT)
