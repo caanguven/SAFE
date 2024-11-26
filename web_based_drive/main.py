@@ -303,7 +303,7 @@ def calibrate_imu():
     logging.info(f"IMU calibrated with offsets: {calibration_offsets}")
 
 def update_imu_data():
-    global calibrated
+    global bno, calibrated
     error_count = 0
     max_errors = 10  # Maximum consecutive errors before taking action
     while True:
@@ -337,7 +337,6 @@ def update_imu_data():
             elif error_count > max_errors:
                 # Attempt to reset the IMU
                 try:
-                    global bno
                     bno = BNO08X_I2C(i2c)  # Reinitialize the IMU
                     bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
                     logging.info("IMU has been reset and reinitialized.")
