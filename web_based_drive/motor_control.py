@@ -641,32 +641,27 @@ class MotorControlSystem:
         self.lock = threading.Lock()
         self.running = True
         
-    # Complete GPIO cleanup and reset
-        try:
-            # First cleanup
-            GPIO.cleanup()
-            # Unexport all GPIO pins
-            os.system('echo "-1" > /sys/class/gpio/unexport 2>/dev/null')
-            # Reset GPIO module
-            GPIO.setwarnings(False)
-            reload(GPIO)
-        except:
-            pass
+        # Check current GPIO mode
+        current_mode = GPIO.getmode()
         
-        # Now try to set the mode
-        try:
+        if current_mode is None:
+            # No mode set, we can proceed normally
+            GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BOARD)
-        except ValueError:
-            # If that fails, try one more time with a more aggressive cleanup
+        elif current_mode != GPIO.BOARD:
+            # Different mode is set, try to reset
             try:
                 GPIO.cleanup()
-                del GPIO
-                import RPi.GPIO as GPIO
                 GPIO.setwarnings(False)
                 GPIO.setmode(GPIO.BOARD)
-            except Exception as e:
-                logging.error(f"Fatal error initializing GPIO: {e}")
-                raise
+            except:
+                # If that fails, try reloading GPIO
+                reload(GPIO)
+                GPIO.setwarnings(False)
+                GPIO.setmode(GPIO.BOARD)
+        else:
+            # BOARD mode is already set, just proceed
+            GPIO.setwarnings(False)
 
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
