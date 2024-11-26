@@ -283,18 +283,6 @@ def get_imu_data():
     with imu_data_lock:
         return jsonify(imu_data)
 
-# Modify the if __name__ == '__main__': section
-if __name__ == '__main__':
-    try:
-        # Start IMU update thread
-        imu_thread = threading.Thread(target=update_imu_data, daemon=True)
-        imu_thread.start()
-        app.run(host='0.0.0.0', port=5000, threaded=True)
-    except KeyboardInterrupt:
-        logging.info("KeyboardInterrupt received. Shutting down.")
-        motor_system.stop()
-        Camera.release_instance()
-
 # Initialize Camera
 class Camera:
     instance = None
