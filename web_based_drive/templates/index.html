@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+ {% comment %} <!DOCTYPE html>
  <html lang="en">
  <head>
      <meta charset="UTF-8">
@@ -386,4 +386,153 @@
  </body>
  </html>
 
- 
+  {% endcomment %}
+
+
+  <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .control-panel {
+            margin: 20px;
+            text-align: center;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1px);
+            gap: 10px;
+            margin: 20px;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .mode-switch {
+            margin: 20px;
+        }
+        #videoFeed {
+            margin: 20px;
+            border: 2px solid #ccc;
+            border-radius: 5px;
+        }
+        .status {
+            margin: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Robot Control Interface</h1>
+    
+    <div class="control-panel">
+        <div class="mode-switch">
+            <button onclick="setMode('normal')" id="normalMode">Normal Mode</button>
+            <button onclick="setMode('gallop')" id="gallopMode">Gallop Mode</button>
+        </div>
+
+        <div class="controls">
+            <button onclick="setDirection('forward')" id="forwardBtn">Forward</button>
+            <button onclick="setDirection('left')" id="leftBtn">Left</button>
+            <button onclick="setDirection('right')" id="rightBtn">Right</button>
+            <button onclick="setDirection('backward')" id="backwardBtn">Backward</button>
+            <button onclick="setDirection('stable')" id="stopBtn">Stop</button>
+        </div>
+    </div>
+
+    <div class="video-feed">
+        <h2>Camera Feed</h2>
+        <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed">
+    </div>
+
+    <div class="status" id="statusDisplay">
+        Status: Initializing...
+    </div>
+
+    <script>
+        function setDirection(direction) {
+            fetch('/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ direction: direction }),
+            })
+            .then(response => response.json())
+            .then(data => console.log('Success:', data))
+            .catch(error => console.error('Error:', error));
+        }
+
+        function setMode(mode) {
+            fetch('/mode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mode: mode }),
+            })
+            .then(response => response.json())
+            .then(data => console.log('Success:', data))
+            .catch(error => console.error('Error:', error));
+        }
+
+        // Update status periodically
+        function updateStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('statusDisplay').innerHTML = 
+                        `Mode: ${data.mode}<br>
+                         Direction: ${data.direction}<br>
+                         Motor Positions: ${JSON.stringify(data.motors)}<br>
+                         Phase Differences: ${JSON.stringify(data.phase_diff)}`;
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // Update status every second
+        setInterval(updateStatus, 1000);
+
+        // Keyboard controls
+        document.addEventListener('keydown', function(event) {
+            switch(event.key) {
+                case 'ArrowUp':
+                    setDirection('forward');
+                    break;
+                case 'ArrowDown':
+                    setDirection('backward');
+                    break;
+                case 'ArrowLeft':
+                    setDirection('left');
+                    break;
+                case 'ArrowRight':
+                    setDirection('right');
+                    break;
+                case ' ': // Space bar
+                    setDirection('stable');
+                    break;
+            }
+        });
+    </script>
+</body>
+</html>
