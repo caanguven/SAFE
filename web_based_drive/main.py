@@ -205,6 +205,7 @@ import board
 from adafruit_bno08x.i2c import BNO08X_I2C
 from adafruit_bno08x import BNO_REPORT_ROTATION_VECTOR
 from threading import Lock
+import RPi.GPIO as GPIO
 
 
 app = Flask(__name__)
@@ -216,6 +217,15 @@ logging.basicConfig(level=logging.DEBUG,
                         logging.FileHandler("app.log"),
                         logging.StreamHandler()
                     ])
+
+try:
+    GPIO.cleanup()
+except:
+    pass
+        
+        # GPIO setup
+GPIO.setwarnings(False)  # Disable warnings
+GPIO.setmode(GPIO.BOARD)
 
 # Initialize Motor Control System
 motor_system = MotorControlSystem(mode='normal')
