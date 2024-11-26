@@ -646,11 +646,23 @@ class MotorControlSystem:
         except:
             pass
         
-        # GPIO setup
-        GPIO.setwarnings(False)  # Disable warnings
+# Make sure GPIO is not initialized
+        try:
+            GPIO.setwarnings(False)
+            if GPIO.getmode() is not None:
+                GPIO.cleanup()
+        except:
+            pass
+            
+        # Initialize GPIO with BOARD mode
+        try:
+            GPIO.setmode(GPIO.BOARD)
+        except:
+            # If setting mode fails, try one more cleanup and setup
+            GPIO.cleanup()
+            GPIO.setmode(GPIO.BOARD)
 
-        # GPIO setup
-        GPIO.setmode(GPIO.BOARD)
+
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
         GPIO.setup(MOTOR1_SPD, GPIO.OUT)
