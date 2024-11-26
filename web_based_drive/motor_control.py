@@ -453,28 +453,28 @@ MIN_ANGLE = 0
 MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
-# GPIO Pins for Motor 1
-MOTOR1_IN1 = 7
-MOTOR1_IN2 = 26
-MOTOR1_SPD = 18
+# GPIO Pins for Motor 1 (BCM numbering)
+MOTOR1_IN1 = 4    # was 7
+MOTOR1_IN2 = 7    # was 26
+MOTOR1_SPD = 24   # was 18
 MOTOR1_ADC_CHANNEL = 0
 
-# GPIO Pins for Motor 2
-MOTOR2_IN1 = 29
-MOTOR2_IN2 = 22
-MOTOR2_SPD = 31
+# GPIO Pins for Motor 2 (BCM numbering)
+MOTOR2_IN1 = 5    # was 29
+MOTOR2_IN2 = 25   # was 22
+MOTOR2_SPD = 6    # was 31
 MOTOR2_ADC_CHANNEL = 1
 
-# GPIO Pins for Motor 3
-MOTOR3_IN1 = 11
-MOTOR3_IN2 = 32
-MOTOR3_SPD = 33
+# GPIO Pins for Motor 3 (BCM numbering)
+MOTOR3_IN1 = 17   # was 11
+MOTOR3_IN2 = 12   # was 32
+MOTOR3_SPD = 13   # was 33
 MOTOR3_ADC_CHANNEL = 2
 
-# GPIO Pins for Motor 4
-MOTOR4_IN1 = 12
-MOTOR4_IN2 = 13
-MOTOR4_SPD = 35
+# GPIO Pins for Motor 4 (BCM numbering)
+MOTOR4_IN1 = 18   # was 12
+MOTOR4_IN2 = 27   # was 13
+MOTOR4_SPD = 19   # was 35
 MOTOR4_ADC_CHANNEL = 3
 
 class SpikeFilter:
@@ -643,7 +643,7 @@ class MotorControlSystem:
         self.running = True
 
         # GPIO setup
-        GPIO.setmode(GPIO.BOARD)
+        GPIO.setmode(GPIO.BCM)
         GPIO.setup(MOTOR1_IN1, GPIO.OUT)
         GPIO.setup(MOTOR1_IN2, GPIO.OUT)
         GPIO.setup(MOTOR1_SPD, GPIO.OUT)
