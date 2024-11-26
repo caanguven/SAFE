@@ -246,9 +246,9 @@
  
          function setCubeRotation(roll, pitch, yaw) {
              if (cube) {
-                 cube.rotation.x = -pitch * Math.PI / 180;
+                 cube.rotation.x = pitch * Math.PI / 180;
                  cube.rotation.y = yaw * Math.PI / 180;
-                 cube.rotation.z = -roll * Math.PI / 180;
+                 cube.rotation.z = roll * Math.PI / 180;
              }
          }
  
