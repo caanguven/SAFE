@@ -414,7 +414,7 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     if turn_direction == 'right':
         target_yaw = (initial_yaw + angle) % 360
     else:
-        target_yaw = (initial_yaw - angle) % 360
+        target_yaw = (initial_yaw - angle + 360) % 360
 
     if target_yaw > 180:
         target_yaw -= 360  # Convert to range [-180, 180]
@@ -428,11 +428,11 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
 
         # Calculate turned angle
         if turn_direction == 'right':
-            turned_angle = (current_yaw - initial_yaw) % 360
+            turned_angle = (current_yaw - initial_yaw + 360) % 360
             if turned_angle > 180:
                 turned_angle -= 360
         else:
-            turned_angle = (initial_yaw - current_yaw) % 360
+            turned_angle = (initial_yaw - current_yaw + 360) % 360
             if turned_angle > 180:
                 turned_angle -= 360
 
@@ -514,12 +514,6 @@ def main():
     distance_to_tag = None
     stop_event = threading.Event()
 
-    # Pattern repetition parameters
-    TOTAL_PATTERNS = 4
-    current_pattern = 0
-    pattern_duration = SAWTOOTH_PERIOD * 4  # Duration for one complete pattern
-    pattern_start_time = time.time()
-
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
@@ -534,7 +528,7 @@ def main():
         frame_count = 0
         start_time = time.time()
         last_save_time = time.time()
-        save_interval = 0.5
+        save_interval = 0.5  # Save one frame every 0.5 seconds when no tags detected
         
         with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
             while not stop_event.is_set():
@@ -548,8 +542,66 @@ def main():
                         fps = frame_count / elapsed
                         print(f"Actual FPS: {fps:.2f}")
                     
-                    # Process frame and detect tags (rest of the image processing code remains the same)
-                    # ... (keep the existing image processing code)
+                    # Convert to grayscale for AprilTag detection
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    
+                    # Detect AprilTags
+                    tags = at_detector.detect(
+                        gray,
+                        estimate_tag_pose=True,
+                        camera_params=CAMERA_PARAMS,
+                        tag_size=TAG_SIZE
+                    )
+                    
+                    # Determine if we should save this frame
+                    should_save = False
+                    if tags:
+                        # Always save frames with detected tags
+                        should_save = True
+                    elif time.time() - last_save_time >= save_interval:
+                        # Save periodic frames when no tags detected
+                        should_save = True
+                        last_save_time = time.time()
+                    
+                    # Save frame if needed
+                    if should_save:
+                        success, buffer = cv2.imencode('.jpg', frame)
+                        if success:
+                            frame_timestamp = datetime.now().strftime("%H%M%S_%f")
+                            if tags:
+                                best_tag = max(tags, key=lambda x: x.decision_margin)
+                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m.jpg"
+                            else:
+                                frame_filename = f"frame_{frame_timestamp}_notag.jpg"
+                            
+                            zipf.writestr(frame_filename, buffer.tobytes())
+                    
+                    # Process AprilTag detections
+                    if tags:
+                        best_tag = max(tags, key=lambda x: x.decision_margin)
+                        if best_tag.decision_margin > 50:
+                            translation = best_tag.pose_t
+                            current_distance = float(translation[2])
+                            
+                            if last_valid_distance is not None:
+                                current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
+                            
+                            last_valid_distance = current_distance
+                            consecutive_detections += 1
+                            
+                            if consecutive_detections >= 2:
+                                distance_to_tag = current_distance
+                                print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
+                                
+                                if current_distance <= distance_threshold:
+                                    # Signal that the tag is reached
+                                    print(f"Target reached. Distance: {current_distance:.2f}m")
+                                    stop_event.set()  # This will signal the main thread to proceed with the turn
+                                    break
+                    else:
+                        consecutive_detections = 0
+                    
+                    time.sleep(0.016)  # ~60 FPS
                     
                 except Exception as e:
                     print(f"Error in image processing: {e}")
@@ -564,18 +616,20 @@ def main():
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
         stop_event.set()
-        time.sleep(0.5)
-        picam2.stop()
-        stop_all_motors(motor_pins, motor_pwms)
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
+        time.sleep(0.5)  # Give time for threads to complete and the zip file to close
+        try:
+            picam2.stop()
+            stop_all_motors(motor_pins, motor_pwms)
+            for pwm in motor_pwms.values():
+                pwm.stop()
+            GPIO.cleanup()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
 
     print("\nStarting combined operation with image capture...")
-    print(f"Will perform pattern {TOTAL_PATTERNS} times")
 
     try:
         # Initial manual turn if specified
@@ -587,24 +641,12 @@ def main():
         last_correction_time = time.time()
         correction_cooldown = 1.0
 
-        while not stop_event.is_set() and current_pattern < TOTAL_PATTERNS:
+        while not stop_event.is_set():
             # Update gait
             gait.update_gait()
 
-            # Check for pattern completion
-            current_time = time.time()
-            if current_time - pattern_start_time >= pattern_duration:
-                current_pattern += 1
-                pattern_start_time = current_time
-                print(f"\nCompleted pattern {current_pattern} of {TOTAL_PATTERNS}")
-                
-                if current_pattern < TOTAL_PATTERNS:
-                    # Optional: Add a brief pause between patterns
-                    stop_all_motors(motor_pins, motor_pwms)
-                    time.sleep(0.5)
-                    print(f"Starting pattern {current_pattern + 1}")
-
             # Check IMU for straight-line correction
+            current_time = time.time()
             if current_time - last_correction_time >= correction_cooldown:
                 current_yaw = get_current_yaw(bno, calibration_offset)
                 
@@ -620,11 +662,17 @@ def main():
 
             time.sleep(0.02)
 
-        # Handle completion
-        print("\nAll patterns completed or target reached. Stopping and turning...")
+        # Handle stop condition
+        print("\nTarget distance reached. Stopping and turning...")
         stop_all_motors(motor_pins, motor_pwms)
-        time.sleep(1)
-        perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+        time.sleep(1)  # Allow all motors to stop completely
+
+        # Perform the 90-degree turn
+        try:
+            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+            print("90-degree turn completed.")
+        except Exception as e:
+            print(f"Error during final turn: {e}")
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
