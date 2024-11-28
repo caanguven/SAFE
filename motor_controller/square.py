@@ -651,45 +651,69 @@ def main():
             target_angle = abs(args.manual_turn)
             perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
 
-        last_correction_time = time.time()
-        correction_cooldown = 1.0
+        # Repeat the pattern 4 times
+        for iteration in range(4):
+            print(f"\nStarting iteration {iteration + 1}/4")
+            # Reset event and variables for the new iteration
+            distance_to_tag = None
+            stop_event.clear()
 
-        while not stop_event.is_set():
-            # Update gait
-            gait.update_gait()
+            # Start the image processing thread
+            image_thread = threading.Thread(target=image_processing_thread)
+            image_thread.start()
 
-            # Check IMU for straight-line correction
-            current_time = time.time()
-            if current_time - last_correction_time >= correction_cooldown:
-                current_yaw = get_current_yaw(bno, calibration_offset)
-                
-                if current_yaw is not None:
-                    if current_yaw > YAW_THRESHOLD:
-                        print(f"\nCorrecting right drift: {current_yaw:.2f}°")
-                        perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
-                        last_correction_time = current_time
-                    elif current_yaw < -YAW_THRESHOLD:
-                        print(f"\nCorrecting left drift: {current_yaw:.2f}°")
-                        perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
-                        last_correction_time = current_time
+            last_correction_time = time.time()
+            correction_cooldown = 1.0
 
-            time.sleep(0.02)
+            while not stop_event.is_set():
+                # Update gait
+                gait.update_gait()
 
-        # Ensure main loop exits when stop_event is set
-        print("\nMain loop exited.")
+                # Check IMU for straight-line correction
+                current_time = time.time()
+                if current_time - last_correction_time >= correction_cooldown:
+                    current_yaw = get_current_yaw(bno, calibration_offset)
+                    
+                    if current_yaw is not None:
+                        if current_yaw > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                            perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                            last_correction_time = current_time
+                        elif current_yaw < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                            perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                            last_correction_time = current_time
 
-        # Handle stop condition
-        print("\nTarget distance reached. Stopping and turning...")
-        stop_all_motors(motor_pins, motor_pwms)
-        time.sleep(1)  # Allow all motors to stop completely
+                time.sleep(0.02)
 
-        # Perform the 90-degree turn
-        try:
-            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
-            print("90-degree turn completed.")
-        except Exception as e:
-            print(f"Error during final turn: {e}")
-            traceback.print_exc()
+            # Ensure main loop exits when stop_event is set
+            print("\nMain loop exited.")
+
+            # Wait for the image processing thread to finish
+            image_thread.join()
+
+            # Handle stop condition
+            print("\nTarget distance reached. Stopping and turning...")
+            stop_all_motors(motor_pins, motor_pwms)
+            time.sleep(1)  # Allow all motors to stop completely
+
+            # Perform the 90-degree turn
+            try:
+                perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+                print("90-degree turn completed.")
+
+                # Recalibrate IMU after turn
+                calibration_offset = calibrate_imu(bno)
+                print("IMU recalibrated after turn.")
+
+            except Exception as e:
+                print(f"Error during final turn: {e}")
+                traceback.print_exc()
+
+            # Small delay before next iteration
+            time.sleep(1)
+
+        print("\nCompleted all iterations.")
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
