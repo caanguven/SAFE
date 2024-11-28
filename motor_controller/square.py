@@ -446,7 +446,7 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
 
         angle_remaining = angular_difference(target_yaw, current_yaw)
 
-        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Angle remaining: {angle_remaining:.2f}°    ", end='\r')
+        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Target yaw: {target_yaw:.2f}°, Angle remaining: {angle_remaining:.2f}°    ", end='\r')
 
         # Adjust motor speeds based on remaining angle for smoother stop
         if abs(angle_remaining) < 30:
@@ -533,6 +533,9 @@ def main():
     distance_threshold = 0.5
     stop_event = threading.Event()
 
+    # Initialize expected heading
+    expected_heading = 0.0  # Assuming initial heading is 0 degrees
+
     # Graceful shutdown handler
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
@@ -553,7 +556,7 @@ def main():
 
     # Function to perform the main operation
     def perform_operation(iteration):
-        nonlocal calibration_offset
+        nonlocal expected_heading
         print(f"\nStarting iteration {iteration+1}/4")
 
         # Reset stop_event and distance_to_tag
@@ -683,12 +686,15 @@ def main():
                     current_yaw = get_current_yaw(bno, calibration_offset)
                     
                     if current_yaw is not None:
-                        if current_yaw > YAW_THRESHOLD:
-                            print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                        # Compute angular difference between current yaw and expected heading
+                        angle_diff = (current_yaw - expected_heading + 180) % 360 - 180
+
+                        if angle_diff > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: {angle_diff:.2f}°")
                             perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
-                        elif current_yaw < -YAW_THRESHOLD:
-                            print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                        elif angle_diff < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: {angle_diff:.2f}°")
                             perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
 
@@ -706,16 +712,16 @@ def main():
             try:
                 perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
                 print("90-degree turn completed.")
+
+                # Update expected heading after turn
+                expected_heading = (expected_heading + 90.0) % 360
+                if expected_heading > 180:
+                    expected_heading -= 360  # Keep within [-180, 180]
+
+                print(f"Expected heading updated to: {expected_heading:.2f}°")
+
             except Exception as e:
                 print(f"Error during final turn: {e}")
-                traceback.print_exc()
-
-            # Recalibrate the IMU after the turn
-            try:
-                calibration_offset = calibrate_imu(bno)
-                print("IMU recalibrated.")
-            except Exception as e:
-                print(f"Error during IMU recalibration: {e}")
                 traceback.print_exc()
 
         except Exception as e:
