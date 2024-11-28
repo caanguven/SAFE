@@ -7,6 +7,7 @@ import time
 import signal
 import threading
 import os
+import traceback
 
 import cv2
 import numpy as np
@@ -324,9 +325,9 @@ def calibrate_imu(bno):
     else:
         raise RuntimeError(f"Failed to collect enough valid samples (got {len(samples)} of {max_samples})")
 
-def get_current_yaw(bno, calibration_offset, retries=3):
+def get_current_yaw(bno, calibration_offset, retries=5, delay=0.1):
     """Get current yaw with retry mechanism"""
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             quat = bno.quaternion
             if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
@@ -336,8 +337,12 @@ def get_current_yaw(bno, calibration_offset, retries=3):
                     if yaw_adjusted > 180:
                         yaw_adjusted -= 360  # Convert to range [-180, 180]
                     return yaw_adjusted
-        except Exception:
-            time.sleep(0.1)
+            print(f"IMU read attempt {attempt + 1} failed, retrying...")
+            time.sleep(delay)
+        except Exception as e:
+            print(f"Exception during IMU read: {e}")
+            time.sleep(delay)
+    print("Failed to get current yaw after multiple attempts.")
     return None
 
 class GaitGenerator:
@@ -382,6 +387,11 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     :param bno: IMU sensor object.
     :param calibration_offset: Initial yaw offset.
     """
+    def angular_difference(target, current):
+        """Compute the minimal angular difference from current to target in degrees."""
+        diff = (target - current + 180) % 360 - 180
+        return diff
+
     motor_speed = 70  # Speed for point turn; adjust as needed
 
     # Configure motors for point turn
@@ -405,40 +415,40 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     print(f"\nStarting {turn_direction} point turn of {angle}°")
 
     # Record initial yaw
-    initial_yaw = get_current_yaw(bno, calibration_offset)
+    initial_yaw = None
+    attempts = 0
+    while initial_yaw is None and attempts < 5:
+        initial_yaw = get_current_yaw(bno, calibration_offset)
+        if initial_yaw is None:
+            print("Failed to get initial yaw for point turn, retrying...")
+            time.sleep(0.1)
+        attempts += 1
     if initial_yaw is None:
-        print("Failed to get initial yaw for point turn.")
+        print("Failed to get initial yaw after multiple attempts, aborting turn.")
+        # Stop motors
+        for motor in motors.values():
+            motor.stop_motor()
         return
 
     # Determine target yaw
     if turn_direction == 'right':
         target_yaw = (initial_yaw + angle) % 360
     else:
-        target_yaw = (initial_yaw - angle) % 360
-
-    if target_yaw > 180:
-        target_yaw -= 360  # Convert to range [-180, 180]
+        target_yaw = (initial_yaw - angle + 360) % 360
 
     # Main turn loop
     while True:
         current_yaw = get_current_yaw(bno, calibration_offset)
         if current_yaw is None:
             print("Yaw reading failed during point turn.")
+            # Optionally retry or stop motors
             break
 
-        # Calculate turned angle
-        if turn_direction == 'right':
-            turned_angle = (current_yaw - initial_yaw) % 360
-            if turned_angle > 180:
-                turned_angle -= 360
-        else:
-            turned_angle = (initial_yaw - current_yaw) % 360
-            if turned_angle > 180:
-                turned_angle -= 360
+        angle_remaining = angular_difference(target_yaw, current_yaw)
 
-        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Turned: {turned_angle:.2f}°    ", end='\r')
+        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Angle remaining: {angle_remaining:.2f}°    ", end='\r')
 
-        if abs(turned_angle) >= angle:
+        if abs(angle_remaining) <= 2.0:
             print(f"\nPoint turn completed! Final yaw: {current_yaw:.2f}°")
             break
 
@@ -466,7 +476,7 @@ def main():
                         help='Manual turn angle in degrees (positive for right, negative for left)')
     args = parser.parse_args()
 
-    # Initialize motors, IMU, and other components (same as before)
+    # Initialize motors, IMU, and other components
     motor_pins, motor_pwms = setup_motors()
     motors = {
         'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor_pwms['M1'], MOTOR1_ADC_CHANNEL, encoder_flipped=False),
@@ -579,28 +589,26 @@ def main():
                     # Process AprilTag detections
                     if tags:
                         best_tag = max(tags, key=lambda x: x.decision_margin)
-                        if best_tag.decision_margin > 50:
-                            translation = best_tag.pose_t
-                            current_distance = float(translation[2])
+                        translation = best_tag.pose_t
+                        current_distance = float(translation[2])
+
+                        # Print the detected distance
+                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
+
+                        if last_valid_distance is not None:
+                            current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
+                        
+                        last_valid_distance = current_distance
+                        consecutive_detections += 1
+                        
+                        if consecutive_detections >= 2:
+                            distance_to_tag = current_distance
                             
-                            if last_valid_distance is not None:
-                                current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
-                            
-                            last_valid_distance = current_distance
-                            consecutive_detections += 1
-                            
-                            if consecutive_detections >= 2:
-                                distance_to_tag = current_distance
-                                print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
-                                
-                                if current_distance <= distance_threshold:
-                                    # Save final frame before stopping
-                                    success, buffer = cv2.imencode('.jpg', frame)
-                                    if success:
-                                        frame_filename = f"frame_{frame_timestamp}_final_tag{best_tag.tag_id}_dist{current_distance:.2f}m.jpg"
-                                        zipf.writestr(frame_filename, buffer.tobytes())
-                                    stop_event.set()
-                                    break
+                            if current_distance <= distance_threshold:
+                                # Signal that the tag is reached
+                                print(f"Target reached. Distance: {current_distance:.2f}m")
+                                stop_event.set()  # This will signal the main thread to proceed with the turn
+                                break
                     else:
                         consecutive_detections = 0
                     
@@ -608,6 +616,7 @@ def main():
                     
                 except Exception as e:
                     print(f"Error in image processing: {e}")
+                    traceback.print_exc()
                     time.sleep(0.1)
         
         print(f"Image processing thread stopped. Images saved to {zip_filename}")
@@ -619,12 +628,16 @@ def main():
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
         stop_event.set()
-        time.sleep(0.5)  # Give time for the zip file to close
-        picam2.stop()
-        stop_all_motors(motor_pins, motor_pwms)
-        for pwm in motor_pwms.values():
-            pwm.stop()
-        GPIO.cleanup()
+        time.sleep(0.5)  # Give time for threads to complete and the zip file to close
+        try:
+            picam2.stop()
+            stop_all_motors(motor_pins, motor_pwms)
+            for pwm in motor_pwms.values():
+                pwm.stop()
+            GPIO.cleanup()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            traceback.print_exc()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
@@ -662,14 +675,25 @@ def main():
 
             time.sleep(0.02)
 
+        # Ensure main loop exits when stop_event is set
+        print("\nMain loop exited.")
+
         # Handle stop condition
         print("\nTarget distance reached. Stopping and turning...")
         stop_all_motors(motor_pins, motor_pwms)
-        time.sleep(1)
-        perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+        time.sleep(1)  # Allow all motors to stop completely
+
+        # Perform the 90-degree turn
+        try:
+            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+            print("90-degree turn completed.")
+        except Exception as e:
+            print(f"Error during final turn: {e}")
+            traceback.print_exc()
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
+        traceback.print_exc()
     finally:
         cleanup(None, None)
 
