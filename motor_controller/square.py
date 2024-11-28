@@ -377,6 +377,11 @@ class GaitGenerator:
         for motor in group2:
             self.motors[motor].move_to_position(target_group2, self.mcp)
 
+def angular_difference(target, current):
+    """Compute the minimal angular difference from current to target in degrees."""
+    diff = (target - current + 180) % 360 - 180
+    return diff
+
 def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     """
     Perform a point turn to correct the robot's direction.
@@ -387,11 +392,6 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
     :param bno: IMU sensor object.
     :param calibration_offset: Initial yaw offset.
     """
-    def angular_difference(target, current):
-        """Compute the minimal angular difference from current to target in degrees."""
-        diff = (target - current + 180) % 360 - 180
-        return diff
-
     motor_speed = 70  # Speed for point turn; adjust as needed
 
     # Configure motors for point turn
@@ -459,6 +459,15 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
         motor.stop_motor()
     time.sleep(0.5)  # Brief pause after turn
 
+    # Get final yaw
+    final_yaw = get_current_yaw(bno, calibration_offset)
+    if final_yaw is not None:
+        print(f"Final yaw after turn: {final_yaw:.2f}°")
+    else:
+        print("Failed to get final yaw after turn.")
+
+    return final_yaw
+
 def stop_all_motors(motor_pins, motor_pwms):
     """Stop all motors."""
     for i, _ in enumerate(motor_pins, 1):
@@ -487,6 +496,7 @@ def main():
 
     bno = setup_imu()
     calibration_offset = calibrate_imu(bno)
+    desired_heading = 0.0  # Initialize desired heading after calibration
     mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
     gait = GaitGenerator(motors, mcp)
 
@@ -522,9 +532,6 @@ def main():
     CORRECTION_ANGLE = 15.0
     distance_threshold = 0.5
 
-    # Initialize heading reference
-    current_heading = 0.0  # In degrees
-
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
@@ -554,14 +561,9 @@ def main():
         if args.manual_turn != 0.0:
             turn_direction = 'right' if args.manual_turn > 0 else 'left'
             target_angle = abs(args.manual_turn)
-            perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
-            # Update current_heading
-            if turn_direction == 'right':
-                current_heading = (current_heading + target_angle) % 360
-            else:
-                current_heading = (current_heading - target_angle + 360) % 360
-            if current_heading > 180:
-                current_heading -= 360  # Keep within [-180, 180]
+            new_yaw = perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
+            if new_yaw is not None:
+                desired_heading = new_yaw
 
         # Repeat the pattern 4 times
         for iteration in range(4):
@@ -681,16 +683,18 @@ def main():
                     current_yaw = get_current_yaw(bno, calibration_offset)
                     
                     if current_yaw is not None:
-                        # Calculate angular difference between current yaw and current_heading
-                        angular_diff = (current_yaw - current_heading + 180) % 360 - 180
-
-                        if angular_diff > YAW_THRESHOLD:
-                            print(f"\nCorrecting right drift: {angular_diff:.2f}°")
-                            perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                        angle_diff = angular_difference(desired_heading, current_yaw)
+                        if angle_diff > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: angle_diff {angle_diff:.2f}°")
+                            new_yaw = perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                            if new_yaw is not None:
+                                desired_heading = new_yaw
                             last_correction_time = current_time
-                        elif angular_diff < -YAW_THRESHOLD:
-                            print(f"\nCorrecting left drift: {angular_diff:.2f}°")
-                            perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                        elif angle_diff < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: angle_diff {angle_diff:.2f}°")
+                            new_yaw = perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                            if new_yaw is not None:
+                                desired_heading = new_yaw
                             last_correction_time = current_time
 
                 time.sleep(0.02)
@@ -708,13 +712,14 @@ def main():
 
             # Perform the 90-degree turn
             try:
-                perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+                new_yaw = perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+                if new_yaw is not None:
+                    desired_heading = new_yaw
+                else:
+                    desired_heading = (desired_heading + 90.0) % 360
+                    if desired_heading > 180:
+                        desired_heading -= 360  # Keep in range [-180, 180]
                 print("90-degree turn completed.")
-                # Update current_heading
-                current_heading = (current_heading + 90.0) % 360
-                if current_heading > 180:
-                    current_heading -= 360  # Keep within [-180, 180]
-                print(f"New heading reference: {current_heading:.2f}°")
             except Exception as e:
                 print(f"Error during final turn: {e}")
                 traceback.print_exc()
