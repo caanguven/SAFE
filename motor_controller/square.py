@@ -345,11 +345,6 @@ def get_current_yaw(bno, calibration_offset, retries=5, delay=0.1):
     print("Failed to get current yaw after multiple attempts.")
     return None
 
-def angular_difference(target, current):
-    """Compute the minimal angular difference from current to target in degrees."""
-    diff = (target - current + 180) % 360 - 180
-    return diff
-
 class GaitGenerator:
     def __init__(self, motors, mcp):
         self.motors = motors
@@ -525,16 +520,14 @@ def main():
     # Control parameters
     YAW_THRESHOLD = 15.0
     CORRECTION_ANGLE = 15.0
-    MAX_CORRECTION_ANGLE = 15.0  # Added maximum correction angle
     distance_threshold = 0.5
-    distance_to_tag = None
-
-    # Initialize desired heading
-    desired_heading = 0.0
+    stop_event = threading.Event()
 
     # Graceful shutdown handler
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
+        stop_event.set()
+        time.sleep(0.5)  # Give time for threads to complete and the zip file to close
         try:
             picam2.stop()
             stop_all_motors(motor_pins, motor_pwms)
@@ -548,16 +541,17 @@ def main():
 
     signal.signal(signal.SIGINT, cleanup)
 
-    # Main operation repeated four times
+    # Now, we add the main loop that runs 4 times
     for iteration in range(4):
-        print(f"\nStarting iteration {iteration + 1}...")
+        print(f"\nStarting iteration {iteration+1}/4")
 
-        # Create timestamp for unique zip filename
+        # Reset stop_event and distance_to_tag for this iteration
+        stop_event.clear()
+        distance_to_tag = None
+
+        # Create timestamp for unique zip filename for this iteration
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_filename = f"captured_frames_{timestamp}_iter{iteration + 1}.zip"
-
-        stop_event = threading.Event()
-        distance_to_tag = None  # Reset distance to tag
+        zip_filename = f"captured_frames_iter{iteration+1}_{timestamp}.zip"
 
         # Start image processing thread with integrated zipping
         def image_processing_thread():
@@ -655,10 +649,11 @@ def main():
         # Start the image processing thread
         threading.Thread(target=image_processing_thread, daemon=True).start()
 
+        # Starting the main operation loop
         print("\nStarting combined operation with image capture...")
 
         try:
-            # Initial manual turn if specified (only on the first iteration)
+            # Initial manual turn if specified (only in the first iteration)
             if iteration == 0 and args.manual_turn != 0.0:
                 turn_direction = 'right' if args.manual_turn > 0 else 'left'
                 target_angle = abs(args.manual_turn)
@@ -677,13 +672,13 @@ def main():
                     current_yaw = get_current_yaw(bno, calibration_offset)
                     
                     if current_yaw is not None:
-                        yaw_error = angular_difference(desired_heading, current_yaw)
-                        
-                        if abs(yaw_error) > YAW_THRESHOLD:
-                            turn_direction = 'left' if yaw_error > 0 else 'right'
-                            angle_to_turn = min(abs(yaw_error), MAX_CORRECTION_ANGLE)
-                            print(f"\nCorrecting drift: Yaw error {yaw_error:.2f}°, turning {turn_direction} by {angle_to_turn:.2f}°")
-                            perform_point_turn(motors, turn_direction, angle_to_turn, bno, calibration_offset)
+                        if current_yaw > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                            perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                            last_correction_time = current_time
+                        elif current_yaw < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                            perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
 
                 time.sleep(0.02)
@@ -704,17 +699,18 @@ def main():
                 print(f"Error during final turn: {e}")
                 traceback.print_exc()
 
-            # Update desired heading
-            desired_heading = (desired_heading + 90.0) % 360.0
-            print(f"Updated desired heading to {desired_heading:.2f}°")
+            # Recalibrate the IMU after the turn
+            try:
+                calibration_offset = calibrate_imu(bno)
+                print("IMU recalibrated.")
+            except Exception as e:
+                print(f"Error during IMU recalibration: {e}")
+                traceback.print_exc()
 
         except Exception as e:
             print(f"\nUnexpected error: {e}")
             traceback.print_exc()
-            break  # Exit the loop on error
+            break  # Exit the loop if an unexpected error occurs
 
-    # After completing 4 iterations, cleanup
+    # After the loop is done, proceed to cleanup
     cleanup(None, None)
-
-if __name__ == "__main__":
-    main()
