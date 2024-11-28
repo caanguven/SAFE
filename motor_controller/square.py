@@ -446,17 +446,7 @@ def perform_point_turn(motors, turn_direction, angle, bno, calibration_offset):
 
         angle_remaining = angular_difference(target_yaw, current_yaw)
 
-        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Target yaw: {target_yaw:.2f}°, Angle remaining: {angle_remaining:.2f}°    ", end='\r')
-
-        # Adjust motor speeds based on remaining angle for smoother stop
-        if abs(angle_remaining) < 30:
-            # Slow down as we approach the target angle
-            adjusted_speed = max(30, motor_speed * (abs(angle_remaining) / 30))
-            for motor in motors.values():
-                motor.set_motor_speed(adjusted_speed)
-        else:
-            for motor in motors.values():
-                motor.set_motor_speed(motor_speed)
+        print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Angle remaining: {angle_remaining:.2f}°    ", end='\r')
 
         if abs(angle_remaining) <= 2.0:
             print(f"\nPoint turn completed! Final yaw: {current_yaw:.2f}°")
@@ -533,9 +523,6 @@ def main():
     distance_threshold = 0.5
     stop_event = threading.Event()
 
-    # Initialize expected heading
-    expected_heading = 0.0  # Assuming initial heading is 0 degrees
-
     # Graceful shutdown handler
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
@@ -554,9 +541,8 @@ def main():
 
     signal.signal(signal.SIGINT, cleanup)
 
-    # Function to perform the main operation
-    def perform_operation(iteration):
-        nonlocal expected_heading
+    # Main loop to perform the operation four times
+    for iteration in range(4):
         print(f"\nStarting iteration {iteration+1}/4")
 
         # Reset stop_event and distance_to_tag
@@ -663,7 +649,6 @@ def main():
         # Start the image processing thread
         threading.Thread(target=image_processing_thread, daemon=True).start()
 
-        # Starting the main operation loop
         print("\nStarting combined operation with image capture...")
 
         try:
@@ -686,15 +671,12 @@ def main():
                     current_yaw = get_current_yaw(bno, calibration_offset)
                     
                     if current_yaw is not None:
-                        # Compute angular difference between current yaw and expected heading
-                        angle_diff = (current_yaw - expected_heading + 180) % 360 - 180
-
-                        if angle_diff > YAW_THRESHOLD:
-                            print(f"\nCorrecting right drift: {angle_diff:.2f}°")
+                        if current_yaw > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: {current_yaw:.2f}°")
                             perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
-                        elif angle_diff < -YAW_THRESHOLD:
-                            print(f"\nCorrecting left drift: {angle_diff:.2f}°")
+                        elif current_yaw < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: {current_yaw:.2f}°")
                             perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
 
@@ -712,31 +694,25 @@ def main():
             try:
                 perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
                 print("90-degree turn completed.")
-
-                # Update expected heading after turn
-                expected_heading = (expected_heading + 90.0) % 360
-                if expected_heading > 180:
-                    expected_heading -= 360  # Keep within [-180, 180]
-
-                print(f"Expected heading updated to: {expected_heading:.2f}°")
-
             except Exception as e:
                 print(f"Error during final turn: {e}")
+                traceback.print_exc()
+
+            # Recalibrate the IMU after the turn
+            try:
+                calibration_offset = calibrate_imu(bno)
+                print("IMU recalibrated.")
+            except Exception as e:
+                print(f"Error during IMU recalibration: {e}")
                 traceback.print_exc()
 
         except Exception as e:
             print(f"\nUnexpected error: {e}")
             traceback.print_exc()
-            raise  # Re-raise exception to exit the loop
+            break  # Exit the loop if an unexpected error occurs
 
-    # Main loop to perform the operation four times
-    try:
-        for iteration in range(4):
-            perform_operation(iteration)
-    except Exception as e:
-        print(f"An error occurred during operation: {e}")
-    finally:
-        cleanup(None, None)
+    # After the loop is done, proceed to cleanup
+    cleanup(None, None)
 
 if __name__ == "__main__":
     main()
