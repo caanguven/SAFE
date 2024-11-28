@@ -522,6 +522,9 @@ def main():
     CORRECTION_ANGLE = 15.0
     distance_threshold = 0.5
 
+    # Initialize heading reference
+    current_heading = 0.0  # In degrees
+
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
@@ -552,6 +555,13 @@ def main():
             turn_direction = 'right' if args.manual_turn > 0 else 'left'
             target_angle = abs(args.manual_turn)
             perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
+            # Update current_heading
+            if turn_direction == 'right':
+                current_heading = (current_heading + target_angle) % 360
+            else:
+                current_heading = (current_heading - target_angle + 360) % 360
+            if current_heading > 180:
+                current_heading -= 360  # Keep within [-180, 180]
 
         # Repeat the pattern 4 times
         for iteration in range(4):
@@ -671,12 +681,15 @@ def main():
                     current_yaw = get_current_yaw(bno, calibration_offset)
                     
                     if current_yaw is not None:
-                        if current_yaw > YAW_THRESHOLD:
-                            print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                        # Calculate angular difference between current yaw and current_heading
+                        angular_diff = (current_yaw - current_heading + 180) % 360 - 180
+
+                        if angular_diff > YAW_THRESHOLD:
+                            print(f"\nCorrecting right drift: {angular_diff:.2f}°")
                             perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
-                        elif current_yaw < -YAW_THRESHOLD:
-                            print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                        elif angular_diff < -YAW_THRESHOLD:
+                            print(f"\nCorrecting left drift: {angular_diff:.2f}°")
                             perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                             last_correction_time = current_time
 
@@ -697,6 +710,11 @@ def main():
             try:
                 perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
                 print("90-degree turn completed.")
+                # Update current_heading
+                current_heading = (current_heading + 90.0) % 360
+                if current_heading > 180:
+                    current_heading -= 360  # Keep within [-180, 180]
+                print(f"New heading reference: {current_heading:.2f}°")
             except Exception as e:
                 print(f"Error during final turn: {e}")
                 traceback.print_exc()
