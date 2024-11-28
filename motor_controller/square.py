@@ -714,3 +714,6 @@ def main():
 
     # After the loop is done, proceed to cleanup
     cleanup(None, None)
+
+if __name__ == "__main__":
+    main()
