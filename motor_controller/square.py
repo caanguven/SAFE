@@ -7,6 +7,7 @@ import time
 import signal
 import threading
 import os
+import traceback
 
 import cv2
 import numpy as np
@@ -588,25 +589,26 @@ def main():
                     # Process AprilTag detections
                     if tags:
                         best_tag = max(tags, key=lambda x: x.decision_margin)
-                        if best_tag.decision_margin > 15:  # Adjusted threshold
-                            translation = best_tag.pose_t
-                            current_distance = float(translation[2])
+                        translation = best_tag.pose_t
+                        current_distance = float(translation[2])
+
+                        # Print the detected distance
+                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
+
+                        if last_valid_distance is not None:
+                            current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
+                        
+                        last_valid_distance = current_distance
+                        consecutive_detections += 1
+                        
+                        if consecutive_detections >= 2:
+                            distance_to_tag = current_distance
                             
-                            if last_valid_distance is not None:
-                                current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
-                            
-                            last_valid_distance = current_distance
-                            consecutive_detections += 1
-                            
-                            if consecutive_detections >= 2:
-                                distance_to_tag = current_distance
-                                print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
-                                
-                                if current_distance <= distance_threshold:
-                                    # Signal that the tag is reached
-                                    print(f"Target reached. Distance: {current_distance:.2f}m")
-                                    stop_event.set()  # This will signal the main thread to proceed with the turn
-                                    break
+                            if current_distance <= distance_threshold:
+                                # Signal that the tag is reached
+                                print(f"Target reached. Distance: {current_distance:.2f}m")
+                                stop_event.set()  # This will signal the main thread to proceed with the turn
+                                break
                     else:
                         consecutive_detections = 0
                     
@@ -614,6 +616,7 @@ def main():
                     
                 except Exception as e:
                     print(f"Error in image processing: {e}")
+                    traceback.print_exc()
                     time.sleep(0.1)
         
         print(f"Image processing thread stopped. Images saved to {zip_filename}")
@@ -634,6 +637,7 @@ def main():
             GPIO.cleanup()
         except Exception as e:
             print(f"Error during cleanup: {e}")
+            traceback.print_exc()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
@@ -671,6 +675,9 @@ def main():
 
             time.sleep(0.02)
 
+        # Ensure main loop exits when stop_event is set
+        print("\nMain loop exited.")
+
         # Handle stop condition
         print("\nTarget distance reached. Stopping and turning...")
         stop_all_motors(motor_pins, motor_pwms)
@@ -682,9 +689,11 @@ def main():
             print("90-degree turn completed.")
         except Exception as e:
             print(f"Error during final turn: {e}")
+            traceback.print_exc()
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
+        traceback.print_exc()
     finally:
         cleanup(None, None)
 
