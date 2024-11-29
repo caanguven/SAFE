@@ -523,12 +523,18 @@ def main():
     distance_threshold = 0.5
     distance_to_tag = None
     stop_event = threading.Event()
+    turn_complete_event = threading.Event()
+
+    # Track movement state
+    current_direction = 0  # 0: initial direction, 90: after first turn, 180: after second turn, 270: after third turn
+    turn_count = 0
+    max_turns = 4  # Stop after completing a full square
 
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
 
-    # Start image processing thread with integrated zipping
+    # Modified image processing thread with direction awareness
     def image_processing_thread():
         nonlocal distance_to_tag
         print("Starting image processing thread...")
@@ -538,24 +544,27 @@ def main():
         frame_count = 0
         start_time = time.time()
         last_save_time = time.time()
-        save_interval = 0.5  # Save one frame every 0.5 seconds when no tags detected
+        save_interval = 0.5
         
         with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            while not stop_event.is_set():
+            while turn_count < max_turns:  # Continue until all turns are complete
                 try:
+                    if stop_event.is_set():
+                        if turn_complete_event.is_set():
+                            # Reset events for next leg
+                            stop_event.clear()
+                            turn_complete_event.clear()
+                            continue
+                            
                     frame = picam2.capture_array()
                     
-                    # Calculate FPS
                     frame_count += 1
                     if frame_count % 60 == 0:
                         elapsed = time.time() - start_time
                         fps = frame_count / elapsed
                         print(f"Actual FPS: {fps:.2f}")
                     
-                    # Convert to grayscale for AprilTag detection
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    
-                    # Detect AprilTags
                     tags = at_detector.detect(
                         gray,
                         estimate_tag_pose=True,
@@ -563,37 +572,26 @@ def main():
                         tag_size=TAG_SIZE
                     )
                     
-                    # Determine if we should save this frame
-                    should_save = False
-                    if tags:
-                        # Always save frames with detected tags
-                        should_save = True
-                    elif time.time() - last_save_time >= save_interval:
-                        # Save periodic frames when no tags detected
-                        should_save = True
-                        last_save_time = time.time()
-                    
-                    # Save frame if needed
+                    should_save = bool(tags) or (time.time() - last_save_time >= save_interval)
                     if should_save:
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             frame_timestamp = datetime.now().strftime("%H%M%S_%f")
                             if tags:
                                 best_tag = max(tags, key=lambda x: x.decision_margin)
-                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m.jpg"
+                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m_dir{current_direction}.jpg"
                             else:
-                                frame_filename = f"frame_{frame_timestamp}_notag.jpg"
+                                frame_filename = f"frame_{frame_timestamp}_notag_dir{current_direction}.jpg"
                             
                             zipf.writestr(frame_filename, buffer.tobytes())
+                            last_save_time = time.time()
                     
-                    # Process AprilTag detections
                     if tags:
                         best_tag = max(tags, key=lambda x: x.decision_margin)
                         translation = best_tag.pose_t
                         current_distance = float(translation[2])
 
-                        # Print the detected distance
-                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m")
+                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Direction: {current_direction}°)")
 
                         if last_valid_distance is not None:
                             current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
@@ -604,15 +602,13 @@ def main():
                         if consecutive_detections >= 2:
                             distance_to_tag = current_distance
                             
-                            if current_distance <= distance_threshold:
-                                # Signal that the tag is reached
-                                print(f"Target reached. Distance: {current_distance:.2f}m")
-                                stop_event.set()  # This will signal the main thread to proceed with the turn
-                                break
+                            if current_distance <= distance_threshold and not stop_event.is_set():
+                                print(f"Target reached at direction {current_direction}°. Distance: {current_distance:.2f}m")
+                                stop_event.set()
                     else:
                         consecutive_detections = 0
                     
-                    time.sleep(0.016)  # ~60 FPS
+                    time.sleep(0.016)
                     
                 except Exception as e:
                     print(f"Error in image processing: {e}")
@@ -628,7 +624,7 @@ def main():
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
         stop_event.set()
-        time.sleep(0.5)  # Give time for threads to complete and the zip file to close
+        time.sleep(0.5)
         try:
             picam2.stop()
             stop_all_motors(motor_pins, motor_pwms)
@@ -654,8 +650,34 @@ def main():
         last_correction_time = time.time()
         correction_cooldown = 1.0
 
-        while not stop_event.is_set():
-            # Update gait
+        while turn_count < max_turns:  # Continue until all turns are complete
+            if stop_event.is_set() and not turn_complete_event.is_set():
+                # Stop and perform turn
+                print(f"\nCompleting leg {turn_count + 1} of {max_turns}")
+                stop_all_motors(motor_pins, motor_pwms)
+                time.sleep(1)
+
+                # Perform the 90-degree turn
+                try:
+                    perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+                    turn_count += 1
+                    current_direction = (current_direction + 90) % 360
+                    print(f"90-degree turn completed. New direction: {current_direction}°")
+                    turn_complete_event.set()
+                    
+                    if turn_count >= max_turns:
+                        print("All turns completed. Mission accomplished!")
+                        break
+                        
+                    print(f"Starting leg {turn_count + 1} of {max_turns}")
+                    time.sleep(1)  # Brief pause before starting next leg
+                    
+                except Exception as e:
+                    print(f"Error during turn: {e}")
+                    traceback.print_exc()
+                    break
+
+            # Update gait for straight line movement
             gait.update_gait()
 
             # Check IMU for straight-line correction
@@ -664,32 +686,19 @@ def main():
                 current_yaw = get_current_yaw(bno, calibration_offset)
                 
                 if current_yaw is not None:
-                    if current_yaw > YAW_THRESHOLD:
-                        print(f"\nCorrecting right drift: {current_yaw:.2f}°")
+                    # Adjust correction based on current direction
+                    adjusted_yaw = (current_yaw - current_direction + 180) % 360 - 180
+                    
+                    if adjusted_yaw > YAW_THRESHOLD:
+                        print(f"\nCorrecting right drift: {adjusted_yaw:.2f}°")
                         perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
                         last_correction_time = current_time
-                    elif current_yaw < -YAW_THRESHOLD:
-                        print(f"\nCorrecting left drift: {current_yaw:.2f}°")
+                    elif adjusted_yaw < -YAW_THRESHOLD:
+                        print(f"\nCorrecting left drift: {adjusted_yaw:.2f}°")
                         perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                         last_correction_time = current_time
 
             time.sleep(0.02)
-
-        # Ensure main loop exits when stop_event is set
-        print("\nMain loop exited.")
-
-        # Handle stop condition
-        print("\nTarget distance reached. Stopping and turning...")
-        stop_all_motors(motor_pins, motor_pwms)
-        time.sleep(1)  # Allow all motors to stop completely
-
-        # Perform the 90-degree turn
-        try:
-            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
-            print("90-degree turn completed.")
-        except Exception as e:
-            print(f"Error during final turn: {e}")
-            traceback.print_exc()
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
