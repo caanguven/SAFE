@@ -470,184 +470,92 @@ def stop_all_motors(motor_pins, motor_pwms):
         # Stop motor speed
         motor_pwms[motor].ChangeDutyCycle(0)
 
+class ImageProcessor:
+    def __init__(self, camera, detector, distance_threshold=0.5):
+        self.camera = camera
+        self.detector = detector
+        self.distance_threshold = distance_threshold
+        self.tag_detected = False
+        self.target_reached = False
+        
+    def process_frame(self):
+        frame = self.camera.capture_array()
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        tags = self.detector.detect(
+            gray,
+            estimate_tag_pose=True,
+            camera_params=CAMERA_PARAMS,
+            tag_size=TAG_SIZE
+        )
+        
+        if tags:
+            best_tag = max(tags, key=lambda x: x.decision_margin)
+            distance = float(best_tag.pose_t[2])
+            print(f"Tag {best_tag.tag_id} detected at {distance:.2f}m")
+            self.tag_detected = True
+            
+            if distance <= self.distance_threshold:
+                self.target_reached = True
+                return True
+        
+        return False
+
 def main():
-    # [Previous initialization code remains the same until the control parameters]
+    # Initialize all your hardware and parameters as before
+    # [Previous initialization code remains the same until the main loop]
 
-    # Control parameters
-    YAW_THRESHOLD = 15.0
-    CORRECTION_ANGLE = 15.0
-    distance_threshold = 0.5
-    distance_to_tag = None
-    movement_phase = "FORWARD"  # Track current movement phase: "FORWARD" or "TURN"
-    leg_count = 0  # Track completed legs (0-3)
-    mission_complete = False
-    current_direction = 0  # Track overall direction (0, 90, 180, 270)
-    performing_turn = False  # Flag to prevent IMU corrections during turns
-    turn_triggered = False  # New flag to ensure we only trigger the turn once
-
-    # Modified image processing thread
-    def image_processing_thread():
-        nonlocal distance_to_tag, movement_phase, turn_triggered
-        print("Starting image processing thread...")
-        
-        last_valid_distance = None
-        consecutive_detections = 0
-        frame_count = 0
-        start_time = time.time()
-        last_save_time = time.time()
-        save_interval = 0.5
-        
-        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            while not mission_complete:
-                try:
-                    if movement_phase == "TURN":
-                        time.sleep(0.1)  # Don't process images during turns
-                        continue
-
-                    frame = picam2.capture_array()
-                    
-                    frame_count += 1
-                    if frame_count % 60 == 0:
-                        elapsed = time.time() - start_time
-                        fps = frame_count / elapsed
-                        print(f"Actual FPS: {fps:.2f}")
-                    
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    tags = at_detector.detect(
-                        gray,
-                        estimate_tag_pose=True,
-                        camera_params=CAMERA_PARAMS,
-                        tag_size=TAG_SIZE
-                    )
-                    
-                    if tags and movement_phase == "FORWARD":
-                        best_tag = max(tags, key=lambda x: x.decision_margin)
-                        translation = best_tag.pose_t
-                        current_distance = float(translation[2])
-
-                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Leg {leg_count}/3)")
-
-                        if last_valid_distance is not None:
-                            current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
-                        
-                        last_valid_distance = current_distance
-                        
-                        if current_distance <= distance_threshold and not turn_triggered:
-                            print(f"\nTarget reached on leg {leg_count}/3. Distance: {current_distance:.2f}m")
-                            print("Triggering turn phase!")
-                            turn_triggered = True
-                            movement_phase = "TURN"
-                            # Force stop motors immediately when target is reached
-                            stop_all_motors(motor_pins, motor_pwms)
-                    
-                    time.sleep(0.016)
-                    
-                except Exception as e:
-                    print(f"Error in image processing: {e}")
-                    traceback.print_exc()
-                    time.sleep(0.1)
-        
-        print(f"Image processing thread stopped. Images saved to {zip_filename}")
-
-    # [Previous cleanup handler code remains the same]
-
-    def execute_90_degree_turn():
-        nonlocal performing_turn, current_direction, turn_triggered
-        performing_turn = True
-        try:
-            print("\nExecuting 90-degree turn sequence...")
-            # Stop all motors and wait for complete stop
-            stop_all_motors(motor_pins, motor_pwms)
-            time.sleep(1)
-
-            # Get initial heading
-            initial_yaw = None
-            attempts = 0
-            while initial_yaw is None and attempts < 5:
-                initial_yaw = get_current_yaw(bno, calibration_offset)
-                if initial_yaw is None:
-                    print("Failed to get initial yaw, retrying...")
-                    time.sleep(0.1)
-                attempts += 1
-
-            if initial_yaw is None:
-                raise RuntimeError("Failed to get initial yaw for 90-degree turn")
-
-            # Calculate target yaw
-            target_yaw = (initial_yaw + 90) % 360
-
-            print(f"Starting 90-degree turn from {initial_yaw:.2f}° to {target_yaw:.2f}°")
-            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
-            
-            # Update current direction
-            current_direction = (current_direction + 90) % 360
-            print(f"Turn completed. New direction: {current_direction}°")
-            
-            time.sleep(1)  # Pause after turn
-            turn_triggered = False  # Reset the trigger for next time
-        finally:
-            performing_turn = False
-
-    print("\nStarting square pattern movement...")
+    # Initialize image processor
+    processor = ImageProcessor(picam2, at_detector)
+    
+    # State tracking
+    turn_count = 0
+    MAX_TURNS = 4
 
     try:
-        last_correction_time = time.time()
-        correction_cooldown = 1.0
-
-        while not mission_complete:
-            try:
-                if movement_phase == "FORWARD":
-                    # Update gait for straight line movement
-                    gait.update_gait()
-
-                    # Check IMU for straight-line correction only if not turning
-                    current_time = time.time()
-                    if not performing_turn and current_time - last_correction_time >= correction_cooldown:
-                        current_yaw = get_current_yaw(bno, calibration_offset)
-                        
-                        if current_yaw is not None:
-                            # Adjust correction based on current direction
-                            adjusted_yaw = (current_yaw - current_direction + 180) % 360 - 180
-                            
-                            if adjusted_yaw > YAW_THRESHOLD:
-                                print(f"\nCorrecting right drift: {adjusted_yaw:.2f}°")
-                                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
-                                last_correction_time = current_time
-                            elif adjusted_yaw < -YAW_THRESHOLD:
-                                print(f"\nCorrecting left drift: {adjusted_yaw:.2f}°")
-                                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
-                                last_correction_time = current_time
-
-                elif movement_phase == "TURN":
-                    print("\nEntering turn phase...")
-                    # Execute the 90-degree turn
-                    print(f"Starting turn {leg_count + 1}/4")
-                    execute_90_degree_turn()
-                    
-                    # Update leg count and check mission completion
-                    leg_count += 1
-                    if leg_count >= 4:
-                        print("Square pattern completed!")
-                        mission_complete = True
-                        break
-                    
-                    # Resume forward movement
-                    print(f"\nStarting forward leg {leg_count + 1}/4")
-                    movement_phase = "FORWARD"
-                    time.sleep(1)  # Brief pause before starting next leg
-
-            except Exception as e:
-                print(f"Error in main loop: {e}")
-                traceback.print_exc()
-                break
-
-            time.sleep(0.02)
-
+        while turn_count < MAX_TURNS:
+            # Forward movement phase
+            print(f"\nStarting forward movement {turn_count + 1}/4")
+            target_reached = False
+            
+            while not target_reached:
+                # Update walking gait
+                gait.update_gait()
+                
+                # Process camera feed
+                target_reached = processor.process_frame()
+                
+                # Sleep briefly
+                time.sleep(0.02)
+            
+            # Target reached, stop and turn
+            print(f"\nTarget reached for leg {turn_count + 1}/4")
+            stop_all_motors(motor_pins, motor_pwms)
+            time.sleep(1)  # Ensure complete stop
+            
+            # Perform 90-degree turn
+            print(f"\nExecuting turn {turn_count + 1}/4")
+            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+            turn_count += 1
+            
+            if turn_count < MAX_TURNS:
+                print(f"\nCompleted turn {turn_count}/4. Continuing to next leg.")
+                time.sleep(1)  # Brief pause before next leg
+            else:
+                print("\nAll turns completed! Mission accomplished.")
+        
+        print("\nSquare pattern completed successfully!")
+        
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        print(f"\nError during execution: {e}")
         traceback.print_exc()
     finally:
-        cleanup(None, None)
+        # Cleanup
+        print("\nCleaning up...")
+        picam2.stop()
+        stop_all_motors(motor_pins, motor_pwms)
+        for pwm in motor_pwms.values():
+            pwm.stop()
+        GPIO.cleanup()
 
 if __name__ == "__main__":
     main()
