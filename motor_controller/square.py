@@ -522,24 +522,17 @@ def main():
     CORRECTION_ANGLE = 15.0
     distance_threshold = 0.5
     distance_to_tag = None
-    stop_event = threading.Event()
-    turn_complete_event = threading.Event()
-    continue_movement_event = threading.Event()  # New event for signaling to continue movement
-
-    # Track movement state
-    current_direction = 0  # 0: initial direction, 90: after first turn, 180: after second turn, 270: after third turn
-    turn_count = 0
-    max_turns = 4  # Number of turns to complete the square
-    current_leg = 0  # Track which leg of the square we're on
-    max_legs = 8  # 4 forward movements + 4 turns = 8 total legs
+    movement_phase = "FORWARD"  # Track current movement phase: "FORWARD" or "TURN"
+    leg_count = 0  # Track completed legs (0-3)
+    mission_complete = False
 
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
 
-    # Modified image processing thread with movement phase awareness
+    # Modified image processing thread
     def image_processing_thread():
-        nonlocal distance_to_tag
+        nonlocal distance_to_tag, movement_phase
         print("Starting image processing thread...")
         
         last_valid_distance = None
@@ -550,10 +543,10 @@ def main():
         save_interval = 0.5
         
         with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            while current_leg < max_legs:  # Continue until all legs are complete
+            while not mission_complete:
                 try:
-                    if not continue_movement_event.is_set():
-                        time.sleep(0.1)  # Wait if we're between movements
+                    if movement_phase != "FORWARD":
+                        time.sleep(0.1)  # Don't process images during turns
                         continue
 
                     frame = picam2.capture_array()
@@ -572,26 +565,12 @@ def main():
                         tag_size=TAG_SIZE
                     )
                     
-                    should_save = bool(tags) or (time.time() - last_save_time >= save_interval)
-                    if should_save:
-                        success, buffer = cv2.imencode('.jpg', frame)
-                        if success:
-                            frame_timestamp = datetime.now().strftime("%H%M%S_%f")
-                            if tags:
-                                best_tag = max(tags, key=lambda x: x.decision_margin)
-                                frame_filename = f"frame_{frame_timestamp}_leg{current_leg}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m_dir{current_direction}.jpg"
-                            else:
-                                frame_filename = f"frame_{frame_timestamp}_leg{current_leg}_notag_dir{current_direction}.jpg"
-                            
-                            zipf.writestr(frame_filename, buffer.tobytes())
-                            last_save_time = time.time()
-                    
-                    if tags and current_leg % 2 == 0:  # Only process tags during forward movement
+                    if tags:
                         best_tag = max(tags, key=lambda x: x.decision_margin)
                         translation = best_tag.pose_t
                         current_distance = float(translation[2])
 
-                        print(f"Leg {current_leg}/7: Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Direction: {current_direction}°)")
+                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Leg {leg_count}/3)")
 
                         if last_valid_distance is not None:
                             current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
@@ -602,10 +581,10 @@ def main():
                         if consecutive_detections >= 2:
                             distance_to_tag = current_distance
                             
-                            if current_distance <= distance_threshold and continue_movement_event.is_set():
-                                print(f"Target reached on leg {current_leg}/7. Distance: {current_distance:.2f}m")
-                                stop_event.set()
-                                continue_movement_event.clear()
+                            if current_distance <= distance_threshold:
+                                print(f"Target reached on leg {leg_count}/3. Distance: {current_distance:.2f}m")
+                                movement_phase = "TURN"  # Signal to start turn
+                                consecutive_detections = 0
                     else:
                         consecutive_detections = 0
                     
@@ -619,13 +598,14 @@ def main():
         print(f"Image processing thread stopped. Images saved to {zip_filename}")
 
     # Start the image processing thread
-    threading.Thread(target=image_processing_thread, daemon=True).start()
+    imaging_thread = threading.Thread(target=image_processing_thread, daemon=True)
+    imaging_thread.start()
 
     # Graceful shutdown handler
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
-        stop_event.set()
-        continue_movement_event.clear()
+        nonlocal mission_complete
+        mission_complete = True
         time.sleep(0.5)
         try:
             picam2.stop()
@@ -643,29 +623,13 @@ def main():
     print("\nStarting square pattern movement...")
 
     try:
-        # Initial manual turn if specified
-        if args.manual_turn != 0.0:
-            turn_direction = 'right' if args.manual_turn > 0 else 'left'
-            target_angle = abs(args.manual_turn)
-            perform_point_turn(motors, turn_direction, target_angle, bno, calibration_offset)
-
         last_correction_time = time.time()
         correction_cooldown = 1.0
+        current_direction = 0
 
-        # Start the first forward movement
-        continue_movement_event.set()
-
-        while current_leg < max_legs:  # Continue until pattern is complete
-            if current_leg % 2 == 0:  # Forward movement phase
-                if stop_event.is_set():
-                    # Transition to turn phase
-                    print(f"\nCompleting forward leg {current_leg//2 + 1} of 4")
-                    stop_all_motors(motor_pins, motor_pwms)
-                    time.sleep(1)
-                    current_leg += 1
-                    stop_event.clear()
-                    continue_movement_event.set()  # Allow next phase to begin
-                else:
+        while not mission_complete:
+            try:
+                if movement_phase == "FORWARD":
                     # Update gait for straight line movement
                     gait.update_gait()
 
@@ -687,26 +651,33 @@ def main():
                                 perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
                                 last_correction_time = current_time
 
-            else:  # Turn phase
-                try:
-                    print(f"\nExecuting turn {turn_count + 1} of 4")
+                elif movement_phase == "TURN":
+                    # Stop forward movement
+                    stop_all_motors(motor_pins, motor_pwms)
+                    time.sleep(1)  # Brief pause before turn
+
+                    # Execute turn
+                    print(f"\nExecuting turn {leg_count + 1}/4")
                     perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
-                    turn_count += 1
                     current_direction = (current_direction + 90) % 360
-                    print(f"90-degree turn completed. New direction: {current_direction}°")
-                    current_leg += 1
+                    print(f"Turn completed. New direction: {current_direction}°")
                     
-                    if current_leg >= max_legs:
+                    # Update leg count and check mission completion
+                    leg_count += 1
+                    if leg_count >= 4:
                         print("Square pattern completed!")
+                        mission_complete = True
                         break
-                        
-                    print(f"\nStarting forward leg {current_leg//2 + 1} of 4")
-                    time.sleep(1)  # Brief pause before starting next leg
                     
-                except Exception as e:
-                    print(f"Error during turn: {e}")
-                    traceback.print_exc()
-                    break
+                    # Resume forward movement
+                    print(f"\nStarting forward leg {leg_count + 1}/4")
+                    movement_phase = "FORWARD"
+                    time.sleep(1)  # Brief pause before starting next leg
+
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                traceback.print_exc()
+                break
 
             time.sleep(0.02)
 
