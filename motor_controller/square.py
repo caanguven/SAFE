@@ -518,8 +518,8 @@ def main():
     )
 
     # Control parameters
-    YAW_THRESHOLD = 25.0
-    CORRECTION_ANGLE = 25.0
+    YAW_THRESHOLD = 22.0
+    CORRECTION_ANGLE = 22.0
     distance_threshold = 0.5
     distance_to_tag = None
     movement_phase = "FORWARD"  # Track current movement phase: "FORWARD" or "TURN"
