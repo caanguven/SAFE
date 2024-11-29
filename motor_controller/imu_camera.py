@@ -721,11 +721,17 @@ def main():
                 perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
                 print("90-degree turn completed.")
                 # Update desired heading after turn
+                print(f"Before updating, desired_heading is {desired_heading}")
                 desired_heading = (desired_heading + 90.0) % 360
                 print(f"Updated desired heading: {desired_heading:.2f}°")
+                # Increment the iteration counter inside the try block
+                iterations += 1
             except Exception as e:
-                print(f"Error during turn: {e}")
+                print(f"Error during turn or updating desired heading: {e}")
                 traceback.print_exc()
+                # Increment the iteration counter even if there's an exception
+                iterations += 1
+
 
             # Reset variables for the next iteration
             distance_to_tag = None
@@ -736,8 +742,6 @@ def main():
                 motor.spike_filter.filter_active = False
                 motor.spike_filter.last_valid_reading = None
 
-            # Increment the iteration counter
-            iterations += 1
 
         print("\nAll movement cycles completed. Shutting down.")
 
