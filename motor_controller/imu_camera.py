@@ -524,17 +524,20 @@ def main():
     distance_to_tag = None
     stop_event = threading.Event()
     turn_complete_event = threading.Event()
+    continue_movement_event = threading.Event()  # New event for signaling to continue movement
 
     # Track movement state
     current_direction = 0  # 0: initial direction, 90: after first turn, 180: after second turn, 270: after third turn
     turn_count = 0
-    max_turns = 4  # Stop after completing a full square
+    max_turns = 4  # Number of turns to complete the square
+    current_leg = 0  # Track which leg of the square we're on
+    max_legs = 8  # 4 forward movements + 4 turns = 8 total legs
 
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_filename = f"captured_frames_{timestamp}.zip"
 
-    # Modified image processing thread with direction awareness
+    # Modified image processing thread with movement phase awareness
     def image_processing_thread():
         nonlocal distance_to_tag
         print("Starting image processing thread...")
@@ -547,15 +550,12 @@ def main():
         save_interval = 0.5
         
         with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            while turn_count < max_turns:  # Continue until all turns are complete
+            while current_leg < max_legs:  # Continue until all legs are complete
                 try:
-                    if stop_event.is_set():
-                        if turn_complete_event.is_set():
-                            # Reset events for next leg
-                            stop_event.clear()
-                            turn_complete_event.clear()
-                            continue
-                            
+                    if not continue_movement_event.is_set():
+                        time.sleep(0.1)  # Wait if we're between movements
+                        continue
+
                     frame = picam2.capture_array()
                     
                     frame_count += 1
@@ -579,19 +579,19 @@ def main():
                             frame_timestamp = datetime.now().strftime("%H%M%S_%f")
                             if tags:
                                 best_tag = max(tags, key=lambda x: x.decision_margin)
-                                frame_filename = f"frame_{frame_timestamp}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m_dir{current_direction}.jpg"
+                                frame_filename = f"frame_{frame_timestamp}_leg{current_leg}_tag{best_tag.tag_id}_dist{float(best_tag.pose_t[2]):.2f}m_dir{current_direction}.jpg"
                             else:
-                                frame_filename = f"frame_{frame_timestamp}_notag_dir{current_direction}.jpg"
+                                frame_filename = f"frame_{frame_timestamp}_leg{current_leg}_notag_dir{current_direction}.jpg"
                             
                             zipf.writestr(frame_filename, buffer.tobytes())
                             last_save_time = time.time()
                     
-                    if tags:
+                    if tags and current_leg % 2 == 0:  # Only process tags during forward movement
                         best_tag = max(tags, key=lambda x: x.decision_margin)
                         translation = best_tag.pose_t
                         current_distance = float(translation[2])
 
-                        print(f"Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Direction: {current_direction}°)")
+                        print(f"Leg {current_leg}/7: Tag {best_tag.tag_id} detected at {current_distance:.2f}m (Direction: {current_direction}°)")
 
                         if last_valid_distance is not None:
                             current_distance = 0.7 * current_distance + 0.3 * last_valid_distance
@@ -602,9 +602,10 @@ def main():
                         if consecutive_detections >= 2:
                             distance_to_tag = current_distance
                             
-                            if current_distance <= distance_threshold and not stop_event.is_set():
-                                print(f"Target reached at direction {current_direction}°. Distance: {current_distance:.2f}m")
+                            if current_distance <= distance_threshold and continue_movement_event.is_set():
+                                print(f"Target reached on leg {current_leg}/7. Distance: {current_distance:.2f}m")
                                 stop_event.set()
+                                continue_movement_event.clear()
                     else:
                         consecutive_detections = 0
                     
@@ -624,6 +625,7 @@ def main():
     def cleanup(signum, frame):
         print("\nShutting down gracefully...")
         stop_event.set()
+        continue_movement_event.clear()
         time.sleep(0.5)
         try:
             picam2.stop()
@@ -638,7 +640,7 @@ def main():
 
     signal.signal(signal.SIGINT, cleanup)
 
-    print("\nStarting combined operation with image capture...")
+    print("\nStarting square pattern movement...")
 
     try:
         # Initial manual turn if specified
@@ -650,53 +652,61 @@ def main():
         last_correction_time = time.time()
         correction_cooldown = 1.0
 
-        while turn_count < max_turns:  # Continue until all turns are complete
-            if stop_event.is_set() and not turn_complete_event.is_set():
-                # Stop and perform turn
-                print(f"\nCompleting leg {turn_count + 1} of {max_turns}")
-                stop_all_motors(motor_pins, motor_pwms)
-                time.sleep(1)
+        # Start the first forward movement
+        continue_movement_event.set()
 
-                # Perform the 90-degree turn
+        while current_leg < max_legs:  # Continue until pattern is complete
+            if current_leg % 2 == 0:  # Forward movement phase
+                if stop_event.is_set():
+                    # Transition to turn phase
+                    print(f"\nCompleting forward leg {current_leg//2 + 1} of 4")
+                    stop_all_motors(motor_pins, motor_pwms)
+                    time.sleep(1)
+                    current_leg += 1
+                    stop_event.clear()
+                    continue_movement_event.set()  # Allow next phase to begin
+                else:
+                    # Update gait for straight line movement
+                    gait.update_gait()
+
+                    # Check IMU for straight-line correction
+                    current_time = time.time()
+                    if current_time - last_correction_time >= correction_cooldown:
+                        current_yaw = get_current_yaw(bno, calibration_offset)
+                        
+                        if current_yaw is not None:
+                            # Adjust correction based on current direction
+                            adjusted_yaw = (current_yaw - current_direction + 180) % 360 - 180
+                            
+                            if adjusted_yaw > YAW_THRESHOLD:
+                                print(f"\nCorrecting right drift: {adjusted_yaw:.2f}°")
+                                perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
+                                last_correction_time = current_time
+                            elif adjusted_yaw < -YAW_THRESHOLD:
+                                print(f"\nCorrecting left drift: {adjusted_yaw:.2f}°")
+                                perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
+                                last_correction_time = current_time
+
+            else:  # Turn phase
                 try:
+                    print(f"\nExecuting turn {turn_count + 1} of 4")
                     perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
                     turn_count += 1
                     current_direction = (current_direction + 90) % 360
                     print(f"90-degree turn completed. New direction: {current_direction}°")
-                    turn_complete_event.set()
+                    current_leg += 1
                     
-                    if turn_count >= max_turns:
-                        print("All turns completed. Mission accomplished!")
+                    if current_leg >= max_legs:
+                        print("Square pattern completed!")
                         break
                         
-                    print(f"Starting leg {turn_count + 1} of {max_turns}")
+                    print(f"\nStarting forward leg {current_leg//2 + 1} of 4")
                     time.sleep(1)  # Brief pause before starting next leg
                     
                 except Exception as e:
                     print(f"Error during turn: {e}")
                     traceback.print_exc()
                     break
-
-            # Update gait for straight line movement
-            gait.update_gait()
-
-            # Check IMU for straight-line correction
-            current_time = time.time()
-            if current_time - last_correction_time >= correction_cooldown:
-                current_yaw = get_current_yaw(bno, calibration_offset)
-                
-                if current_yaw is not None:
-                    # Adjust correction based on current direction
-                    adjusted_yaw = (current_yaw - current_direction + 180) % 360 - 180
-                    
-                    if adjusted_yaw > YAW_THRESHOLD:
-                        print(f"\nCorrecting right drift: {adjusted_yaw:.2f}°")
-                        perform_point_turn(motors, 'left', CORRECTION_ANGLE, bno, calibration_offset)
-                        last_correction_time = current_time
-                    elif adjusted_yaw < -YAW_THRESHOLD:
-                        print(f"\nCorrecting left drift: {adjusted_yaw:.2f}°")
-                        perform_point_turn(motors, 'right', CORRECTION_ANGLE, bno, calibration_offset)
-                        last_correction_time = current_time
 
             time.sleep(0.02)
 
