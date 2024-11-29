@@ -470,82 +470,84 @@ def stop_all_motors(motor_pins, motor_pwms):
         # Stop motor speed
         motor_pwms[motor].ChangeDutyCycle(0)
 
+# ... [All the imports and initial class definitions remain the same]
+
 def main():
     parser = argparse.ArgumentParser(description='Quadruped Robot Controller with AprilTag Detection and IMU Correction')
     parser.add_argument('--manual_turn', type=float, default=0.0,
                         help='Manual turn angle in degrees (positive for right, negative for left)')
     args = parser.parse_args()
 
-    # Initialize motors, IMU, and other components
-    motor_pins, motor_pwms = setup_motors()
-    motors = {
-        'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor_pwms['M1'], MOTOR1_ADC_CHANNEL, encoder_flipped=False),
-        'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor_pwms['M2'], MOTOR2_ADC_CHANNEL, encoder_flipped=True),
-        'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor_pwms['M3'], MOTOR3_ADC_CHANNEL, encoder_flipped=False),
-        'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor_pwms['M4'], MOTOR4_ADC_CHANNEL, encoder_flipped=True)
-    }
-
-    bno = setup_imu()
-    calibration_offset = calibrate_imu(bno)
-    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
-
-    # Initialize desired heading
-    desired_heading = 0.0  # Starting heading
-
-    # Control parameters
-    YAW_THRESHOLD = 15.0
-    CORRECTION_ANGLE = 15.0
-    distance_threshold = 0.5
-    stop_event = threading.Event()
-
-    # Initialize camera with optimal settings
-    picam2 = Picamera2()
-    camera_config = picam2.create_still_configuration(
-        main={"size": (1920, 1080)},
-        controls={
-            "FrameDurationLimits": (16666, 16666),  # ~60fps
-            "ExposureTime": 8000,
-            "AnalogueGain": 2.5,
-            "Brightness": 0.5,
-            "Contrast": 1.2,
-            "Sharpness": 2.0
-        }
-    )
-    picam2.configure(camera_config)
-    picam2.start()
-
-    # Initialize AprilTag detector
-    at_detector = Detector(
-        families='tag36h11',
-        nthreads=os.cpu_count() or 1,
-        quad_decimate=2.0,
-        quad_sigma=0.8,
-        refine_edges=True,
-        decode_sharpening=0.5,
-        debug=0
-    )
-
-    # Graceful shutdown handler
-    def cleanup(signum, frame):
-        print("\nShutting down gracefully...")
-        stop_event.set()
-        time.sleep(0.5)  # Give time for threads to complete and the zip file to close
-        try:
-            picam2.stop()
-            stop_all_motors(motor_pins, motor_pwms)
-            for pwm in motor_pwms.values():
-                pwm.stop()
-            GPIO.cleanup()
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
-            traceback.print_exc()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, cleanup)
-
-    print("\nStarting combined operation with image capture...")
-
     try:
+        # Initialize motors, IMU, and other components
+        motor_pins, motor_pwms = setup_motors()
+        motors = {
+            'M1': MotorController("M1", MOTOR1_IN1, MOTOR1_IN2, motor_pwms['M1'], MOTOR1_ADC_CHANNEL, encoder_flipped=False),
+            'M2': MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor_pwms['M2'], MOTOR2_ADC_CHANNEL, encoder_flipped=True),
+            'M3': MotorController("M3", MOTOR3_IN1, MOTOR3_IN2, motor_pwms['M3'], MOTOR3_ADC_CHANNEL, encoder_flipped=False),
+            'M4': MotorController("M4", MOTOR4_IN1, MOTOR4_IN2, motor_pwms['M4'], MOTOR4_ADC_CHANNEL, encoder_flipped=True)
+        }
+
+        bno = setup_imu()
+        calibration_offset = calibrate_imu(bno)
+        mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+
+        # Initialize desired heading
+        desired_heading = 0.0  # Starting heading
+
+        # Control parameters
+        YAW_THRESHOLD = 15.0
+        CORRECTION_ANGLE = 15.0
+        distance_threshold = 0.5
+        stop_event = threading.Event()
+
+        # Initialize camera with optimal settings
+        picam2 = Picamera2()
+        camera_config = picam2.create_still_configuration(
+            main={"size": (1920, 1080)},
+            controls={
+                "FrameDurationLimits": (16666, 16666),  # ~60fps
+                "ExposureTime": 8000,
+                "AnalogueGain": 2.5,
+                "Brightness": 0.5,
+                "Contrast": 1.2,
+                "Sharpness": 2.0
+            }
+        )
+        picam2.configure(camera_config)
+        picam2.start()
+
+        # Initialize AprilTag detector
+        at_detector = Detector(
+            families='tag36h11',
+            nthreads=os.cpu_count() or 1,
+            quad_decimate=2.0,
+            quad_sigma=0.8,
+            refine_edges=True,
+            decode_sharpening=0.5,
+            debug=0
+        )
+
+        # Graceful shutdown handler
+        def cleanup(signum=None, frame=None):
+            print("\nShutting down gracefully...")
+            stop_event.set()
+            time.sleep(0.5)  # Give time for threads to complete and the zip file to close
+            try:
+                picam2.stop()
+                stop_all_motors(motor_pins, motor_pwms)
+                for pwm in motor_pwms.values():
+                    pwm.stop()
+                GPIO.cleanup()
+            except Exception as e:
+                print(f"Error during cleanup: {e}")
+                traceback.print_exc()
+            # Do not call sys.exit(0) here
+
+        signal.signal(signal.SIGINT, cleanup)
+
+        print("\nStarting combined operation with image capture...")
+
         # Initial manual turn if specified
         if args.manual_turn != 0.0:
             turn_direction = 'right' if args.manual_turn > 0 else 'left'
@@ -738,13 +740,13 @@ def main():
             iterations += 1
 
         print("\nAll movement cycles completed. Shutting down.")
-        cleanup(None, None)
 
     except Exception as e:
         print(f"\nUnexpected error: {e}")
         traceback.print_exc()
-    finally:
-        cleanup(None, None)
+        cleanup()
+    else:
+        cleanup()
 
 if __name__ == "__main__":
     main()
