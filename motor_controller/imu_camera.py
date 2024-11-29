@@ -518,8 +518,8 @@ def main():
     )
 
     # Control parameters
-    YAW_THRESHOLD = 15.0
-    CORRECTION_ANGLE = 15.0
+    YAW_THRESHOLD = 20.0
+    CORRECTION_ANGLE = 20.0
     distance_threshold = 0.5
     distance_to_tag = None
     stop_event = threading.Event()
