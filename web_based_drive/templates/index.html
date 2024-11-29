@@ -206,13 +206,14 @@
          let scene, camera, renderer, cube;
  
          function initThreeJS() {
-             const container = document.getElementById('cube-container');
- 
-             scene = new THREE.Scene();
-             camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-             renderer = new THREE.WebGLRenderer({ antialias: true });
-             renderer.setSize(container.clientWidth, container.clientHeight);
-             container.appendChild(renderer.domElement);
+            const container = document.getElementById('cube-container');
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setClearColor(0xffffff);  // Add this line to set white background
+            container.appendChild(renderer.domElement);
  
              const loader = new THREE.STLLoader();
              loader.load('/static/model.stl', function (geometry) {
