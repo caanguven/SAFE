@@ -481,6 +481,8 @@ def main():
     movement_phase = "FORWARD"  # Track current movement phase: "FORWARD" or "TURN"
     leg_count = 0  # Track completed legs (0-3)
     mission_complete = False
+    current_direction = 0  # Track overall direction (0, 90, 180, 270)
+    performing_turn = False  # Flag to prevent IMU corrections during turns
 
     # Create timestamp for unique zip filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -537,8 +539,8 @@ def main():
                         if consecutive_detections >= 2:
                             distance_to_tag = current_distance
                             
-                            if current_distance <= distance_threshold:
-                                print(f"Target reached on leg {leg_count}/3. Distance: {current_distance:.2f}m")
+                            if current_distance <= distance_threshold and not performing_turn:
+                                print(f"\nTarget reached on leg {leg_count}/3. Distance: {current_distance:.2f}m")
                                 movement_phase = "TURN"  # Signal to start turn
                                 consecutive_detections = 0
                     else:
@@ -576,12 +578,46 @@ def main():
 
     signal.signal(signal.SIGINT, cleanup)
 
+    def execute_90_degree_turn():
+        nonlocal performing_turn, current_direction
+        performing_turn = True
+        try:
+            # Stop forward movement
+            stop_all_motors(motor_pins, motor_pwms)
+            time.sleep(1)  # Ensure complete stop
+
+            # Get initial heading
+            initial_yaw = None
+            attempts = 0
+            while initial_yaw is None and attempts < 5:
+                initial_yaw = get_current_yaw(bno, calibration_offset)
+                if initial_yaw is None:
+                    print("Failed to get initial yaw, retrying...")
+                    time.sleep(0.1)
+                attempts += 1
+
+            if initial_yaw is None:
+                raise RuntimeError("Failed to get initial yaw for 90-degree turn")
+
+            # Calculate target yaw
+            target_yaw = (initial_yaw + 90) % 360
+
+            print(f"\nExecuting 90-degree turn from {initial_yaw:.2f}° to {target_yaw:.2f}°")
+            perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
+            
+            # Update current direction
+            current_direction = (current_direction + 90) % 360
+            print(f"Turn completed. New direction: {current_direction}°")
+            
+            time.sleep(1)  # Brief pause after turn
+        finally:
+            performing_turn = False
+
     print("\nStarting square pattern movement...")
 
     try:
         last_correction_time = time.time()
         correction_cooldown = 1.0
-        current_direction = 0
 
         while not mission_complete:
             try:
@@ -589,9 +625,9 @@ def main():
                     # Update gait for straight line movement
                     gait.update_gait()
 
-                    # Check IMU for straight-line correction
+                    # Check IMU for straight-line correction only if not turning
                     current_time = time.time()
-                    if current_time - last_correction_time >= correction_cooldown:
+                    if not performing_turn and current_time - last_correction_time >= correction_cooldown:
                         current_yaw = get_current_yaw(bno, calibration_offset)
                         
                         if current_yaw is not None:
@@ -608,15 +644,9 @@ def main():
                                 last_correction_time = current_time
 
                 elif movement_phase == "TURN":
-                    # Stop forward movement
-                    stop_all_motors(motor_pins, motor_pwms)
-                    time.sleep(1)  # Brief pause before turn
-
-                    # Execute turn
-                    print(f"\nExecuting turn {leg_count + 1}/4")
-                    perform_point_turn(motors, 'right', 90.0, bno, calibration_offset)
-                    current_direction = (current_direction + 90) % 360
-                    print(f"Turn completed. New direction: {current_direction}°")
+                    # Execute the 90-degree turn
+                    print(f"\nStarting turn {leg_count + 1}/4")
+                    execute_90_degree_turn()
                     
                     # Update leg count and check mission completion
                     leg_count += 1
