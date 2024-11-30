@@ -488,8 +488,8 @@ def main():
     gait = GaitGenerator(motors, mcp=Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE)))
 
     # Yaw monitoring parameters
-    YAW_THRESHOLD = 15.0  # degrees
-    CORRECTION_ANGLE = 15.0  # degrees
+    YAW_THRESHOLD = 17.0  # degrees
+    CORRECTION_ANGLE = 17.0  # degrees
 
     # Graceful shutdown handler
     def cleanup(signum, frame):
