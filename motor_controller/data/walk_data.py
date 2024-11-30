@@ -455,9 +455,9 @@ def calibrate_imu(bno):
             quat = bno.quaternion
 
             if quat is not None and len(quat) == 4:
-                _, _, yaw = quaternion_to_euler(*quat)
-                if yaw is not None and not math.isnan(yaw):
-                    samples.append(yaw)
+                roll, pitch, yaw = quaternion_to_euler(*quat)
+                if None not in (roll, pitch, yaw) and not any(math.isnan(x) for x in [roll, pitch, yaw]):
+                    samples.append((roll, pitch, yaw))
             else:
                 print("\nInvalid quaternion reading, retrying...")
                 time.sleep(0.5)
@@ -467,27 +467,47 @@ def calibrate_imu(bno):
             time.sleep(0.5)
 
     if len(samples) >= max_samples / 2:
-        calibration_offset = sum(samples) / len(samples)
-        print(f"\nCalibration complete. Reference yaw: {calibration_offset:.2f}°")
+        # Compute average offsets for roll, pitch, yaw
+        sum_roll = sum(sample[0] for sample in samples)
+        sum_pitch = sum(sample[1] for sample in samples)
+        sum_yaw = sum(sample[2] for sample in samples)
+
+        calibration_offset = {
+            'roll': sum_roll / len(samples),
+            'pitch': sum_pitch / len(samples),
+            'yaw': sum_yaw / len(samples)
+        }
+
+        print(f"\nCalibration complete. Reference angles:")
+        print(f"Roll offset: {calibration_offset['roll']:.2f}°")
+        print(f"Pitch offset: {calibration_offset['pitch']:.2f}°")
+        print(f"Yaw offset: {calibration_offset['yaw']:.2f}°")
         return calibration_offset
     else:
         raise RuntimeError(f"Failed to collect enough valid samples (got {len(samples)} of {max_samples})")
 
-def get_current_yaw(bno, calibration_offset, retries=3):
-    """Get current yaw with retry mechanism"""
+def get_current_euler(bno, calibration_offsets, retries=3):
+    """Get current Euler angles with calibration offsets"""
     for _ in range(retries):
         try:
             quat = bno.quaternion
             if quat is not None and len(quat) == 4 and not any(math.isnan(x) for x in quat):
-                _, _, yaw = quaternion_to_euler(*quat)
-                if yaw is not None:
-                    yaw_adjusted = (yaw - calibration_offset + 360) % 360
-                    if yaw_adjusted > 180:
-                        yaw_adjusted -= 360  # Convert to range [-180, 180]
-                    return yaw_adjusted
+                roll, pitch, yaw = quaternion_to_euler(*quat)
+                if None not in (roll, pitch, yaw):
+                    # Apply calibration offsets
+                    roll_adjusted = roll - calibration_offsets['roll']
+                    pitch_adjusted = pitch - calibration_offsets['pitch']
+                    yaw_adjusted = yaw - calibration_offsets['yaw']
+
+                    # Normalize angles to [-180, 180]
+                    roll_adjusted = (roll_adjusted + 180) % 360 - 180
+                    pitch_adjusted = (pitch_adjusted + 180) % 360 - 180
+                    yaw_adjusted = (yaw_adjusted + 180) % 360 - 180
+
+                    return roll_adjusted, pitch_adjusted, yaw_adjusted
         except Exception:
             time.sleep(0.1)
-    return None
+    return None, None, None
 
 def main():
     parser = argparse.ArgumentParser(description='Quadruped Robot Controller with Gait Modes')
@@ -507,7 +527,7 @@ def main():
 
     # Calibrate IMU
     try:
-        calibration_offset = calibrate_imu(bno)
+        calibration_offsets = calibrate_imu(bno)
     except Exception as e:
         print(f"IMU Calibration Error: {e}")
         sys.exit(1)
@@ -534,11 +554,12 @@ def main():
 
         start_time = time.time()
         while time.time() - start_time < 15:
-            quat = bno.quaternion
-            if quat is not None and len(quat) == 4:
-                roll, pitch, yaw = quaternion_to_euler(*quat)
+            roll, pitch, yaw = get_current_euler(bno, calibration_offsets)
+            if None not in (roll, pitch, yaw):
                 timestamp = time.time()
                 logfile.write(f"{timestamp},{roll:.2f},{pitch:.2f},{yaw:.2f}\n")
+            else:
+                print("\nFailed to retrieve calibrated IMU data.")
             time.sleep(0.05)  # Adjust sampling rate as needed
 
     print(f"\nCompleted {args.mode} gait. IMU data saved to {log_filename}")
