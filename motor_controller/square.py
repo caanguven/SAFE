@@ -73,8 +73,8 @@ MOTOR4_SPD = 19
 MOTOR4_ADC_CHANNEL = 3
 
 # AprilTag and Camera Parameters
-FX = 1820.0  # Focal length in pixels along x-axis
-FY = 1820.0  # Focal length in pixels along y-axis
+FX = 1435.0  # Focal length in pixels along x-axis
+FY = 1440.0  # Focal length in pixels along y-axis
 CX = 1296.0  # Principal point x-coordinate
 CY = 972.0   # Principal point y-coordinate
 CAMERA_PARAMS = (FX, FY, CX, CY)
