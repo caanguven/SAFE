@@ -206,12 +206,17 @@ class MotorGroup:
         return target_positions
 
 class MotorControlSystem:
-    def __init__(self, mcp, mode='walk'):
+    def __init__(self, mcp, mode='walk', enable_correction=False, bno=None, calibration_offsets=None):
         self.mode = mode  # 'walk', 'trot', or 'gallop'
         self.current_direction = 'forward'
         self.lock = threading.Lock()
         self.running = True
         self.mcp = mcp
+        self.enable_correction = enable_correction
+        self.bno = bno
+        self.calibration_offsets = calibration_offsets
+        self.YAW_THRESHOLD = 17.0  # degrees
+        self.CORRECTION_ANGLE = 17.0  # degrees
 
         # GPIO setup
         GPIO.setmode(GPIO.BCM)
@@ -339,11 +344,100 @@ class MotorControlSystem:
             )
             return [group1, group2]
 
+    def perform_point_turn(self, turn_direction, angle):
+        """
+        Perform a point turn to correct the robot's direction.
+
+        :param turn_direction: 'left' or 'right'.
+        :param angle: Angle to turn in degrees.
+        """
+        motor_speed = 70  # Speed for point turn; adjust as needed
+
+        # Configure motors for point turn
+        if turn_direction == 'right':
+            # Right point turn: Right motors backward, Left motors forward
+            self.motors['M1'].set_motor_direction('forward')
+            self.motors['M2'].set_motor_direction('backward')
+            self.motors['M3'].set_motor_direction('forward')
+            self.motors['M4'].set_motor_direction('backward')
+        else:
+            # Left point turn: Left motors backward, Right motors forward
+            self.motors['M1'].set_motor_direction('backward')
+            self.motors['M2'].set_motor_direction('forward')
+            self.motors['M3'].set_motor_direction('backward')
+            self.motors['M4'].set_motor_direction('forward')
+
+        # Set motor speeds
+        for motor in self.motors.values():
+            motor.pwm.ChangeDutyCycle(motor_speed)
+
+        print(f"\nStarting {turn_direction} point turn of {angle}°")
+
+        # Record initial yaw
+        initial_yaw = get_current_yaw(self.bno, self.calibration_offsets)
+        if initial_yaw is None:
+            print("Failed to get initial yaw for point turn.")
+            return
+
+        # Determine target yaw
+        if turn_direction == 'right':
+            target_yaw = (initial_yaw + angle) % 360
+        else:
+            target_yaw = (initial_yaw - angle + 360) % 360
+
+        if target_yaw > 180:
+            target_yaw -= 360  # Convert to range [-180, 180]
+
+        # Main turn loop
+        while True:
+            current_yaw = get_current_yaw(self.bno, self.calibration_offsets)
+            if current_yaw is None:
+                print("Yaw reading failed during point turn.")
+                break
+
+            # Calculate turned angle
+            if turn_direction == 'right':
+                turned_angle = (current_yaw - initial_yaw + 360) % 360
+                if turned_angle > 180:
+                    turned_angle -= 360
+            else:
+                turned_angle = (initial_yaw - current_yaw + 360) % 360
+                if turned_angle > 180:
+                    turned_angle -= 360
+
+            print(f"Point Turn - Current yaw: {current_yaw:.2f}°, Turned: {turned_angle:.2f}°    ", end='\r')
+
+            if abs(turned_angle) >= angle:
+                print(f"\nPoint turn completed! Final yaw: {current_yaw:.2f}°")
+                break
+
+            time.sleep(0.05)
+
+        # Stop motors after point turn
+        for motor in self.motors.values():
+            motor.stop_motor()
+        time.sleep(0.5)  # Brief pause after turn
+
     def control_loop(self):
         while self.running:
             with self.lock:
                 direction = self.current_direction
                 mode = self.mode
+
+            # Yaw correction
+            if self.enable_correction and self.bno and self.calibration_offsets:
+                current_yaw = get_current_yaw(self.bno, self.calibration_offsets)
+                if current_yaw is None:
+                    logging.warning("Yaw reading failed. Skipping correction.")
+                else:
+                    if current_yaw > self.YAW_THRESHOLD:
+                        logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective right point turn")
+                        self.perform_point_turn('left', self.CORRECTION_ANGLE)
+                    elif current_yaw < -self.YAW_THRESHOLD:
+                        logging.info(f"Yaw deviation: {current_yaw:.2f}°, performing corrective left point turn")
+                        self.perform_point_turn('right', self.CORRECTION_ANGLE)
+                    else:
+                        logging.info(f"Yaw deviation: {current_yaw:.2f}°, maintaining straight path")
 
             motor_groups = self.configure_motor_groups(direction, mode)
             base_position = self.generate_sawtooth_position()
@@ -509,10 +603,17 @@ def get_current_euler(bno, calibration_offsets, retries=3):
             time.sleep(0.1)
     return None, None, None
 
+def get_current_yaw(bno, calibration_offsets, retries=3):
+    """Get current yaw with calibration offset"""
+    roll, pitch, yaw = get_current_euler(bno, calibration_offsets, retries)
+    return yaw
+
 def main():
-    parser = argparse.ArgumentParser(description='Quadruped Robot Controller with Gait Modes')
+    parser = argparse.ArgumentParser(description='Quadruped Robot Controller with Gait Modes and Optional Yaw Correction')
     parser.add_argument('--mode', type=str, choices=['walk', 'trot', 'gallop'], default='walk',
                         help='Select the gait mode for the robot')
+    parser.add_argument('--enable_correction', action='store_true',
+                        help='Enable yaw correction during gait movement')
     args = parser.parse_args()
 
     # Initialize MCP3008
@@ -533,7 +634,8 @@ def main():
         sys.exit(1)
 
     # Initialize MotorControlSystem
-    motor_control_system = MotorControlSystem(mcp, mode=args.mode)
+    motor_control_system = MotorControlSystem(mcp, mode=args.mode, enable_correction=args.enable_correction,
+                                              bno=bno, calibration_offsets=calibration_offsets)
     motor_control_system.set_mode(args.mode)
 
     # Graceful shutdown handler
