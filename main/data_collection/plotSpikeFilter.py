@@ -68,9 +68,13 @@ def plot_motor_data(df_with_filter, df_without_filter):
         df_with_filter (pd.DataFrame): DataFrame with spike filter active.
         df_without_filter (pd.DataFrame): DataFrame with spike filter inactive.
     """
+    # Filter the data for the first 10 seconds
+    df_with_filter = df_with_filter[df_with_filter['relative_time'] <= 10]
+    df_without_filter = df_without_filter[df_without_filter['relative_time'] <= 10]
+
     # Create a 2x2 subplot layout
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('Motor 3 Control Parameters: With vs Without Spike Filter', fontsize=16)
+    fig.suptitle('Motor 3 Control Parameters: With vs Without Spike Filter (First 10 Seconds)', fontsize=16)
 
     # Define plot configurations
     plot_configs = [
@@ -131,13 +135,14 @@ def plot_motor_data(df_with_filter, df_without_filter):
         ax.grid(True)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('motor3_control_plot.png')
+    plt.savefig('motor3_control_plot_10_seconds.png')
     plt.show()
+
 
 def main():
     # Define log file paths
-    log_with_filter = 'motor3_with_spike_filter.log'
-    log_without_filter = 'motor3_without_spike_filter.log'
+    log_with_filter = 'motor3_with_spike_filter_1.log'
+    log_without_filter = 'motor3_without_spike_filter_1.log'
 
     # Parse log files
     print("Parsing log files...")
