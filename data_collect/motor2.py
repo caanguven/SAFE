@@ -22,8 +22,8 @@ MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
 # GPIO Pins for Motor 2 (BCM numbering)
-MOTOR2_IN1 = 5    # was 29
-MOTOR2_IN2 = 25   # was 22
+MOTOR2_IN1 = 25    # was 29
+MOTOR2_IN2 = 5   # was 22
 MOTOR2_SPD = 6    # was 31
 MOTOR2_ADC_CHANNEL = 1
 
