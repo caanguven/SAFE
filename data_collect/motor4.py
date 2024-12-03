@@ -220,10 +220,10 @@ class MotorController:
         self.previous_control_signal = 0.0  # Reset previous control signal
         logging.info(f"{self.name} MotorController: Reset complete.")
 
-def generate_sawtooth_position(start_time):
+def generate_decreasing_sawtooth_position(start_time):
     elapsed_time = time.time() - start_time
     position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-    position = (position_in_cycle * MAX_ANGLE) % MAX_ANGLE
+    position = (MAX_ANGLE - (position_in_cycle * MAX_ANGLE)) % MAX_ANGLE
     return position
 
 def main():
@@ -247,8 +247,8 @@ def main():
 
         # Tests configurations
         tests = [
-            {'spike_filter_enabled': True, 'csv_filename': 'motor4_with_spike_filter.csv'},
-            {'spike_filter_enabled': False, 'csv_filename': 'motor4_without_spike_filter.csv'},
+            {'spike_filter_enabled': True, 'csv_filename': 'motor4_forward_with_spike_filter.csv'},
+            {'spike_filter_enabled': False, 'csv_filename': 'motor4_forward_without_spike_filter.csv'},
         ]
 
         for test in tests:
@@ -258,7 +258,7 @@ def main():
             logging.info(f"Starting test with spike filter enabled: {test['spike_filter_enabled']}")
 
             with open(csv_filename, mode='w', newline='') as csvfile:
-                fieldnames = ['Time', 'Error (degrees)', 'Control Signal (%)', 'Target Position (degrees)', 'Actual Position (degrees)']
+                fieldnames = ['Time (s)', 'Error (degrees)', 'Control Signal (%)', 'Target Position (degrees)', 'Actual Position (degrees)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
 
@@ -267,7 +267,7 @@ def main():
 
                 while time.time() < end_time:
                     current_time = time.time() - start_time
-                    target_position = generate_sawtooth_position(start_time)
+                    target_position = generate_decreasing_sawtooth_position(start_time)
                     motor4.move_to_position(target_position, mcp)
                     actual_position = motor4.read_position(mcp)
                     error = motor4.last_error
@@ -275,11 +275,11 @@ def main():
 
                     # Record data
                     writer.writerow({
-                        'Time': current_time,
-                        'Error (degrees)': error,
-                        'Control Signal (%)': control_signal,
-                        'Target Position (degrees)': target_position,
-                        'Actual Position (degrees)': actual_position
+                        'Time (s)': f"{current_time:.2f}",
+                        'Error (degrees)': f"{error:.2f}",
+                        'Control Signal (%)': f"{control_signal:.2f}",
+                        'Target Position (degrees)': f"{target_position:.2f}",
+                        'Actual Position (degrees)': f"{actual_position:.2f}"
                     })
 
                     time.sleep(0.02)  # 20 ms delay
