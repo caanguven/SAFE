@@ -20,7 +20,7 @@ SPI_DEVICE = 0
 ADC_MAX = 1023
 MIN_ANGLE = 0
 MAX_ANGLE = 330
-SAWTOOTH_PERIOD = 3  # Period in seconds
+SAWTOOTH_PERIOD = 2  # Period in seconds
 
 # GPIO Pins for Motor 2 (BCM numbering)
 MOTOR2_IN1 = 5    # was 29
@@ -33,7 +33,7 @@ class SpikeFilter:
         self.filter_active = False
         self.last_valid_reading = None
         self.name = name
-        # Adding constants based on requirements
+        # Constants based on requirements
         self.DEAD_ZONE_THRESHOLD = 950  # Activation threshold before dead zone
         self.LOWER_VALID_LIMIT = 150    # ~45 degrees
         self.UPPER_VALID_LIMIT = 750    # Balanced threshold for backward movement
@@ -89,7 +89,7 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001
+            delta_time = 0.0001  # Prevent division by zero
 
         proportional = self.Kp * error
         self.integral += error * delta_time
@@ -136,21 +136,21 @@ class MotorController:
 
     def read_position(self, mcp):
         raw_value = mcp.read_adc(self.adc_channel)
-        
+
         if self.encoder_flipped:
             raw_value = ADC_MAX - raw_value
-        
+
         if self.spike_filter_enabled:
             filtered_value = self.spike_filter.filter(raw_value)
             if filtered_value is None:
                 return self.last_valid_position if self.last_valid_position is not None else 0
-            degrees = (filtered_value / ADC_MAX) * 330.0
+            degrees = (filtered_value / ADC_MAX) * MAX_ANGLE
             self.last_valid_position = degrees
-            logging.debug(f"{self.name} Position (Filtered): {degrees}° (raw: {raw_value})")
+            logging.debug(f"{self.name} Position (Filtered): {degrees:.2f}° (raw: {raw_value})")
             return degrees
         else:
-            degrees = (raw_value / ADC_MAX) * 330.0
-            logging.debug(f"{self.name} Position (Raw): {degrees}° (raw: {raw_value})")
+            degrees = (raw_value / ADC_MAX) * MAX_ANGLE
+            logging.debug(f"{self.name} Position (Raw): {degrees:.2f}° (raw: {raw_value})")
             return degrees
 
     def set_motor_direction(self, direction):
@@ -173,10 +173,10 @@ class MotorController:
             error = target - current_position
 
             # Handle wrap-around for angles
-            if error > 165:
-                error -= 330
-            elif error < -165:
-                error += 330
+            if error > (MAX_ANGLE / 2):
+                error -= MAX_ANGLE
+            elif error < -(MAX_ANGLE / 2):
+                error += MAX_ANGLE
 
             control_signal = self.pid.compute(error)
 
@@ -225,7 +225,7 @@ class MotorControlSystem:
         GPIO.setup(MOTOR2_SPD, GPIO.OUT)
 
         # Set up PWM for motor speed control
-        self.motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+        self.motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)  # 1kHz frequency
         self.motor2_pwm.start(0)
 
         # Set up MCP3008
@@ -237,14 +237,14 @@ class MotorControlSystem:
 
         self.start_time = time.time()
 
-        # Initialize CSV files
+        # Initialize CSV files with tab delimiter
         self.csv_with_filter = open('with_spike_filter.csv', mode='w', newline='')
         self.csv_without_filter = open('without_spike_filter.csv', mode='w', newline='')
-        self.writer_with_filter = csv.writer(self.csv_with_filter)
-        self.writer_without_filter = csv.writer(self.csv_without_filter)
+        self.writer_with_filter = csv.writer(self.csv_with_filter, delimiter='\t')
+        self.writer_without_filter = csv.writer(self.csv_without_filter, delimiter='\t')
 
         # Write headers
-        headers = ['Error_to_Target_deg', 'Control_Signal_%', 'Target_Path_Sawtooth_deg', 'Actual_Position_deg']
+        headers = ['Time (s)', 'Error (degrees)', 'Control Signal (%)', 'Target Position (degrees)', 'Actual Position (degrees)']
         self.writer_with_filter.writerow(headers)
         self.writer_without_filter.writerow(headers)
 
@@ -276,10 +276,10 @@ class MotorControlSystem:
                     error = target_position - actual_position
 
                     # Handle wrap-around for angles
-                    if error > 165:
-                        error -= 330
-                    elif error < -165:
-                        error += 330
+                    if error > (MAX_ANGLE / 2):
+                        error -= MAX_ANGLE
+                    elif error < -(MAX_ANGLE / 2):
+                        error += MAX_ANGLE
 
                     control_signal = self.motor2.pid.compute(error)
 
@@ -288,14 +288,15 @@ class MotorControlSystem:
                     self.motor2.set_motor_direction(direction)
                     speed = min(100, max(30, abs(control_signal)))
                     self.motor2.pwm.ChangeDutyCycle(speed)
-                    logging.debug(f"{self.motor2.name} Speed: {speed}% (Control Signal: {control_signal})")
+                    logging.debug(f"{self.motor2.name} Speed: {speed}% (Control Signal: {control_signal:.2f})")
 
                     # Log to CSV with spike filter
                     self.writer_with_filter.writerow([
-                        round(error, 2),
-                        round(control_signal, 2),
-                        round(target_position, 2),
-                        round(actual_position, 2)
+                        f"{elapsed_time:.2f}",
+                        f"{error:.2f}",
+                        f"{control_signal:.2f}",
+                        f"{target_position:.2f}",
+                        f"{actual_position:.2f}"
                     ])
                     self.csv_with_filter.flush()
 
@@ -305,15 +306,15 @@ class MotorControlSystem:
                         self.motor2.disable_spike_filter()
                     target_position = self.generate_sawtooth_position()
 
-                    # Read raw position
+                    # Read raw position (since spike filter is disabled)
                     actual_position = self.motor2.read_position(self.mcp)
                     error = target_position - actual_position
 
                     # Handle wrap-around for angles
-                    if error > 165:
-                        error -= 330
-                    elif error < -165:
-                        error += 330
+                    if error > (MAX_ANGLE / 2):
+                        error -= MAX_ANGLE
+                    elif error < -(MAX_ANGLE / 2):
+                        error += MAX_ANGLE
 
                     control_signal = self.motor2.pid.compute(error)
 
@@ -322,14 +323,15 @@ class MotorControlSystem:
                     self.motor2.set_motor_direction(direction)
                     speed = min(100, max(30, abs(control_signal)))
                     self.motor2.pwm.ChangeDutyCycle(speed)
-                    logging.debug(f"{self.motor2.name} Speed: {speed}% (Control Signal: {control_signal})")
+                    logging.debug(f"{self.motor2.name} Speed: {speed}% (Control Signal: {control_signal:.2f})")
 
                     # Log to CSV without spike filter
                     self.writer_without_filter.writerow([
-                        round(error, 2),
-                        round(control_signal, 2),
-                        round(target_position, 2),
-                        round(actual_position, 2)
+                        f"{elapsed_time:.2f}",
+                        f"{error:.2f}",
+                        f"{control_signal:.2f}",
+                        f"{target_position:.2f}",
+                        f"{actual_position:.2f}"
                     ])
                     self.csv_without_filter.flush()
 
