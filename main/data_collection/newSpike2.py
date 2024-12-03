@@ -387,7 +387,7 @@ class MotorControlSystem:
 
 def main():
     # Initialize MotorControlSystem
-    motor_control_system = MotorControlSystem(mode='normal', run_duration=35, spike_filter_duration=15, catch_up_duration=5)
+    motor_control_system = MotorControlSystem(mode='normal', run_duration=40, spike_filter_duration=15, catch_up_duration=10)
 
     # Set initial direction to 'forward' to start movement
     motor_control_system.set_direction('forward')
