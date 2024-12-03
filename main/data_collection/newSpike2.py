@@ -222,6 +222,10 @@ class MotorControlSystem:
         self.csv_writer_with_spike.writerow(headers)
         self.csv_writer_no_spike.writerow(headers)
 
+        # Initialize start times for CSV logging
+        self.spike_start_time = None
+        self.no_spike_start_time = None
+
         # GPIO setup
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(MOTOR3_IN1, GPIO.OUT)
@@ -300,20 +304,20 @@ class MotorControlSystem:
                     self.start_time = time.time() - t0
                     self.initialized = True
 
-            # **Catch-Up Phase: First 5 seconds**
+            # **Catch-Up Phase: First catch_up_duration seconds**
             if not self.logging_enabled and elapsed_time >= self.catch_up_duration:
                 self.logging_enabled = True
+                self.spike_start_time = current_time
+                print("MotorControlSystem started with spike filtering.")
 
             # Disable spike filter after spike_filter_duration seconds (relative to start_time)
-            # Adjust spike_filter_duration to account for catch_up_duration
             if elapsed_time >= (self.catch_up_duration + self.spike_filter_duration) and not spike_filter_disabled:
                 with self.lock:
                     for motor in self.motors.values():
                         motor.use_spike_filter = False
                         motor.spike_filter.reset()
                 spike_filter_disabled = True
-
-                # Print message indicating spike filter disabled
+                self.no_spike_start_time = current_time
                 print("Spike filters disabled. Running without spike filtering.")
 
             # Stop the system after run_duration seconds
@@ -342,9 +346,27 @@ class MotorControlSystem:
                 if log and result[1] is not None:
                     error, speed, target_pos, actual_pos = result[1]
                     if motor.use_spike_filter:
-                        self.csv_writer_with_spike.writerow([f"{elapsed_time:.2f}", f"{error:.2f}", f"{speed:.2f}", f"{target_pos:.2f}", f"{actual_pos:.2f}"])
+                        # Calculate elapsed time for spike CSV
+                        if self.spike_start_time is not None:
+                            elapsed_time_with_spike = current_time - self.spike_start_time
+                            self.csv_writer_with_spike.writerow([
+                                f"{elapsed_time_with_spike:.2f}",
+                                f"{error:.2f}",
+                                f"{speed:.2f}",
+                                f"{target_pos:.2f}",
+                                f"{actual_pos:.2f}"
+                            ])
                     else:
-                        self.csv_writer_no_spike.writerow([f"{elapsed_time:.2f}", f"{error:.2f}", f"{speed:.2f}", f"{target_pos:.2f}", f"{actual_pos:.2f}"])
+                        # Calculate elapsed time for no-spike CSV
+                        if self.no_spike_start_time is not None:
+                            elapsed_time_no_spike = current_time - self.no_spike_start_time
+                            self.csv_writer_no_spike.writerow([
+                                f"{elapsed_time_no_spike:.2f}",
+                                f"{error:.2f}",
+                                f"{speed:.2f}",
+                                f"{target_pos:.2f}",
+                                f"{actual_pos:.2f}"
+                            ])
             else:
                 # Stop Motor 3
                 self.motors['M3'].stop_motor()
