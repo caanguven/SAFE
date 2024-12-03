@@ -6,7 +6,7 @@ import logging
 import csv
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,  # Changed to DEBUG for more detailed logs
                     format='%(asctime)s [%(levelname)s] %(message)s')
 
 # Constants for SPI and ADC
@@ -38,39 +38,65 @@ class SpikeFilter:
 
     def filter(self, new_value):
         if not self.enabled:
+            logging.debug(f"{self.name} SpikeFilter: Filter disabled. Passing value: {new_value}")
             return new_value
 
+        # Initialize last_valid_reading if None
+        if self.last_valid_reading is None:
+            self.last_valid_reading = new_value
+            logging.debug(f"{self.name} SpikeFilter: Initializing last_valid_reading to {new_value}")
+            return new_value
+
+        # Determine movement direction based on change
+        delta = new_value - self.last_valid_reading
+        movement_direction = 'increasing' if delta > 0 else 'decreasing'
+
+        logging.debug(f"{self.name} SpikeFilter: New value: {new_value}, Last valid: {self.last_valid_reading}, Movement: {movement_direction}")
+
         # Case 1: Check for entering dead zone
-        if not self.filter_active and self.last_valid_reading is not None:
-            if self.last_valid_reading >= self.DEAD_ZONE_THRESHOLD:
+        if not self.filter_active:
+            if movement_direction == 'increasing' and new_value >= self.DEAD_ZONE_THRESHOLD:
                 self.filter_active = True
                 self.in_dead_zone = True
-                logging.debug(f"{self.name} SpikeFilter: Entering dead zone. Last valid: {self.last_valid_reading}")
-                return None  # Return None to indicate dead zone
+                logging.debug(f"{self.name} SpikeFilter: Entering dead zone (increasing). Value: {new_value}")
+                return None
+            elif movement_direction == 'decreasing' and new_value <= self.DEAD_ZONE_THRESHOLD:
+                self.filter_active = True
+                self.in_dead_zone = True
+                logging.debug(f"{self.name} SpikeFilter: Entering dead zone (decreasing). Value: {new_value}")
+                return None
 
         # Case 2: Filter is active (in dead zone)
         if self.filter_active:
-            # Check if we've exited the dead zone with a valid reading
-            if self.LOWER_VALID_LIMIT <= new_value <= self.UPPER_VALID_LIMIT:
-                self.filter_active = False
-                self.in_dead_zone = False
-                self.last_valid_reading = new_value
-                logging.debug(f"{self.name} SpikeFilter: Exited dead zone with valid reading {new_value}")
-                return new_value
-            else:
-                # Still in dead zone, return None
-                return None
+            if movement_direction == 'increasing':
+                if self.LOWER_VALID_LIMIT <= new_value <= self.UPPER_VALID_LIMIT:
+                    self.filter_active = False
+                    self.in_dead_zone = False
+                    self.last_valid_reading = new_value
+                    logging.debug(f"{self.name} SpikeFilter: Exited dead zone with valid reading (increasing): {new_value}")
+                    return new_value
+            elif movement_direction == 'decreasing':
+                if self.LOWER_VALID_LIMIT <= new_value <= self.UPPER_VALID_LIMIT:
+                    self.filter_active = False
+                    self.in_dead_zone = False
+                    self.last_valid_reading = new_value
+                    logging.debug(f"{self.name} SpikeFilter: Exited dead zone with valid reading (decreasing): {new_value}")
+                    return new_value
+            # Still in dead zone
+            logging.debug(f"{self.name} SpikeFilter: Still in dead zone. Value: {new_value}")
+            return None
 
         # Case 3: Normal operation (filter not active)
         # Check for sudden spikes that might indicate entering dead zone
-        if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
+        if abs(delta) > 300:
             self.filter_active = True
             self.in_dead_zone = True
-            logging.debug(f"{self.name} SpikeFilter: Sudden spike detected: {new_value}")
+            logging.debug(f"{self.name} SpikeFilter: Sudden spike detected: {new_value} (Delta: {delta})")
             return None
 
         # Normal valid reading
         self.last_valid_reading = new_value
+        logging.debug(f"{self.name} SpikeFilter: Passing valid reading: {new_value}")
         return new_value
 
     def reset(self):
@@ -182,6 +208,7 @@ class MotorController:
 
                 # Signal clamping to 50% of maximum speed
                 max_speed = 50  # 50% of maximum speed
+                logging.debug(f"{self.name} SpikeFilter active. Clamped speed to {max_speed}%")
             else:
                 max_speed = 100  # Full speed when not in dead zone
                 self.previous_control_signal = control_signal  # Update previous control signal
