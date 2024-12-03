@@ -2,13 +2,12 @@ import RPi.GPIO as GPIO
 import time
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
+import threading
 import logging
 import csv
 
-# ----------------------------- Configuration ----------------------------- #
-
 # Configure Logging
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s [%(levelname)s] %(message)s',
                     handlers=[
                         logging.FileHandler("motor_control.log"),
@@ -24,72 +23,48 @@ MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
 # GPIO Pins for Motor 2 (BCM numbering)
-MOTOR2_IN1 = 5    # Adjust as per your wiring
-MOTOR2_IN2 = 25   # Adjust as per your wiring
-MOTOR2_SPD = 6    # Adjust as per your wiring
+MOTOR2_IN1 = 5    # was 29
+MOTOR2_IN2 = 25   # was 22
+MOTOR2_SPD = 6    # was 31
 MOTOR2_ADC_CHANNEL = 1
 
-# PID Constants
-PID_KP = 0.8
-PID_KI = 0.1
-PID_KD = 0.05
-
-# Control Loop Duration
-TEST_DURATION = 10  # in seconds
-
-# CSV Filenames
-CSV_WITH_FILTER = 'with_spike_filter.csv'
-CSV_WITHOUT_FILTER = 'without_spike_filter.csv'
-
-# ----------------------------- Classes ----------------------------- #
-
 class SpikeFilter:
-    def __init__(self, name, enabled=True):
+    def __init__(self, name):
         self.filter_active = False
-        self.in_dead_zone = False
         self.last_valid_reading = None
         self.name = name
-        self.enabled = enabled
-        # Constants based on requirements
+        # Adding constants based on requirements
         self.DEAD_ZONE_THRESHOLD = 950  # Activation threshold before dead zone
         self.LOWER_VALID_LIMIT = 150    # ~45 degrees
         self.UPPER_VALID_LIMIT = 750    # Balanced threshold for backward movement
         self.ADC_MAX = 1023             # Maximum ADC reading
 
     def filter(self, new_value):
-        if not self.enabled:
-            # Spike filter is disabled, return the raw value
-            self.last_valid_reading = new_value
-            return new_value
-
         # Case 1: Check for entering dead zone
         if not self.filter_active and self.last_valid_reading is not None:
             if self.last_valid_reading >= self.DEAD_ZONE_THRESHOLD:
                 self.filter_active = True
-                self.in_dead_zone = True
                 logging.debug(f"{self.name} SpikeFilter: Entering dead zone. Last valid: {self.last_valid_reading}")
-                return None  # Indicate dead zone
+                return self.last_valid_reading
 
         # Case 2: Filter is active (in dead zone)
         if self.filter_active:
             # Check if we've exited the dead zone with a valid reading
             if self.LOWER_VALID_LIMIT <= new_value <= self.UPPER_VALID_LIMIT:
                 self.filter_active = False
-                self.in_dead_zone = False
                 self.last_valid_reading = new_value
                 logging.debug(f"{self.name} SpikeFilter: Exited dead zone with valid reading {new_value}")
                 return new_value
             else:
-                # Still in dead zone, ignore the reading
-                return None
+                # Still in dead zone, return last valid reading
+                return self.last_valid_reading if self.last_valid_reading is not None else 0
 
         # Case 3: Normal operation (filter not active)
         # Check for sudden spikes that might indicate entering dead zone
         if self.last_valid_reading is not None and abs(self.last_valid_reading - new_value) > 300:
             self.filter_active = True
-            self.in_dead_zone = True
             logging.debug(f"{self.name} SpikeFilter: Sudden spike detected: {new_value}")
-            return None
+            return self.last_valid_reading
 
         # Normal valid reading
         self.last_valid_reading = new_value
@@ -97,10 +72,8 @@ class SpikeFilter:
 
     def reset(self):
         self.filter_active = False
-        self.in_dead_zone = False
         self.last_valid_reading = None
         logging.debug(f"{self.name} SpikeFilter: Reset complete.")
-
 
 class PIDController:
     def __init__(self, Kp, Ki, Kd, name='PID'):
@@ -116,7 +89,7 @@ class PIDController:
         current_time = time.time()
         delta_time = current_time - self.last_time
         if delta_time <= 0.0:
-            delta_time = 0.0001  # Prevent division by zero
+            delta_time = 0.0001
 
         proportional = self.Kp * error
         self.integral += error * delta_time
@@ -127,8 +100,7 @@ class PIDController:
         self.previous_error = error
         self.last_time = current_time
 
-        logging.debug(f"{self.name} PID: error={error:.2f}, proportional={proportional:.2f}, "
-                      f"integral={integral:.2f}, derivative={derivative:.2f}, control_signal={control_signal:.2f}")
+        logging.debug(f"{self.name} PID: error={error}, proportional={proportional}, integral={integral}, derivative={derivative}, control_signal={control_signal}")
 
         return control_signal
 
@@ -138,95 +110,92 @@ class PIDController:
         self.last_time = time.time()
         logging.debug(f"{self.name} PID: Reset complete.")
 
-
 class MotorController:
-    def __init__(self, name, in1, in2, pwm, adc_channel, mcp, spike_filter_enabled=True):
+    def __init__(self, name, in1, in2, pwm, adc_channel, encoder_flipped=False):
         self.name = name
         self.in1 = in1
         self.in2 = in2
         self.pwm = pwm
         self.adc_channel = adc_channel
-        self.mcp = mcp
         self.position = 0
         self.last_valid_position = None
-        self.pid = PIDController(Kp=PID_KP, Ki=PID_KI, Kd=PID_KD, name=f'PID-{self.name}')
-        self.spike_filter = SpikeFilter(name, enabled=spike_filter_enabled)
-        self.previous_control_signal = 0.0  # For rate limiting
-        self.encoder_flipped = True  # Adjust if necessary
+        self.pid = PIDController(Kp=0.8, Ki=0.1, Kd=0.05, name=f'PID-{self.name}')
+        self.encoder_flipped = encoder_flipped
+        self.spike_filter = SpikeFilter(name)
 
-    def read_position(self):
-        raw_value = self.mcp.read_adc(self.adc_channel)
-
+    def read_position(self, mcp):
+        raw_value = mcp.read_adc(self.adc_channel)
+        
         if self.encoder_flipped:
             raw_value = ADC_MAX - raw_value
-
+        
         filtered_value = self.spike_filter.filter(raw_value)
-
+        
         if filtered_value is None:
-            # In dead zone, assume position is 0 degrees
-            logging.debug(f"{self.name} is in dead zone. Position assumed to be 0°.")
-            return 0.0
-        else:
-            degrees = (filtered_value / ADC_MAX) * MAX_ANGLE
-            self.last_valid_position = degrees
-            logging.debug(f"{self.name} Position: {degrees:.2f}° (raw: {raw_value})")
-            return degrees
+            return self.last_valid_position if self.last_valid_position is not None else 0
+            
+        degrees = (filtered_value / ADC_MAX) * 330.0
+        self.last_valid_position = degrees
+        logging.debug(f"{self.name} Position: {degrees}° (raw: {raw_value})")
+        return degrees
+
+    def read_raw_position(self, mcp):
+        raw_value = mcp.read_adc(self.adc_channel)
+        
+        if self.encoder_flipped:
+            raw_value = ADC_MAX - raw_value
+        
+        degrees = (raw_value / ADC_MAX) * 330.0
+        logging.debug(f"{self.name} Raw Position: {degrees}° (raw: {raw_value})")
+        return degrees
 
     def set_motor_direction(self, direction):
         if direction == 'forward':
             GPIO.output(self.in1, GPIO.HIGH)
             GPIO.output(self.in2, GPIO.LOW)
             logging.debug(f"{self.name} Direction: Forward")
-        else:
+        elif direction == 'backward':
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
             logging.debug(f"{self.name} Direction: Backward")
+        else:
+            GPIO.output(self.in1, GPIO.LOW)
+            GPIO.output(self.in2, GPIO.LOW)
+            logging.debug(f"{self.name} Direction: Stopped")
 
-    def move_to_position(self, target):
+    def move_to_position(self, target, mcp, direction_override=None):
         try:
-            current_position = self.read_position()
+            current_position = self.read_position(mcp)
             error = target - current_position
 
-            # Handle wrap-around for shortest path
-            if error > (MAX_ANGLE / 2):
-                error -= MAX_ANGLE
-            elif error < -(MAX_ANGLE / 2):
-                error += MAX_ANGLE
+            # Handle wrap-around for angles
+            if error > 165:
+                error -= 330
+            elif error < -165:
+                error += 330
 
             control_signal = self.pid.compute(error)
-
-            # Rate limiting and signal clamping during dead zone
-            if self.spike_filter.in_dead_zone:
-                # Apply rate limiting
-                max_change = 5  # Maximum allowed change in control_signal per cycle
-                delta_signal = control_signal - self.previous_control_signal
-                if delta_signal > max_change:
-                    control_signal = self.previous_control_signal + max_change
-                elif delta_signal < -max_change:
-                    control_signal = self.previous_control_signal - max_change
-                self.previous_control_signal = control_signal
-
-                # Signal clamping to 50% of maximum speed
-                max_speed = 50  # 50% of maximum speed
-            else:
-                max_speed = 100  # Full speed when not in dead zone
-                self.previous_control_signal = control_signal  # Update previous control signal
 
             if abs(error) <= 2:
                 self.stop_motor()
                 logging.debug(f"{self.name} reached target. Stopping motor.")
-                return True, error, control_signal, current_position
+                return True
 
-            direction = 'forward' if control_signal > 0 else 'backward'
+            # Override direction if specified
+            if direction_override:
+                direction = direction_override
+            else:
+                direction = 'forward' if control_signal > 0 else 'backward'
+
             self.set_motor_direction(direction)
-            speed = min(max_speed, max(30, abs(control_signal)))  # Apply clamping
+            speed = min(100, max(30, abs(control_signal)))
             self.pwm.ChangeDutyCycle(speed)
-            logging.debug(f"{self.name} Speed: {speed}% (Control Signal: {control_signal:.2f}%)")
-            return False, error, control_signal, current_position
+            logging.debug(f"{self.name} Speed: {speed}%")
+            return False
         except Exception as e:
             logging.error(f"{self.name} MotorController: Error during move_to_position: {e}")
             self.reset()
-            return False, 0, 0, 0
+            return False
 
     def stop_motor(self):
         GPIO.output(self.in1, GPIO.LOW)
@@ -238,82 +207,127 @@ class MotorController:
         self.stop_motor()
         self.pid.reset()
         self.spike_filter.reset()
-        self.previous_control_signal = 0.0  # Reset previous control signal
         logging.info(f"{self.name} MotorController: Reset complete.")
 
+class MotorControlSystem:
+    def __init__(self):
+        self.running = True
+        self.lock = threading.Lock()
 
-# ----------------------------- Main Function ----------------------------- #
+        # GPIO setup
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(MOTOR2_IN1, GPIO.OUT)
+        GPIO.setup(MOTOR2_IN2, GPIO.OUT)
+        GPIO.setup(MOTOR2_SPD, GPIO.OUT)
 
-def main(spike_filter_enabled, csv_filename):
-    # Initialize GPIO
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(MOTOR2_IN1, GPIO.OUT)
-    GPIO.setup(MOTOR2_IN2, GPIO.OUT)
-    GPIO.setup(MOTOR2_SPD, GPIO.OUT)
+        # Set up PWM for motor speed control
+        self.motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)
+        self.motor2_pwm.start(0)
 
-    # Set up PWM for motor speed control
-    motor2_pwm = GPIO.PWM(MOTOR2_SPD, 1000)  # 1 kHz frequency
-    motor2_pwm.start(0)  # Start PWM with 0% duty cycle
+        # Set up MCP3008
+        self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-    # Set up MCP3008
-    mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+        # Initialize Motor 2
+        self.motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, self.motor2_pwm,
+                                      MOTOR2_ADC_CHANNEL, encoder_flipped=True)
 
-    # Initialize motor controller
-    motor2 = MotorController("M2", MOTOR2_IN1, MOTOR2_IN2, motor2_pwm,
-                             MOTOR2_ADC_CHANNEL, mcp, spike_filter_enabled=spike_filter_enabled)
+        self.start_time = time.time()
 
-    start_time = time.time()
-    data_records = []
+        # Initialize CSV files
+        self.csv_with_filter = open('with_spike_filter.csv', mode='w', newline='')
+        self.csv_without_filter = open('without_spike_filter.csv', mode='w', newline='')
+        self.writer_with_filter = csv.writer(self.csv_with_filter)
+        self.writer_without_filter = csv.writer(self.csv_without_filter)
 
-    try:
-        while (time.time() - start_time) < TEST_DURATION:
-            # Generate target position (decreasing sawtooth wave for forward direction)
-            elapsed_time = time.time() - start_time
-            position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
-            target_position = ((1 - position_in_cycle) * MAX_ANGLE) % MAX_ANGLE
+        # Write headers
+        headers = ['Error_to_Target_deg', 'Control_Signal_%', 'Target_Path_Sawtooth_deg', 'Actual_Position_deg']
+        self.writer_with_filter.writerow(headers)
+        self.writer_without_filter.writerow(headers)
 
-            # Move motor to target position in positive direction (forward)
-            finished, error, control_signal, actual_position = motor2.move_to_position(target_position)
+        # Start the control loop in a separate thread
+        self.control_thread = threading.Thread(target=self.control_loop, daemon=True)
+        self.control_thread.start()
 
-            # Collect data
-            data_records.append({
-                'Time (s)': round(elapsed_time, 2),
-                'Error (degrees)': round(error, 2),
-                'Control Signal (%)': round(control_signal, 2),
-                'Target Position (degrees)': round(target_position, 2),
-                'Actual Position (degrees)': round(actual_position, 2)
-            })
+        logging.info("MotorControlSystem initialized and control loop started.")
 
-            time.sleep(0.02)  # 20 ms delay
-    except KeyboardInterrupt:
-        logging.info("Test interrupted by user.")
-    finally:
-        # Stop the motor and cleanup
-        motor2.stop_motor()
-        motor2_pwm.stop()
+    def generate_sawtooth_position(self):
+        elapsed_time = time.time() - self.start_time
+        position_in_cycle = (elapsed_time % SAWTOOTH_PERIOD) / SAWTOOTH_PERIOD
+        position = (position_in_cycle * MAX_ANGLE) % MAX_ANGLE
+        return position
+
+    def control_loop(self):
+        try:
+            while self.running:
+                target_position = self.generate_sawtooth_position()
+
+                # Read filtered position
+                filtered_position = self.motor2.read_position(self.mcp)
+                error = target_position - filtered_position
+
+                # Handle wrap-around for angles
+                if error > 165:
+                    error -= 330
+                elif error < -165:
+                    error += 330
+
+                control_signal = self.motor2.pid.compute(error)
+
+                # Override direction to 'backward' to control motor in negative direction
+                direction = 'backward'
+                self.motor2.set_motor_direction(direction)
+                speed = min(100, max(30, abs(control_signal)))
+                self.motor2.pwm.ChangeDutyCycle(speed)
+                logging.debug(f"{self.motor2.name} Speed: {speed}% (Control Signal: {control_signal})")
+
+                # Read raw position
+                raw_position = self.motor2.read_raw_position(self.mcp)
+                error_raw = target_position - raw_position
+
+                # Handle wrap-around for angles
+                if error_raw > 165:
+                    error_raw -= 330
+                elif error_raw < -165:
+                    error_raw += 330
+
+                # Compute control signal based on raw position without spike filter
+                control_signal_raw = self.motor2.pid.compute(error_raw)
+
+                # Log to CSV with spike filter
+                self.writer_with_filter.writerow([round(error, 2), round(control_signal, 2),
+                                                 round(target_position, 2), round(filtered_position, 2)])
+                self.csv_with_filter.flush()
+
+                # Log to CSV without spike filter
+                self.writer_without_filter.writerow([round(error_raw, 2), round(control_signal_raw, 2),
+                                                    round(target_position, 2), round(raw_position, 2)])
+                self.csv_without_filter.flush()
+
+                time.sleep(0.02)  # 20 ms delay
+        except Exception as e:
+            logging.error(f"Control Loop Error: {e}")
+            self.stop()
+
+    def stop(self):
+        with self.lock:
+            self.running = False
+        self.control_thread.join()
+        self.motor2.stop_motor()
+        self.motor2_pwm.stop()
         GPIO.cleanup()
-
-        # Write data to CSV file
-        with open(csv_filename, 'w', newline='') as csvfile:
-            fieldnames = ['Time (s)', 'Error (degrees)', 'Control Signal (%)',
-                          'Target Position (degrees)', 'Actual Position (degrees)']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for record in data_records:
-                writer.writerow(record)
-
-        logging.info(f"Data written to {csv_filename}")
-
-# ----------------------------- Execution ----------------------------- #
+        self.csv_with_filter.close()
+        self.csv_without_filter.close()
+        logging.info("MotorControlSystem stopped and resources cleaned up.")
 
 if __name__ == "__main__":
-    # Run with spike filter enabled
-    logging.info("Starting test with spike filter enabled.")
-    main(spike_filter_enabled=True, csv_filename=CSV_WITH_FILTER)
-
-    # Run with spike filter disabled
-    logging.info("Starting test with spike filter disabled.")
-    main(spike_filter_enabled=False, csv_filename=CSV_WITHOUT_FILTER)
-
-    logging.info("All tests completed.")
+    try:
+        motor_control_system = MotorControlSystem()
+        logging.info("Motor Control System is running. Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("KeyboardInterrupt received. Stopping Motor Control System.")
+        motor_control_system.stop()
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        motor_control_system.stop()
