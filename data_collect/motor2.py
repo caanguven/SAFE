@@ -22,8 +22,8 @@ MAX_ANGLE = 330
 SAWTOOTH_PERIOD = 2  # Period in seconds
 
 # GPIO Pins for Motor 2 (BCM numbering)
-MOTOR2_IN1 = 25    # was 29
-MOTOR2_IN2 = 5   # was 22
+MOTOR2_IN1 = 5    # was 29
+MOTOR2_IN2 = 25   # was 22
 MOTOR2_SPD = 6    # was 31
 MOTOR2_ADC_CHANNEL = 1
 
@@ -155,12 +155,12 @@ class MotorController:
 
     def set_motor_direction(self, direction):
         if direction == 'forward':
-            GPIO.output(self.in1, GPIO.HIGH)
-            GPIO.output(self.in2, GPIO.LOW)
-            logging.debug(f"{self.name} Direction: Forward")
-        else:
             GPIO.output(self.in1, GPIO.LOW)
             GPIO.output(self.in2, GPIO.HIGH)
+            logging.debug(f"{self.name} Direction: Forward")
+        else:
+            GPIO.output(self.in1, GPIO.HIGH)
+            GPIO.output(self.in2, GPIO.LOW)
             logging.debug(f"{self.name} Direction: Backward")
 
     def move_to_position(self, target):
