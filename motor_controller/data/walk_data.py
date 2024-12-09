@@ -655,7 +655,7 @@ def main():
         logfile.write("Timestamp,Roll,Pitch,Yaw\n")
 
         start_time = time.time()
-        while time.time() - start_time < 60:
+        while time.time() - start_time < 30:
             roll, pitch, yaw = get_current_euler(bno, calibration_offsets)
             if None not in (roll, pitch, yaw):
                 timestamp = time.time()
