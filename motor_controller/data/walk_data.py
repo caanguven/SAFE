@@ -647,7 +647,7 @@ def main():
     # Register the cleanup function for SIGINT (Ctrl+C)
     signal.signal(signal.SIGINT, cleanup)
 
-    print(f"\nStarting {args.mode} gait for 15 seconds...")
+    print(f"\nStarting {args.mode} gait for 60 seconds...")
 
     # Open log file
     log_filename = f"imu_log_{args.mode}_{int(time.time())}.csv"
@@ -655,7 +655,7 @@ def main():
         logfile.write("Timestamp,Roll,Pitch,Yaw\n")
 
         start_time = time.time()
-        while time.time() - start_time < 15:
+        while time.time() - start_time < 60:
             roll, pitch, yaw = get_current_euler(bno, calibration_offsets)
             if None not in (roll, pitch, yaw):
                 timestamp = time.time()
