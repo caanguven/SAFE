@@ -27,7 +27,6 @@ The project is organized into the following directories and files:
 - **development/**: Includes an interface used at developemnt. By running the main.py you can access the main interface at port 5000. Using this interface we can access to various functionalies of SAFE. This is only for development purposes. Some codes might not work as expected.  
 - **motor_controller_dev/**: Includes the directores that includes the motor controller such as square follow, April Tag detectino.
 - **web_based_drive/**: Main teleoperated controller of the SAFE. Running main.py should start a fully functional Flask server that will provide IMU Camera and encoder data to user. This is the most optimzated way to operate SAFE. 
-- **others/**: Contains additional scripts and files.
 
 
 ## Installation
