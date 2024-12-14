@@ -1,0 +1,233 @@
+<!-- templates/turn_control.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turn Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            background-color: #f5f5f5;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .input-group {
+            margin: 20px 0;
+        }
+        input[type="number"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 100px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 1.2em;
+            background-color: #e9ecef;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .navbar {
+            background-color: #333;
+            overflow: hidden;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        .navbar a {
+            float: left;
+            color: white;
+            text-align: center;
+            padding: 14px 16px;
+            text-decoration: none;
+            font-size: 17px;
+        }
+        .navbar a:hover {
+            background-color: #ddd;
+            color: black;
+        }
+        .navbar a.active {
+            background-color: #007bff;
+            color: white;
+        }
+        .direction-info {
+            margin: 10px 0;
+            font-style: italic;
+            color: #666;
+        }
+        #turnProgress {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/">Home</a>
+        <a href="/video_feed">Video Feed</a>
+        <a href="/manual_drive">Manual Drive</a>
+        <a href="/autonoms_drive">Autonomous Drive</a>
+        <a href="/gyro">Gyro</a>
+        <a class="active" href="/turn">Turn Control</a>
+    </div>
+
+    <div class="container">
+        <h1>IMU-Based Turn Control</h1>
+        
+        <div class="direction-info">
+            Enter angle between -180° and 180° (exclusive)<br>
+            Positive = Point Turn Left | Negative = Point Turn Right
+        </div>
+        
+        <div class="input-group">
+            <input type="number" id="angleInput" min="-179.9" max="179.9" step="0.1" value="90" 
+                   placeholder="Enter angle">
+            <button id="turnButton" onclick="startTurn()">Start Turn</button>
+        </div>
+        
+        <div class="status">
+            <div id="statusDisplay">Status: Ready</div>
+            <div id="turnProgress">Not turning</div>
+        </div>
+        
+        <div class="error" id="errorDisplay"></div>
+    </div>
+
+    <script>
+        let isRunning = false;
+        let statusInterval;
+
+        function validateAngle(angle) {
+            return angle > -180 && angle < 180 && angle !== 0;
+        }
+
+        async function startTurn() {
+            const angleInput = document.getElementById('angleInput');
+            const angle = parseFloat(angleInput.value);
+            
+            if (!validateAngle(angle)) {
+                showError('Angle must be between -180° and 180° (exclusive) and not 0°');
+                return;
+            }
+            
+            const turnButton = document.getElementById('turnButton');
+            turnButton.disabled = true;
+            isRunning = true;
+            
+            try {
+                const response = await fetch('/start_turn', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ angle: angle })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to start turn');
+                }
+                
+                // Start polling status
+                statusInterval = setInterval(updateStatus, 100);
+                
+            } catch (error) {
+                showError(error.message);
+                turnButton.disabled = false;
+                isRunning = false;
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/get_turn_status', {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to get status');
+                }
+                
+                const status = await response.json();
+                const statusDisplay = document.getElementById('statusDisplay');
+                const turnProgress = document.getElementById('turnProgress');
+                const turnButton = document.getElementById('turnButton');
+                
+                if (status.error) {
+                    showError(status.error);
+                    clearInterval(statusInterval);
+                    turnButton.disabled = false;
+                    isRunning = false;
+                    turnProgress.textContent = 'Turn failed';
+                    return;
+                }
+                
+                if (status.is_turning) {
+                    const direction = status.target_angle > 0 ? 'Right' : 'Left';
+                    statusDisplay.textContent = `Status: Turning ${direction}`;
+                    turnProgress.textContent = `: Target: ${status.target_angle}°`;
+                } else if (isRunning) {
+                    statusDisplay.textContent = 'Status: Turn completed';
+                    clearInterval(statusInterval);
+                    turnButton.disabled = false;
+                    isRunning = false;
+                }
+                
+            } catch (error) {
+                console.error('Status error:', error);
+                showError('Failed to update status');
+                clearInterval(statusInterval);
+                document.getElementById('turnButton').disabled = false;
+                isRunning = false;
+            }
+        }
+
+        function showError(message) {
+            const errorDisplay = document.getElementById('errorDisplay');
+            errorDisplay.textContent = message;
+            setTimeout(() => {
+                errorDisplay.textContent = '';
+            }, 5000);
+        }
+
+        // Cleanup when page is unloaded
+        window.addEventListener('beforeunload', () => {
+            clearInterval(statusInterval);
+        });
+
+        // Input validation
+        document.getElementById('angleInput').addEventListener('input', function(e) {
+            const angle = parseFloat(e.target.value);
+        });
+    </script>
+</body>
+</html>
